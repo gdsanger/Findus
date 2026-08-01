@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Login – Findus{% endblock %}
+{% block content %}
+<div class="col-md-4">
+    <h1 class="h3 mb-3">Anmelden</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        <div class="mb-3">
+            <label class="form-label" for="{{ form.username.id_for_label }}">Benutzername</label>
+            {{ form.username }}
+        </div>
+        <div class="mb-3">
+            <label class="form-label" for="{{ form.password.id_for_label }}">Passwort</label>
+            {{ form.password }}
+        </div>
+        <button type="submit" class="btn btn-primary">Anmelden</button>
+    </form>
+</div>
+{% endblock %}

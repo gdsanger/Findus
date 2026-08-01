@@ -1,0 +1,22 @@
+{% if rows %}
+<table class="table table-sm">
+    <thead>
+        <tr>
+            <th>Titel</th>
+            <th>Absender</th>
+            <th>Datum</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row.title }}</td>
+            <td>{{ row.sender }}</td>
+            <td>{{ row.date }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">Keine Treffer{% if query %} für "{{ query }}"{% endif %}.</p>
+{% endif %}
