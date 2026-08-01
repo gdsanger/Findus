@@ -1,0 +1,105 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-findus}
+      POSTGRES_USER: ${POSTGRES_USER:-findus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-findus}
+    volumes:
+      - findus_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-findus} -d ${POSTGRES_DB:-findus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - findus_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${FINDUS_STORAGE_ACCESS_KEY:-findus}
+      MINIO_ROOT_PASSWORD: ${FINDUS_STORAGE_SECRET_KEY:-findus-secret}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - findus_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set findus-minio http://minio:9000 ${FINDUS_STORAGE_ACCESS_KEY:-findus} ${FINDUS_STORAGE_SECRET_KEY:-findus-secret};
+      mc mb --ignore-existing findus-minio/${FINDUS_STORAGE_BUCKET:-findus-documents};
+      "
+
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python manage.py qcluster
+    volumes:
+      - .:/app
+
+  mcp:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m apps.mcp.server
+    ports:
+      - "8001:8001"
+    volumes:
+      - .:/app
+
+volumes:
+  findus_postgres_data:
+  findus_redis_data:
+  findus_minio_data:

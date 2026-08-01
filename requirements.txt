@@ -1,0 +1,27 @@
+# Core
+Django==5.2.5
+python-dotenv==1.1.1
+
+# Database / vectors
+psycopg[binary]==3.2.10
+pgvector==0.4.1
+
+# Frontend glue
+django-htmx==1.23.2
+
+# Cache / queue / background worker (Django-Q2, not Celery)
+django-q2==1.8.0
+redis==5.2.1
+django-redis==5.4.0
+
+# Object storage (S3 / MinIO)
+django-storages[s3]==1.14.5
+boto3==1.35.99
+
+# MCP service (SSE)
+mcp==1.9.4
+starlette==0.47.2
+uvicorn[standard]==0.34.3
+
+# Production server
+gunicorn==23.0.0

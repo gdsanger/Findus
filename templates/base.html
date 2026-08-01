@@ -1,0 +1,50 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Findus{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'vendor/bootstrap/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/findus.css' %}">
+    <script src="{% static 'vendor/htmx/htmx.min.js' %}" defer></script>
+</head>
+<body>
+    {% csrf_token %}
+    <div class="d-flex" id="findus-layout">
+        <nav class="d-flex flex-column flex-shrink-0 p-3 bg-light border-end" id="findus-nav">
+            <a href="{% url 'documents:home' %}" class="d-flex align-items-center mb-3 text-decoration-none">
+                <span class="fs-4">Findus</span>
+            </a>
+            <ul class="nav nav-pills flex-column mb-auto">
+                <li class="nav-item">
+                    <a href="{% url 'documents:home' %}" class="nav-link link-dark">Dokumente</a>
+                </li>
+            </ul>
+            <hr>
+            {% if request.user.is_authenticated %}
+                <div class="d-flex align-items-center justify-content-between">
+                    <span class="small text-muted">{{ request.user }}</span>
+                    <form method="post" action="{% url 'logout' %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">Logout</button>
+                    </form>
+                </div>
+            {% endif %}
+        </nav>
+        <main class="flex-grow-1 p-4" id="findus-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}" defer></script>
+    <script>
+        // Attach Django's CSRF token to every HTMX request (GET requests don't
+        // need it, but this keeps POST/PUT/DELETE swaps working out of the box).
+        document.body.addEventListener("htmx:configRequest", function (event) {
+            event.detail.headers["X-CSRFToken"] = document.querySelector(
+                "[name=csrfmiddlewaretoken]"
+            ).value;
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Dokumente – Findus{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Dokumente</h1>
+
+<section class="mb-5">
+    <h2 class="h5">Suche (HTMX-Beispiel)</h2>
+    <p class="text-muted">
+        Tippen swappt die Ergebnisliste unten per <code>hx-get</code> ein
+        server-gerendertes Partial &mdash; das Muster für spätere
+        Such-/Listen-Interaktionen.
+    </p>
+    <input
+        type="search"
+        name="q"
+        class="form-control mb-3"
+        placeholder="Absender oder Titel suchen …"
+        hx-get="{% url 'documents:example-search' %}"
+        hx-trigger="keyup changed delay:300ms, search"
+        hx-target="#example-list"
+        hx-swap="innerHTML"
+    >
+    <div id="example-list">
+        {% include "documents/partials/_example_list.html" %}
+    </div>
+</section>
+
+<section>
+    <h2 class="h5">Background-Task (Django-Q2 + Redis)</h2>
+    <p class="text-muted">
+        Reiht einen Beispiel-Task über Redis beim Worker ein. Ergebnis steht
+        im Log des <code>worker</code>-Containers.
+    </p>
+    <button
+        class="btn btn-outline-primary"
+        hx-post="{% url 'documents:example-task-run' %}"
+        hx-target="#example-task-result"
+        hx-swap="innerHTML"
+    >
+        Task einreihen
+    </button>
+    <div id="example-task-result" class="mt-3"></div>
+</section>
+{% endblock %}
