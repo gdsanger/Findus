@@ -342,3 +342,26 @@ body {
     border: 1px solid var(--findus-border);
     border-radius: var(--findus-radius-md);
 }
+
+/* Document list filter bar ------------------------------------------------*/
+.findus-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--findus-space-3);
+    margin-bottom: var(--findus-space-4);
+}
+
+.findus-filter-field {
+    min-width: 10rem;
+}
+
+.findus-filter-loading {
+    align-self: center;
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-pagination {
+    margin-top: var(--findus-space-4);
+}

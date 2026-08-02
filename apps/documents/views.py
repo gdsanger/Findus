@@ -1,47 +1,69 @@
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.shortcuts import render
-from django_q.tasks import async_task
 
-from .tasks import example_ping_task
+from .models import Correspondent, Document, Tag, Vorgang
 
-# Static placeholder rows for the HTMX search-partial pattern. Replace with
-# a real queryset once the Document model lands (see models.py).
-EXAMPLE_ROWS = [
-    {"title": "Rechnung Muster GmbH", "sender": "Muster GmbH", "date": "2026-06-02"},
-    {"title": "Angebot Bürobedarf", "sender": "OfficePlus", "date": "2026-06-14"},
-    {"title": "Vertrag Wartung Server", "sender": "IT Systemhaus Nord", "date": "2026-07-01"},
-    {"title": "Mahnung Telekom", "sender": "Telekom AG", "date": "2026-07-09"},
-]
+DOCUMENTS_PAGE_SIZE = 20
 
 
-@login_required
-def home(request):
-    return render(request, "documents/home.html", {"rows": EXAMPLE_ROWS, "query": ""})
-
-
-@login_required
-def example_search(request):
-    query = request.GET.get("q", "").strip().lower()
-    if query:
-        rows = [
-            row
-            for row in EXAMPLE_ROWS
-            if query in row["title"].lower() or query in row["sender"].lower()
-        ]
-    else:
-        rows = EXAMPLE_ROWS
-    return render(
-        request,
-        "documents/partials/_example_list.html",
-        {"rows": rows, "query": query},
+def _filtered_documents(request):
+    """Apply the combinable Absender/Vorgang/Tag/Status filters (#1014) on
+    top of the visibility scope -- filters narrow what's already visible,
+    they never widen it.
+    """
+    documents = (
+        Document.objects.visible_to(request.user)
+        .select_related("correspondent")
+        .prefetch_related("vorgaenge", "tags")
     )
 
+    correspondent_id = request.GET.get("correspondent", "").strip()
+    if correspondent_id:
+        documents = documents.filter(correspondent_id=correspondent_id)
+
+    vorgang_id = request.GET.get("vorgang", "").strip()
+    if vorgang_id:
+        documents = documents.filter(vorgaenge__id=vorgang_id)
+
+    tag_id = request.GET.get("tag", "").strip()
+    if tag_id:
+        documents = documents.filter(tags__id=tag_id)
+
+    status = request.GET.get("status", "").strip()
+    if status:
+        documents = documents.filter(processing_status=status)
+
+    if vorgang_id or tag_id:
+        documents = documents.distinct()
+
+    return documents
+
 
 @login_required
-def example_task_run(request):
-    task_id = async_task(example_ping_task, "pong from HTMX demo")
-    return render(
-        request,
-        "documents/partials/_example_task_result.html",
-        {"task_id": task_id},
-    )
+def document_list(request):
+    documents = _filtered_documents(request)
+    paginator = Paginator(documents, DOCUMENTS_PAGE_SIZE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    query_without_page = request.GET.copy()
+    query_without_page.pop("page", None)
+
+    context = {
+        "page_obj": page_obj,
+        "query_without_page": query_without_page.urlencode(),
+        "correspondents": Correspondent.objects.all(),
+        "vorgaenge": Vorgang.objects.all(),
+        "tags": Tag.objects.all(),
+        "status_choices": Document.ProcessingStatus.choices,
+        "selected": {
+            "correspondent": request.GET.get("correspondent", ""),
+            "vorgang": request.GET.get("vorgang", ""),
+            "tag": request.GET.get("tag", ""),
+            "status": request.GET.get("status", ""),
+        },
+    }
+
+    if request.htmx:
+        return render(request, "documents/partials/_document_list.html", context)
+    return render(request, "documents/home.html", context)

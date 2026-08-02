@@ -1,0 +1,70 @@
+{% if page_obj %}
+<div class="findus-card table-responsive p-0">
+    <table class="table table-hover align-middle mb-0">
+        <thead>
+            <tr>
+                <th>Titel</th>
+                <th>Absender</th>
+                <th>Status</th>
+                <th>Datum</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for document in page_obj %}
+            <tr>
+                <td>{{ document.title }}</td>
+                <td>{{ document.correspondent.name|default:"—" }}</td>
+                <td>
+                    <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
+                        {{ document.get_processing_status_display }}
+                    </span>
+                </td>
+                <td>{{ document.created_at|date:"d.m.Y" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if page_obj.paginator.num_pages > 1 %}
+<nav aria-label="Seiten" class="findus-pagination">
+    <ul class="pagination pagination-sm mb-0">
+        <li class="page-item {% if not page_obj.has_previous %}disabled{% endif %}">
+            <a
+                class="page-link"
+                {% if page_obj.has_previous %}
+                href="?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                hx-target="#document-list-region"
+                hx-swap="innerHTML"
+                hx-push-url="true"
+                {% endif %}
+            >Zurück</a>
+        </li>
+        <li class="page-item disabled">
+            <span class="page-link">Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}</span>
+        </li>
+        <li class="page-item {% if not page_obj.has_next %}disabled{% endif %}">
+            <a
+                class="page-link"
+                {% if page_obj.has_next %}
+                href="?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                hx-target="#document-list-region"
+                hx-swap="innerHTML"
+                hx-push-url="true"
+                {% endif %}
+            >Weiter</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+{% else %}
+<p class="text-muted">
+    {% if selected.correspondent or selected.vorgang or selected.tag or selected.status %}
+    Keine Dokumente für die gewählten Filter.
+    {% else %}
+    Keine Dokumente vorhanden.
+    {% endif %}
+</p>
+{% endif %}
