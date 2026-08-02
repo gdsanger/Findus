@@ -459,3 +459,54 @@ body {
     white-space: pre-wrap;
     font-family: inherit;
 }
+
+.findus-detail-actions {
+    margin-bottom: var(--findus-space-4);
+}
+
+.findus-detail-meta-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--findus-space-3);
+}
+
+.findus-detail-meta-edit-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-4);
+    margin-bottom: var(--findus-space-3);
+}
+
+.findus-detail-meta-edit-actions {
+    display: flex;
+    gap: var(--findus-space-2);
+}
+
+.findus-markdown {
+    max-height: 32rem;
+    overflow-y: auto;
+}
+
+.findus-markdown :first-child {
+    margin-top: 0;
+}
+
+.findus-markdown :last-child {
+    margin-bottom: 0;
+}
+
+.findus-detail-links {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.findus-detail-links li {
+    padding: var(--findus-space-3);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}

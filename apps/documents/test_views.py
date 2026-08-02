@@ -1,14 +1,17 @@
+import io
+import shutil
+import tempfile
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Department
 from apps.ai.providers.base import EmbeddingResult
 
-from .models import Chunk, Correspondent, Document, Tag, Vorgang
+from .models import Chunk, Correspondent, Document, DocumentLink, Tag, Task, Vorgang
 
 User = get_user_model()
 
@@ -311,3 +314,209 @@ class DocumentDetailViewTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         self.assertEqual(response.status_code, 404)
+
+    def test_markdown_cache_is_rendered_as_html(self):
+        self.doc.markdown = "# Rechnung Acme\n\nBetrag: **123 EUR**"
+        self.doc.save(update_fields=["markdown"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "<h1>Rechnung Acme</h1>", html=False)
+        self.assertContains(response, "<strong>123 EUR</strong>", html=False)
+
+    def test_markdown_cache_escapes_embedded_html(self):
+        self.doc.markdown = "# Titel\n\n<script>alert(1)</script>"
+        self.doc.save(update_fields=["markdown"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "<script>alert(1)</script>")
+        self.assertContains(response, "&lt;script&gt;")
+
+    def test_falls_back_to_text_content_when_markdown_cache_is_empty(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Betrag: 123 EUR")
+
+    def test_extraction_method_and_language_are_shown(self):
+        self.doc.extraction_method = Document.ExtractionMethod.OCR
+        self.doc.metadata = {"language": "de"}
+        self.doc.save(update_fields=["extraction_method", "metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "OCR")
+        self.assertContains(response, "Deutsch")
+
+    def test_linked_task_is_shown(self):
+        task = Task.objects.create(title="Rechnung bezahlen", kind=Task.Kind.PAY)
+        task.departments.add(self.dept_a)
+        task.documents.add(self.doc)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Rechnung bezahlen")
+
+    def test_task_outside_visibility_is_not_shown(self):
+        other_dept = Department.objects.create(name="Dept C")
+        task = Task.objects.create(
+            title="Privater Task", visibility=Task.Visibility.PRIVATE
+        )
+        task.departments.add(other_dept)
+        task.documents.add(self.doc)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Privater Task")
+
+    def test_document_links_are_shown_in_both_directions(self):
+        other = Document.objects.create(
+            title="Mahnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        other.departments.add(self.dept_a)
+        DocumentLink.objects.create(
+            from_document=self.doc, to_document=other, link_type=DocumentLink.LinkType.RELATED
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Mahnung Acme")
+        self.assertContains(response, reverse("documents:detail", args=[other.id]))
+
+    def test_linked_document_outside_visibility_is_not_leaked(self):
+        hidden = Document.objects.create(
+            title="Geheimvertrag", visibility=Document.Visibility.DEPARTMENT
+        )
+        hidden.departments.add(self.dept_b)
+        DocumentLink.objects.create(
+            from_document=self.doc, to_document=hidden, link_type=DocumentLink.LinkType.RELATED
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Geheimvertrag")
+
+
+_TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-detail-media-")
+_LOCAL_STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class DocumentDetailOriginalDownloadTests(TestCase):
+    """Covers requirement #5: the original file is downloadable/openable
+    from the detail page. Uses local `FileSystemStorage` instead of the
+    real S3/MinIO backend (see `test_extraction.py`), since only the
+    storage backend choice is under test here, not object storage itself.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+        self.doc.original_file.save("rechnung.pdf", io.BytesIO(b"%PDF-1.4 test"), save=True)
+
+    def test_download_link_is_shown_for_document_with_original_file(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Original herunterladen")
+        self.assertContains(response, self.doc.original_file.url)
+
+    def test_no_download_link_without_original_file(self):
+        self.doc.original_file.delete(save=True)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Original herunterladen")
+
+
+class DocumentMetaEditTests(TestCase):
+    """Covers the nice-to-have HTMX editing of Vorgang/Tag assignments."""
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.vorgang = Vorgang.objects.create(name="Steuererklärung 2026")
+        self.other_vorgang = Vorgang.objects.create(name="Umzug")
+        self.tag = Tag.objects.create(name="Dringend")
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_edit_form_shows_current_selection(self):
+        self.doc.vorgaenge.add(self.vorgang)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertContains(response, "selected")
+        self.assertContains(response, self.vorgang.name)
+
+    def test_edit_form_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_post_updates_vorgaenge_and_tags(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"vorgaenge": [self.vorgang.id], "tags": [self.tag.id]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(list(self.doc.vorgaenge.all()), [self.vorgang])
+        self.assertEqual(list(self.doc.tags.all()), [self.tag])
+        self.assertContains(response, self.vorgang.name)
+
+    def test_post_can_clear_assignments(self):
+        self.doc.vorgaenge.add(self.vorgang)
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:meta", args=[self.doc.id]), {})
+
+        self.doc.refresh_from_db()
+        self.assertEqual(list(self.doc.vorgaenge.all()), [])
+
+    def test_post_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"vorgaenge": [self.vorgang.id]}
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.doc.refresh_from_db()
+        self.assertEqual(list(self.doc.vorgaenge.all()), [])

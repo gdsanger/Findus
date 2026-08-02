@@ -1,48 +1,91 @@
 {% extends "base.html" %}
+{% load documents_extras %}
 {% block title %}{{ document.title }} – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title=document.title %}
 
-<section class="findus-section">
-    <div class="findus-card findus-detail-meta">
-        <dl class="findus-detail-meta-list">
-            <div>
-                <dt>Absender</dt>
-                <dd>{{ document.correspondent.name|default:"—" }}</dd>
-            </div>
-            <div>
-                <dt>Status</dt>
-                <dd>{{ document.get_processing_status_display }}</dd>
-            </div>
-            <div>
-                <dt>Datum</dt>
-                <dd>{{ document.created_at|date:"d.m.Y H:i" }}</dd>
-            </div>
-            <div>
-                <dt>Vorgänge</dt>
-                <dd>
-                    {% for vorgang in document.vorgaenge.all %}
-                    <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
-                    {% empty %}—{% endfor %}
-                </dd>
-            </div>
-            <div>
-                <dt>Tags</dt>
-                <dd>
-                    {% for tag in document.tags.all %}
-                    <span class="badge text-bg-secondary">{{ tag }}</span>
-                    {% empty %}—{% endfor %}
-                </dd>
-            </div>
-        </dl>
-    </div>
+{% if document.original_file %}
+<section class="findus-section findus-detail-actions">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ document.original_file.url }}" target="_blank" rel="noopener">
+        Original herunterladen
+    </a>
+</section>
+{% endif %}
 
+<section class="findus-section">
+    <div id="document-meta">
+        {% include "documents/partials/_detail_meta.html" %}
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Inhalt</h2>
     <div class="findus-card findus-detail-content">
-        {% if document.text_content %}
+        {% if document.markdown %}
+        <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
+        {% elif document.text_content %}
         <pre class="findus-detail-text">{{ document.text_content }}</pre>
         {% else %}
-        <p class="text-muted">Kein extrahierter Text vorhanden.</p>
+        <p class="text-muted">Kein Text vorhanden.</p>
         {% endif %}
     </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
+    {% if tasks %}
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Titel</th>
+                    <th>Art</th>
+                    <th>Status</th>
+                    <th>Fällig</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td>{{ task.title }}</td>
+                    <td>{{ task.get_kind_display }}</td>
+                    <td>
+                        <span class="badge {% if task.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                            {{ task.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ task.due_date|date:"d.m.Y"|default:"—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">Keine verknüpften Aufgaben.</p>
+    {% endif %}
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Querverweise</h2>
+    {% if outgoing_links or incoming_links %}
+    <ul class="findus-detail-links">
+        {% for link in outgoing_links %}
+        <li>
+            <span class="badge text-bg-secondary">{{ link.get_link_type_display }}</span>
+            <a href="{% url 'documents:detail' link.to_document.pk %}">{{ link.to_document.title }}</a>
+            {% if link.note %}<span class="text-muted">– {{ link.note }}</span>{% endif %}
+        </li>
+        {% endfor %}
+        {% for link in incoming_links %}
+        <li>
+            <span class="badge text-bg-secondary">{{ link.get_link_type_display }} von</span>
+            <a href="{% url 'documents:detail' link.from_document.pk %}">{{ link.from_document.title }}</a>
+            {% if link.note %}<span class="text-muted">– {{ link.note }}</span>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">Keine Querverweise.</p>
+    {% endif %}
 </section>
 {% endblock %}

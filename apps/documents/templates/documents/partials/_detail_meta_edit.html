@@ -1,0 +1,38 @@
+<div class="findus-card findus-detail-meta">
+    <form
+        hx-post="{% url 'documents:meta' document.pk %}"
+        hx-target="#document-meta"
+        hx-swap="innerHTML"
+    >
+        <div class="findus-detail-meta-edit-fields">
+            <div class="findus-filter-field">
+                <label class="form-label" for="meta-vorgaenge">Vorgänge</label>
+                <select id="meta-vorgaenge" name="vorgaenge" class="form-select form-select-sm" multiple size="4">
+                    {% for vorgang in all_vorgaenge %}
+                    <option value="{{ vorgang.id }}" {% if vorgang.id in selected_vorgang_ids %}selected{% endif %}>{{ vorgang.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="findus-filter-field">
+                <label class="form-label" for="meta-tags">Tags</label>
+                <select id="meta-tags" name="tags" class="form-select form-select-sm" multiple size="4">
+                    {% for tag in all_tags %}
+                    <option value="{{ tag.id }}" {% if tag.id in selected_tag_ids %}selected{% endif %}>{{ tag }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary"
+                hx-get="{% url 'documents:meta' document.pk %}"
+                hx-target="#document-meta"
+                hx-swap="innerHTML"
+            >
+                Abbrechen
+            </button>
+        </div>
+    </form>
+</div>

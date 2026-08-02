@@ -1,0 +1,52 @@
+{% load documents_extras %}
+<div class="findus-card findus-detail-meta">
+    <div class="findus-detail-meta-header">
+        <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            hx-get="{% url 'documents:meta_edit' document.pk %}"
+            hx-target="#document-meta"
+            hx-swap="innerHTML"
+        >
+            Zuordnung bearbeiten
+        </button>
+    </div>
+    <dl class="findus-detail-meta-list">
+        <div>
+            <dt>Absender</dt>
+            <dd>{{ document.correspondent.name|default:"—" }}</dd>
+        </div>
+        <div>
+            <dt>Status</dt>
+            <dd>{{ document.get_processing_status_display }}</dd>
+        </div>
+        <div>
+            <dt>Datum</dt>
+            <dd>{{ document.created_at|date:"d.m.Y H:i" }}</dd>
+        </div>
+        <div>
+            <dt>Extraktionsmethode</dt>
+            <dd>{{ document.get_extraction_method_display|default:"—" }}</dd>
+        </div>
+        <div>
+            <dt>Sprache</dt>
+            <dd>{{ document.metadata.language|language_label }}</dd>
+        </div>
+        <div>
+            <dt>Vorgänge</dt>
+            <dd>
+                {% for vorgang in document.vorgaenge.all %}
+                <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
+                {% empty %}—{% endfor %}
+            </dd>
+        </div>
+        <div>
+            <dt>Tags</dt>
+            <dd>
+                {% for tag in document.tags.all %}
+                <span class="badge text-bg-secondary">{{ tag }}</span>
+                {% empty %}—{% endfor %}
+            </dd>
+        </div>
+    </dl>
+</div>

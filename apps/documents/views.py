@@ -2,7 +2,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, render
 
-from .models import Correspondent, Document, Tag, Vorgang
+from .models import Correspondent, Document, Tag, Task, Vorgang
 from .retrieval import DocumentRetrievalService
 
 DOCUMENTS_PAGE_SIZE = 20
@@ -100,12 +100,59 @@ def document_list(request):
     return render(request, "documents/home.html", context)
 
 
-@login_required
-def document_detail(request, pk):
-    document = get_object_or_404(
-        Document.objects.visible_to(request.user)
+def _visible_document(user, pk):
+    return get_object_or_404(
+        Document.objects.visible_to(user)
         .select_related("correspondent")
         .prefetch_related("vorgaenge", "tags"),
         pk=pk,
     )
-    return render(request, "documents/detail.html", {"document": document})
+
+
+@login_required
+def document_detail(request, pk):
+    document = _visible_document(request.user, pk)
+    visible_documents = Document.objects.visible_to(request.user)
+
+    context = {
+        "document": document,
+        "tasks": Task.objects.visible_to(request.user)
+        .filter(documents=document)
+        .prefetch_related("checklist_items"),
+        "outgoing_links": document.links_from.select_related("to_document").filter(
+            to_document__in=visible_documents
+        ),
+        "incoming_links": document.links_to.select_related("from_document").filter(
+            from_document__in=visible_documents
+        ),
+    }
+    return render(request, "documents/detail.html", context)
+
+
+@login_required
+def document_meta_edit(request, pk):
+    """Render the editable Vorgang/Tag assignment form (#1016, HTMX
+    nice-to-have) -- swapped into `#document-meta` in place of the
+    read-only view.
+    """
+    document = _visible_document(request.user, pk)
+    context = {
+        "document": document,
+        "all_vorgaenge": Vorgang.objects.all(),
+        "all_tags": Tag.objects.all(),
+        "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
+        "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
+    }
+    return render(request, "documents/partials/_detail_meta_edit.html", context)
+
+
+@login_required
+def document_meta(request, pk):
+    """Display partial for `#document-meta` -- also the save target: a POST
+    here sets Vorgänge/Tags, then re-renders the same read-only view.
+    """
+    document = _visible_document(request.user, pk)
+    if request.method == "POST":
+        document.vorgaenge.set(request.POST.getlist("vorgaenge"))
+        document.tags.set(request.POST.getlist("tags"))
+    return render(request, "documents/partials/_detail_meta.html", {"document": document})
