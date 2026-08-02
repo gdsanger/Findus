@@ -14,7 +14,9 @@ from .base import (
     GenerationChunk,
     GenerationOutput,
     GenerationResult,
+    ImageInput,
     Message,
+    VisionResult,
 )
 
 
@@ -79,3 +81,28 @@ class FakeGenerationProvider:
         for word in text.split(" "):
             yield GenerationChunk(delta=word + " ")
         yield GenerationChunk(delta="", done=True)
+
+
+class FakeVisionProvider:
+    """Records the `(image, prompt)` it was called with and returns a
+    deterministic description -- no image is ever decoded/rendered.
+    """
+
+    name = "fake"
+
+    def __init__(
+        self,
+        *,
+        model: str = "fake-vision",
+        version: str = "1",
+        reply: Optional[str] = None,
+    ):
+        self.model = model
+        self.version = version
+        self.reply = reply
+        self.calls: list[tuple[ImageInput, str]] = []
+
+    def describe_image(self, image: ImageInput, prompt: str) -> VisionResult:
+        self.calls.append((image, prompt))
+        text = self.reply if self.reply is not None else f"described {len(image.data)} bytes for: {prompt}"
+        return VisionResult(text=text, model=self.model, version=self.version)

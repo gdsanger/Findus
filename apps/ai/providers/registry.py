@@ -13,8 +13,8 @@ from typing import Callable, Optional
 from django.conf import settings
 
 from .anthropic import AnthropicProvider
-from .base import EmbeddingProvider, GenerationProvider, ProviderError, UsageHook
-from .fake import FakeEmbeddingProvider, FakeGenerationProvider
+from .base import EmbeddingProvider, GenerationProvider, ProviderError, UsageHook, VisionProvider
+from .fake import FakeEmbeddingProvider, FakeGenerationProvider, FakeVisionProvider
 from .gemini import GeminiProvider
 from .ollama import OllamaProvider
 from .openai import OpenAIProvider
@@ -57,6 +57,8 @@ def _build_openai(config: dict, common: dict) -> OpenAIProvider:
         embedding_model_version=config["embedding_model_version"],
         generation_model=config["generation_model"],
         generation_model_version=config["generation_model_version"],
+        vision_model=config.get("vision_model", ""),
+        vision_model_version=config.get("vision_model_version", ""),
         **common,
     )
 
@@ -92,6 +94,8 @@ def _build_ollama(config: dict, common: dict) -> OllamaProvider:
         generation_model=config["generation_model"],
         generation_model_version=config["generation_model_version"],
         api_key=config.get("api_key", ""),
+        vision_model=config.get("vision_model", ""),
+        vision_model_version=config.get("vision_model_version", ""),
         **common,
     )
 
@@ -102,6 +106,10 @@ def _build_fake_embedding(config: dict, common: dict) -> FakeEmbeddingProvider:
 
 def _build_fake_generation(config: dict, common: dict) -> FakeGenerationProvider:
     return FakeGenerationProvider()
+
+
+def _build_fake_vision(config: dict, common: dict) -> FakeVisionProvider:
+    return FakeVisionProvider()
 
 
 # "fake" is a real, selectable provider (via FINDUS_AI_*_PROVIDER=fake) so
@@ -122,6 +130,16 @@ _GENERATION_BUILDERS: dict[str, Callable[[dict, dict], GenerationProvider]] = {
     "fake": _build_fake_generation,
 }
 
+# Vision is deliberately narrower than embed/generate: only providers
+# with a real image-input API are registered, so selecting e.g.
+# "anthropic" here fails with the same clear config error as selecting
+# it for embeddings, rather than deep inside a request.
+_VISION_BUILDERS: dict[str, Callable[[dict, dict], VisionProvider]] = {
+    "openai": _build_openai,
+    "ollama": _build_ollama,
+    "fake": _build_fake_vision,
+}
+
 
 def get_embedding_provider(name: Optional[str] = None) -> EmbeddingProvider:
     name = name or settings.FINDUS_AI_EMBEDDING_PROVIDER
@@ -140,6 +158,17 @@ def get_generation_provider(name: Optional[str] = None) -> GenerationProvider:
     if builder is None:
         raise ProviderError(
             f"Unknown generation provider '{name}'. Available: {sorted(_GENERATION_BUILDERS)}"
+        )
+    config = {} if name == "fake" else _provider_config(name)
+    return builder(config, _common_kwargs())
+
+
+def get_vision_provider(name: Optional[str] = None) -> VisionProvider:
+    name = name or settings.FINDUS_AI_VISION_PROVIDER
+    builder = _VISION_BUILDERS.get(name)
+    if builder is None:
+        raise ProviderError(
+            f"Unknown vision provider '{name}'. Available: {sorted(_VISION_BUILDERS)}"
         )
     config = {} if name == "fake" else _provider_config(name)
     return builder(config, _common_kwargs())
