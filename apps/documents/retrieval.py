@@ -60,7 +60,7 @@ class DocumentRetrievalService:
         self,
         *,
         correspondent=None,
-        project=None,
+        vorgang=None,
         tags: Optional[Iterable] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
@@ -69,8 +69,8 @@ class DocumentRetrievalService:
         documents = Document.objects.visible_to(self.user)
         if correspondent is not None:
             documents = documents.filter(correspondent=correspondent)
-        if project is not None:
-            documents = documents.filter(projects=project)
+        if vorgang is not None:
+            documents = documents.filter(vorgaenge=vorgang)
         if tags:
             documents = documents.filter(tags__in=tags)
         if date_from is not None:
@@ -85,7 +85,7 @@ class DocumentRetrievalService:
         self,
         *,
         correspondent=None,
-        project=None,
+        vorgang=None,
         tags: Optional[Iterable] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
@@ -94,7 +94,7 @@ class DocumentRetrievalService:
         """Structured browse -- no semantic query, just visibility + filters."""
         return self._filtered_documents(
             correspondent=correspondent,
-            project=project,
+            vorgang=vorgang,
             tags=tags,
             date_from=date_from,
             date_to=date_to,
@@ -107,7 +107,7 @@ class DocumentRetrievalService:
         *,
         limit: int = 20,
         correspondent=None,
-        project=None,
+        vorgang=None,
         tags: Optional[Iterable] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
@@ -120,7 +120,7 @@ class DocumentRetrievalService:
         """
         visible_documents = self._filtered_documents(
             correspondent=correspondent,
-            project=project,
+            vorgang=vorgang,
             tags=tags,
             date_from=date_from,
             date_to=date_to,

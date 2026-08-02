@@ -27,11 +27,15 @@ class Correspondent(TimeStampedModel):
         return self.name
 
 
-class Project(TimeStampedModel):
+class Vorgang(TimeStampedModel):
+    """Aktenvorgang/Angelegenheit -- fachlich kein "Projekt"."""
+
     name = models.CharField(max_length=255, unique=True)
 
     class Meta:
         ordering = ["name"]
+        verbose_name = "Vorgang"
+        verbose_name_plural = "Vorgänge"
 
     def __str__(self):
         return self.name
@@ -121,7 +125,7 @@ class Document(TimeStampedModel):
         blank=True,
         related_name="documents",
     )
-    projects = models.ManyToManyField(Project, blank=True, related_name="documents")
+    vorgaenge = models.ManyToManyField(Vorgang, blank=True, related_name="documents")
     tags = models.ManyToManyField(Tag, blank=True, related_name="documents")
 
     # Sichtbarkeit: owner + departments (n:n) + visibility-Schalter.
