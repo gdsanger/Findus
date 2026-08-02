@@ -250,6 +250,21 @@ FINDUS_CHUNK_SIZE_TOKENS = int(env("FINDUS_CHUNK_SIZE_TOKENS", "500"))
 FINDUS_CHUNK_OVERLAP_TOKENS = int(env("FINDUS_CHUNK_OVERLAP_TOKENS", "50"))
 FINDUS_CHUNK_EMBEDDING_BATCH_SIZE = int(env("FINDUS_CHUNK_EMBEDDING_BATCH_SIZE", "64"))
 
+# --------------------------------------------------------------------------
+# Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
+# -> vision, cheapest usable stage wins. A page only escalates to the next
+# (more expensive) stage when the current one produced fewer than
+# MIN_CHARS_PER_PAGE characters, or -- for OCR -- when its mean per-word
+# confidence is also below MIN_OCR_CONFIDENCE; vision is the last resort,
+# never the first call. OCR itself needs the tesseract-ocr + poppler-utils
+# system packages (see Dockerfile) -- pytesseract/pdf2image are just their
+# Python bindings.
+# --------------------------------------------------------------------------
+FINDUS_EXTRACTION_MIN_CHARS_PER_PAGE = int(env("FINDUS_EXTRACTION_MIN_CHARS_PER_PAGE", "20"))
+FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE = float(env("FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE", "60"))
+FINDUS_EXTRACTION_OCR_LANGUAGES = env("FINDUS_EXTRACTION_OCR_LANGUAGES", "deu+eng")
+FINDUS_EXTRACTION_PDF_RENDER_DPI = int(env("FINDUS_EXTRACTION_PDF_RENDER_DPI", "200"))
+
 # Per-provider settings, keyed by the same name used in
 # FINDUS_AI_{EMBEDDING,GENERATION,VISION}_PROVIDER. `*_model_version` is not
 # read back from any provider API (none of them report it consistently) --

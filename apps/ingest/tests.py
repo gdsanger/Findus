@@ -143,10 +143,10 @@ class IngestFileServiceTests(TestCase):
             )
 
         mock_async_task.assert_called_once()
-        from apps.documents.tasks import process_document_task
+        from apps.documents.tasks import extract_document_task
 
         args = mock_async_task.call_args.args
-        self.assertEqual(args[0], process_document_task)
+        self.assertEqual(args[0], extract_document_task)
         self.assertEqual(args[1], result.document.id)
 
 

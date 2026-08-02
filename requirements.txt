@@ -27,5 +27,16 @@ mcp==1.9.4
 starlette==0.47.2
 uvicorn[standard]==0.34.3
 
+# Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
+# -> vision. pytesseract/pdf2image are Python bindings only -- the
+# tesseract-ocr + poppler-utils binaries they shell out to are installed
+# in the Dockerfile, not via pip.
+pypdf==6.14.2
+pdf2image==1.17.0
+pytesseract==0.3.13
+python-docx==1.2.0
+Pillow==12.3.0
+langdetect==1.0.9
+
 # Production server
 gunicorn==23.0.0

@@ -48,17 +48,19 @@ def process_document(
     document_id: int, *, embedding_provider: Optional[EmbeddingProvider] = None
 ) -> Document:
     """Chunk `document.text_content`, embed each chunk, and replace the
-    document's `Chunk` set. On success, `processing_status` becomes
-    `ready`; on failure it becomes `failed` with `processing_error` set,
-    and the exception is re-raised so Django-Q (or a management command
-    loop) sees the task as failed too.
+    document's `Chunk` set. `processing_status` becomes `embedding` while
+    this runs (the pipeline's second stage, after `extracting` -- see
+    apps.documents.extraction, #1009); on success it becomes `ready`, on
+    failure `failed` with `processing_error` set, and the exception is
+    re-raised so Django-Q (or a management command loop) sees the task as
+    failed too.
 
     Existing chunks are only replaced once new embeddings were computed
     successfully -- a failing embed call leaves a previously indexed
     document searchable rather than clobbering it.
     """
     document = Document.objects.get(pk=document_id)
-    document.processing_status = Document.ProcessingStatus.PROCESSING
+    document.processing_status = Document.ProcessingStatus.EMBEDDING
     document.processing_error = ""
     document.save(update_fields=["processing_status", "processing_error", "updated_at"])
 

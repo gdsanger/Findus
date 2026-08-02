@@ -31,12 +31,19 @@ class DocumentLinkInline(admin.TabularInline):
 
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
-    list_display = ("title", "correspondent", "processing_status", "visibility", "created_at")
-    list_filter = ("processing_status", "visibility", "departments", "tags")
+    list_display = (
+        "title",
+        "correspondent",
+        "processing_status",
+        "extraction_method",
+        "visibility",
+        "created_at",
+    )
+    list_filter = ("processing_status", "extraction_method", "visibility", "departments", "tags")
     search_fields = ("title", "text_content")
     autocomplete_fields = ("correspondent", "owner", "projects", "tags")
     filter_horizontal = ("departments",)
-    readonly_fields = ("processing_error",)
+    readonly_fields = ("processing_error", "extraction_method")
     inlines = [ChunkInline, DocumentLinkInline]
 
 
