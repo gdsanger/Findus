@@ -12,6 +12,7 @@ pgvector==0.4.1
 
 # Frontend glue
 django-htmx==1.23.2
+Markdown==3.7
 
 # Cache / queue / background worker (Django-Q2, not Celery)
 django-q2==1.8.0
