@@ -94,6 +94,7 @@ class Document(TimeStampedModel):
     class Source(models.TextChoices):
         UPLOAD = "upload", "Upload"
         MAIL = "mail", "E-Mail"
+        FOLDER = "folder", "Ordner-Überwachung"
         API = "api", "API"
 
     title = models.CharField(max_length=255)

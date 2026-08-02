@@ -27,6 +27,30 @@ def env_list(name, default=""):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def env_ingest_folders(name, default=""):
+    """Parse `path[:department[:visibility]]` entries, ";"-separated, into
+    the list-of-dicts shape `apps.ingest.connectors.folder` expects. Flat
+    env-var syntax (not a nested config file) matches how every other
+    Findus setting in this file is sourced.
+    """
+    raw = env(name, default) or ""
+    folders = []
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        path, _, rest = entry.partition(":")
+        department, _, visibility = rest.partition(":")
+        folders.append(
+            {
+                "path": path.strip(),
+                "department": department.strip() or None,
+                "visibility": visibility.strip() or "department",
+            }
+        )
+    return folders
+
+
 SECRET_KEY = env("DJANGO_SECRET_KEY", "insecure-dev-key-change-me")
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
@@ -50,6 +74,7 @@ INSTALLED_APPS = [
     "apps.ai",
     "apps.mail",
     "apps.mcp",
+    "apps.ingest",
 ]
 
 MIDDLEWARE = [
@@ -281,6 +306,18 @@ FINDUS_MAIL_BACKENDS = {
         "sender": env("FINDUS_GRAPH_SENDER", ""),
     },
 }
+
+# --------------------------------------------------------------------------
+# Ingest: Ordner-Connector (apps.ingest.connectors.folder) -- pollt die
+# konfigurierten Eingangsordner, legt neue Dateien als Document an (siehe
+# apps.ingest.service) und verschiebt sie nach processed/failed.
+# --------------------------------------------------------------------------
+FINDUS_INGEST_WATCH_FOLDERS = env_ingest_folders("FINDUS_INGEST_WATCH_FOLDERS", "")
+FINDUS_INGEST_ALLOWED_EXTENSIONS = env_list(
+    "FINDUS_INGEST_ALLOWED_EXTENSIONS",
+    "pdf,png,jpg,jpeg,tif,tiff,docx,txt,eml",
+)
+FINDUS_INGEST_POLL_INTERVAL_SECONDS = float(env("FINDUS_INGEST_POLL_INTERVAL_SECONDS", "10"))
 
 LOGGING = {
     "version": 1,
