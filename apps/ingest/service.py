@@ -71,9 +71,9 @@ def _handle_duplicate(
 def _enqueue_processing(document_id: int) -> str:
     from django_q.tasks import async_task
 
-    from apps.documents.tasks import process_document_task
+    from apps.documents.tasks import extract_document_task
 
-    return async_task(process_document_task, document_id)
+    return async_task(extract_document_task, document_id)
 
 
 def ingest_file(

@@ -86,10 +86,25 @@ class Document(TimeStampedModel):
         PRIVATE = "private", "Privat"
 
     class ProcessingStatus(models.TextChoices):
+        """pending -> extracting (#1009, Text-Layer/OCR/Vision-Kaskade) ->
+        embedding (#1010, Chunking + Embeddings) -> ready, or failed at
+        either stage with `processing_error` set.
+        """
+
         PENDING = "pending", "Ausstehend"
-        PROCESSING = "processing", "In Verarbeitung"
+        EXTRACTING = "extracting", "Extraktion läuft"
+        EMBEDDING = "embedding", "Indizierung läuft"
         READY = "ready", "Bereit"
         FAILED = "failed", "Fehlgeschlagen"
+
+    class ExtractionMethod(models.TextChoices):
+        """Which cascade stage (apps.documents.extraction, #1009) actually
+        produced `text_content` -- provenance for how much to trust it.
+        """
+
+        TEXT_LAYER = "text_layer", "Text-Layer"
+        OCR = "ocr", "OCR"
+        VISION = "vision", "Vision AI"
 
     class Source(models.TextChoices):
         UPLOAD = "upload", "Upload"
@@ -137,6 +152,9 @@ class Document(TimeStampedModel):
     # Extraktion + Cache.
     text_content = models.TextField(blank=True)
     markdown = models.TextField(blank=True)
+    extraction_method = models.CharField(
+        max_length=20, choices=ExtractionMethod.choices, blank=True
+    )
     metadata = models.JSONField(default=dict, blank=True)
     processing_error = models.TextField(blank=True)
 
