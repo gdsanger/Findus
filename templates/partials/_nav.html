@@ -4,6 +4,16 @@
 <a href="{% url 'documents:home' %}" class="findus-brand">
     <span>Findus</span>
 </a>
+<form method="get" action="{% url 'documents:home' %}" class="findus-nav-search" role="search">
+    <input
+        type="search"
+        name="q"
+        class="form-control form-control-sm"
+        placeholder="Suchen …"
+        aria-label="Dokumente durchsuchen"
+        value="{% if request.resolver_match.url_name == 'home' %}{{ request.GET.q }}{% endif %}"
+    >
+</form>
 <ul class="findus-nav-list">
     <li>
         <a
