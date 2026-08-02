@@ -1,6 +1,15 @@
 from django.contrib import admin
 
-from .models import Chunk, Correspondent, Document, DocumentLink, Project, Tag
+from .models import (
+    ChecklistItem,
+    Chunk,
+    Correspondent,
+    Document,
+    DocumentLink,
+    Project,
+    Tag,
+    Task,
+)
 
 
 class ChunkInline(admin.TabularInline):
@@ -29,6 +38,21 @@ class DocumentLinkInline(admin.TabularInline):
     extra = 0
 
 
+class DocumentTaskInline(admin.TabularInline):
+    """Shows which Tasks (#1012) are linked to this document.
+
+    Uses the auto-created n:n through table directly since `tasks` is only
+    a reverse accessor on Document (the field lives on `Task.documents`).
+    """
+
+    model = Task.documents.through
+    fk_name = "document"
+    autocomplete_fields = ("task",)
+    extra = 0
+    verbose_name = "Verknüpfte Aufgabe"
+    verbose_name_plural = "Verknüpfte Aufgaben"
+
+
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
     list_display = (
@@ -44,7 +68,7 @@ class DocumentAdmin(admin.ModelAdmin):
     autocomplete_fields = ("correspondent", "owner", "projects", "tags")
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
-    inlines = [ChunkInline, DocumentLinkInline]
+    inlines = [ChunkInline, DocumentLinkInline, DocumentTaskInline]
 
 
 @admin.register(Correspondent)
@@ -64,3 +88,20 @@ class TagAdmin(admin.ModelAdmin):
     list_display = ("name", "dimension", "created_at")
     list_filter = ("dimension",)
     search_fields = ("name", "dimension")
+
+
+class ChecklistItemInline(admin.TabularInline):
+    model = ChecklistItem
+    fields = ("text", "is_done", "order")
+    extra = 0
+
+
+@admin.register(Task)
+class TaskAdmin(admin.ModelAdmin):
+    list_display = ("title", "kind", "status", "due_date")
+    list_filter = ("status", "kind", "due_date")
+    search_fields = ("title", "description")
+    autocomplete_fields = ("owner", "documents")
+    filter_horizontal = ("departments",)
+    readonly_fields = ("done_at",)
+    inlines = [ChecklistItemInline]
