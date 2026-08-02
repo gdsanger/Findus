@@ -1,0 +1,7 @@
+Hallo,
+
+die Verarbeitung von "{{ document_name }}" ist abgeschlossen.
+{% if document_url %}
+Dokument ansehen: {{ document_url }}
+{% endif %}
+-- Findus
