@@ -1,7 +1,7 @@
 # Core
 Django==5.2.15
 python-dotenv==1.2.2
-requests==2.31.0
+requests==2.33.0
 
 # AI provider layer (apps.ai.providers): plain HTTP calls to OpenAI/
 # Claude/Gemini/Ollama -- no vendor SDKs, see apps/ai/providers/__init__.py
