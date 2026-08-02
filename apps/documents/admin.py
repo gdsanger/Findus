@@ -6,9 +6,10 @@ from .models import Chunk, Correspondent, Document, DocumentLink, Project, Tag
 class ChunkInline(admin.TabularInline):
     """Read-only view of a document's chunks.
 
-    Chunks are produced by the ingest/embedding pipeline (follow-up issue),
-    not hand-entered — so the inline has no add permission and never shows
-    the `embedding` vector, which has no sane form representation.
+    Chunks are produced by the chunking/embedding pipeline
+    (`apps.documents.processing`), not hand-entered — so the inline has no
+    add permission and never shows the `embedding` vector, which has no
+    sane form representation.
     """
 
     model = Chunk
@@ -35,6 +36,7 @@ class DocumentAdmin(admin.ModelAdmin):
     search_fields = ("title", "text_content")
     autocomplete_fields = ("correspondent", "owner", "projects", "tags")
     filter_horizontal = ("departments",)
+    readonly_fields = ("processing_error",)
     inlines = [ChunkInline, DocumentLinkInline]
 
 

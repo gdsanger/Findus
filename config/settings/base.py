@@ -236,6 +236,17 @@ FINDUS_AI_TIMEOUT_SECONDS = float(env("FINDUS_AI_TIMEOUT_SECONDS", "30"))
 FINDUS_AI_MAX_RETRIES = int(env("FINDUS_AI_MAX_RETRIES", "3"))
 FINDUS_AI_RETRY_BACKOFF_SECONDS = float(env("FINDUS_AI_RETRY_BACKOFF_SECONDS", "0.5"))
 
+# --------------------------------------------------------------------------
+# Chunking (apps.documents.chunking / apps.documents.processing): how
+# `Document.text_content` is split before embedding. "Tokens" here are
+# whitespace-split words, not a vendor tokenizer -- the embedding provider
+# is swappable, so the chunk boundary must not depend on any one vendor's
+# tokenizer (see apps.ai.providers).
+# --------------------------------------------------------------------------
+FINDUS_CHUNK_SIZE_TOKENS = int(env("FINDUS_CHUNK_SIZE_TOKENS", "500"))
+FINDUS_CHUNK_OVERLAP_TOKENS = int(env("FINDUS_CHUNK_OVERLAP_TOKENS", "50"))
+FINDUS_CHUNK_EMBEDDING_BATCH_SIZE = int(env("FINDUS_CHUNK_EMBEDDING_BATCH_SIZE", "64"))
+
 # Per-provider settings, keyed by the same name used in
 # FINDUS_AI_{EMBEDDING,GENERATION}_PROVIDER. `*_model_version` is not read
 # back from any provider API (none of the four report it consistently) --

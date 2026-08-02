@@ -88,7 +88,7 @@ class Document(TimeStampedModel):
     class ProcessingStatus(models.TextChoices):
         PENDING = "pending", "Ausstehend"
         PROCESSING = "processing", "In Verarbeitung"
-        DONE = "done", "Fertig"
+        READY = "ready", "Bereit"
         FAILED = "failed", "Fehlgeschlagen"
 
     class Source(models.TextChoices):
@@ -138,6 +138,7 @@ class Document(TimeStampedModel):
     text_content = models.TextField(blank=True)
     markdown = models.TextField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    processing_error = models.TextField(blank=True)
 
     original_file = models.FileField(upload_to="documents/%Y/%m/", blank=True)
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)

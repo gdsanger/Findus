@@ -156,7 +156,7 @@ class DocumentRetrievalListTests(TestCase):
         old_doc = Document.objects.create(
             title="Old",
             visibility=Document.Visibility.DEPARTMENT,
-            processing_status=Document.ProcessingStatus.DONE,
+            processing_status=Document.ProcessingStatus.READY,
         )
         old_doc.departments.add(self.dept_a)
         Document.objects.filter(pk=old_doc.pk).update(
@@ -172,7 +172,7 @@ class DocumentRetrievalListTests(TestCase):
 
         results = list(
             self.service.list_documents(
-                status=Document.ProcessingStatus.DONE,
+                status=Document.ProcessingStatus.READY,
                 date_from=date(2019, 1, 1),
                 date_to=date(2021, 1, 1),
             )
