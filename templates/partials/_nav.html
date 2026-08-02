@@ -1,0 +1,26 @@
+{% load static %}
+{# Shared navigation body: included by both the desktop sidebar and the
+   mobile off-canvas panel in base.html, so nav items are defined once. #}
+<a href="{% url 'documents:home' %}" class="findus-brand">
+    <span>Findus</span>
+</a>
+<ul class="findus-nav-list">
+    <li>
+        <a
+            href="{% url 'documents:home' %}"
+            class="findus-nav-link{% if request.resolver_match.url_name == 'home' %} active{% endif %}"
+        >
+            Dokumente
+        </a>
+    </li>
+</ul>
+<div class="findus-nav-spacer"></div>
+{% if request.user.is_authenticated %}
+<div class="findus-user">
+    <span class="findus-user-name">{{ request.user }}</span>
+    <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-secondary">Logout</button>
+    </form>
+</div>
+{% endif %}
