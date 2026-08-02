@@ -7,9 +7,11 @@ message with an HTML body is sent as HTML-only and the plain-text
 rendering is dropped for that send. Callers that need a guaranteed
 plain-text copy should route through the SMTP backend instead.
 
-The same client-credentials token fetch is reusable by the later Graph
-*ingest* feature (reading a mailbox) -- see Architektur.md, "Build-Plan
-Step 1", point 4.
+The client-credentials token fetch is factored out as `GraphTokenClient`
+so it's reusable as-is by the Graph mailbox-read ingest connector
+(`apps.ingest.connectors.mail_graph`) -- same app registration, same
+token, just a different Graph permission (Mail.Read vs. Mail.Send)
+granted to it.
 """
 
 from __future__ import annotations
@@ -31,8 +33,13 @@ GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 TOKEN_EXPIRY_MARGIN_SECONDS = 60
 
 
-class GraphBackend:
-    name = "graph"
+class GraphTokenClient:
+    """App-only (client-credentials) token fetch + cache for Graph.
+
+    One instance per (tenant, app registration) -- holds the cached token
+    so repeat calls (e.g. one per polled mailbox message) don't refetch
+    until it's actually close to expiry.
+    """
 
     def __init__(
         self,
@@ -40,8 +47,6 @@ class GraphBackend:
         tenant_id: str,
         client_id: str,
         client_secret: str,
-        sender: str,
-        from_address: str,
         timeout: float,
         max_retries: int,
         retry_backoff_seconds: float,
@@ -49,8 +54,6 @@ class GraphBackend:
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
-        self.sender = sender
-        self.from_address = from_address
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
@@ -85,10 +88,43 @@ class GraphBackend:
         )
         return self._token
 
-    def _get_token(self) -> str:
+    def get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at:
             return self._token
         return self._fetch_token()
+
+
+class GraphBackend:
+    name = "graph"
+
+    def __init__(
+        self,
+        *,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str,
+        sender: str,
+        from_address: str,
+        timeout: float,
+        max_retries: int,
+        retry_backoff_seconds: float,
+    ):
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.sender = sender
+        self.from_address = from_address
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self._token_client = GraphTokenClient(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
 
     def send(self, message: OutgoingMessage) -> None:
         body = {
@@ -109,7 +145,7 @@ class GraphBackend:
             response = requests.post(
                 f"{GRAPH_BASE_URL}/users/{self.sender}/sendMail",
                 headers={
-                    "Authorization": f"Bearer {self._get_token()}",
+                    "Authorization": f"Bearer {self._token_client.get_token()}",
                     "Content-Type": "application/json",
                 },
                 json=body,

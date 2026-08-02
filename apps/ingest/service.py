@@ -18,7 +18,7 @@ from typing import IO, Any, Literal, Optional
 from django.core.files import File
 
 from apps.accounts.models import Department
-from apps.documents.models import Document
+from apps.documents.models import Correspondent, Document
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +88,16 @@ def ingest_file(
     content_type: str = "",
     origin_metadata: Optional[dict] = None,
     on_duplicate: OnDuplicate = "skip",
+    correspondent: Optional[Correspondent] = None,
 ) -> IngestResult:
     """Ingest `fileobj` as a new `Document`, or recognize it as a duplicate.
 
     `source` must be one of `Document.Source`. `origin_metadata` is
     connector-specific provenance (e.g. the watched folder path, or a
-    mail message id) merged into `Document.metadata`.
+    mail message id) merged into `Document.metadata`. `correspondent`
+    (e.g. resolved from a mail sender address) is attached the same way
+    `department` is -- only to a newly created `Document`, never onto an
+    existing one recognized as a duplicate.
 
     Dedup is global by `sha256` (see Architektur.md: one container per
     customer, so a single archive-wide dedup scope is correct). On a
@@ -135,6 +139,7 @@ def ingest_file(
         metadata=metadata,
         owner=owner,
         visibility=visibility or Document.Visibility.DEPARTMENT,
+        correspondent=correspondent,
     )
     document.original_file.save(filename, File(fileobj), save=False)
     document.save()
