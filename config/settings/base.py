@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.documents",
     "apps.ai",
+    "apps.mail",
     "apps.mcp",
 ]
 
@@ -248,6 +249,36 @@ FINDUS_AI_PROVIDERS = {
         "embedding_model_version": env("FINDUS_OLLAMA_EMBEDDING_MODEL_VERSION", "1"),
         "generation_model": env("FINDUS_OLLAMA_GENERATION_MODEL", "llama3.1"),
         "generation_model_version": env("FINDUS_OLLAMA_GENERATION_MODEL_VERSION", "1"),
+    },
+}
+
+# --------------------------------------------------------------------------
+# Mail-Versand (apps.mail.backends) -- backend is a config choice, not a
+# code change. Backend name must be one of: smtp, graph, fake.
+# --------------------------------------------------------------------------
+FINDUS_MAIL_BACKEND = env("FINDUS_MAIL_BACKEND", "smtp")
+FINDUS_MAIL_FROM_ADDRESS = env("FINDUS_MAIL_FROM_ADDRESS", "findus@localhost")
+
+FINDUS_MAIL_TIMEOUT_SECONDS = float(env("FINDUS_MAIL_TIMEOUT_SECONDS", "30"))
+FINDUS_MAIL_MAX_RETRIES = int(env("FINDUS_MAIL_MAX_RETRIES", "3"))
+FINDUS_MAIL_RETRY_BACKOFF_SECONDS = float(env("FINDUS_MAIL_RETRY_BACKOFF_SECONDS", "0.5"))
+
+FINDUS_MAIL_BACKENDS = {
+    "smtp": {
+        "host": env("FINDUS_SMTP_HOST", "localhost"),
+        "port": int(env("FINDUS_SMTP_PORT", "587")),
+        "username": env("FINDUS_SMTP_USERNAME", ""),
+        "password": env("FINDUS_SMTP_PASSWORD", ""),
+        "use_tls": env_bool("FINDUS_SMTP_USE_TLS", True),
+        "use_ssl": env_bool("FINDUS_SMTP_USE_SSL", False),
+    },
+    "graph": {
+        "tenant_id": env("FINDUS_GRAPH_TENANT_ID", ""),
+        "client_id": env("FINDUS_GRAPH_CLIENT_ID", ""),
+        "client_secret": env("FINDUS_GRAPH_CLIENT_SECRET", ""),
+        # Mailbox to send as: the app registration needs Mail.Send
+        # application permission, granted for this user/UPN.
+        "sender": env("FINDUS_GRAPH_SENDER", ""),
     },
 }
 
