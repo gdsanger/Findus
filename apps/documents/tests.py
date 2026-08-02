@@ -3,7 +3,8 @@ from django.test import TestCase
 
 from apps.accounts.models import Department
 
-from .models import Document
+from .models import Correspondent, Document
+from .services import find_or_create_correspondent_by_email
 
 User = get_user_model()
 
@@ -47,3 +48,39 @@ class DocumentVisibleToTests(TestCase):
 
     def test_non_owner_does_not_see_private_doc(self):
         self.assertNotIn(self.private_doc, Document.objects.visible_to(self.user_b))
+
+
+class FindOrCreateCorrespondentByEmailTests(TestCase):
+    def test_creates_new_correspondent_with_display_name(self):
+        correspondent = find_or_create_correspondent_by_email(
+            "Anna@Example.com", "Anna Beispiel"
+        )
+
+        self.assertEqual(correspondent.email, "anna@example.com")
+        self.assertEqual(correspondent.name, "Anna Beispiel")
+
+    def test_falls_back_to_email_when_no_display_name(self):
+        correspondent = find_or_create_correspondent_by_email("anna@example.com", "")
+        self.assertEqual(correspondent.name, "anna@example.com")
+
+    def test_matches_existing_correspondent_case_insensitively(self):
+        existing = Correspondent.objects.create(name="Anna Beispiel", email="anna@example.com")
+
+        correspondent = find_or_create_correspondent_by_email("ANNA@EXAMPLE.COM", "Ignored Name")
+
+        self.assertEqual(correspondent.id, existing.id)
+        self.assertEqual(Correspondent.objects.count(), 1)
+
+    def test_name_collision_with_unrelated_correspondent_is_disambiguated(self):
+        Correspondent.objects.create(name="Buchhaltung", email="buchhaltung@firma-a.de")
+
+        correspondent = find_or_create_correspondent_by_email(
+            "buchhaltung@firma-b.de", "Buchhaltung"
+        )
+
+        self.assertNotEqual(correspondent.name, "Buchhaltung")
+        self.assertEqual(correspondent.email, "buchhaltung@firma-b.de")
+        self.assertEqual(Correspondent.objects.count(), 2)
+
+    def test_blank_email_returns_none(self):
+        self.assertIsNone(find_or_create_correspondent_by_email("", "Someone"))

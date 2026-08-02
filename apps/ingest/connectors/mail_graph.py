@@ -1,0 +1,244 @@
+"""Microsoft-Graph-Postfach-Connector: liest ungelesene Mails aus einem
+per Graph API erreichbaren Postfach und übergibt Anhänge (+ optional den
+Mailbody) an den gemeinsamen Ingest-Kontrakt (`apps.ingest.service`).
+
+Nutzt den client-credentials Token-Fetch aus `apps.mail.backends.graph`
+(`GraphTokenClient`) -- dieselbe App-Registrierung wie der Mail-Versand,
+nur mit zusätzlich erteilter Mail.Read-Berechtigung (application) für
+dieses Postfach.
+
+Idempotenz über `isRead`: die Arbeitsmenge ist `isRead eq false`, nach
+erfolgreichem Ingest wird die Mail per `PATCH isRead=true` markiert.
+Kein Verschieben in einen Zielordner -- das würde nur einen weiteren
+API-Call und die Existenz/Anlage dieses Ordners voraussetzen, ohne einen
+zusätzlichen Nutzen gegenüber dem Read-Flag zu bringen. Schlägt die
+Verarbeitung einer Mail fehl, bleibt sie ungelesen und wird beim
+nächsten Poll erneut versucht (Fehlertoleranz, andere Mails im selben
+Durchlauf laufen weiter).
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+import re
+from dataclasses import dataclass
+from io import BytesIO
+from typing import Optional
+
+import requests
+from django.conf import settings
+
+from apps.accounts.models import Department
+from apps.documents.models import Document
+from apps.documents.services import find_or_create_correspondent_by_email
+from apps.ingest.service import ingest_file
+from apps.mail.backends.graph import GraphTokenClient
+
+logger = logging.getLogger(__name__)
+
+GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+MESSAGE_SELECT_FIELDS = "id,subject,from,receivedDateTime,hasAttachments,body"
+
+
+@dataclass(frozen=True)
+class GraphMailbox:
+    tenant_id: str
+    client_id: str
+    client_secret: str
+    mailbox: str
+    folder: str = "inbox"
+    department: Optional[str] = None
+    visibility: str = Document.Visibility.DEPARTMENT
+    on_duplicate: str = "skip"
+    ingest_body: bool = True
+    timeout: float = 30.0
+    max_retries: int = 3
+    retry_backoff_seconds: float = 0.5
+
+
+def get_graph_mailboxes() -> list[GraphMailbox]:
+    config = getattr(settings, "FINDUS_INGEST_MAIL_SOURCES", {}).get("graph") or {}
+    if not config.get("enabled") or not config.get("mailbox"):
+        return []
+    return [
+        GraphMailbox(
+            tenant_id=config["tenant_id"],
+            client_id=config["client_id"],
+            client_secret=config["client_secret"],
+            mailbox=config["mailbox"],
+            folder=config.get("folder") or "inbox",
+            department=config.get("department"),
+            visibility=config.get("visibility") or Document.Visibility.DEPARTMENT,
+            on_duplicate=config.get("on_duplicate") or "skip",
+            ingest_body=config.get("ingest_body", True),
+        )
+    ]
+
+
+def _resolve_department(name: Optional[str]) -> Optional[Department]:
+    if not name:
+        return None
+    department, _ = Department.objects.get_or_create(name=name)
+    return department
+
+
+def _token_client(mailbox: GraphMailbox) -> GraphTokenClient:
+    return GraphTokenClient(
+        tenant_id=mailbox.tenant_id,
+        client_id=mailbox.client_id,
+        client_secret=mailbox.client_secret,
+        timeout=mailbox.timeout,
+        max_retries=mailbox.max_retries,
+        retry_backoff_seconds=mailbox.retry_backoff_seconds,
+    )
+
+
+def _headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def _fetch_unread_messages(mailbox: GraphMailbox, token: str) -> list[dict]:
+    url = (
+        f"{GRAPH_BASE_URL}/users/{mailbox.mailbox}/mailFolders/{mailbox.folder}/messages"
+        f"?$filter=isRead eq false&$select={MESSAGE_SELECT_FIELDS}"
+    )
+    response = requests.get(url, headers=_headers(token), timeout=mailbox.timeout)
+    response.raise_for_status()
+    return response.json().get("value", [])
+
+
+def _fetch_attachments(mailbox: GraphMailbox, token: str, message_id: str) -> list[dict]:
+    url = f"{GRAPH_BASE_URL}/users/{mailbox.mailbox}/messages/{message_id}/attachments"
+    response = requests.get(url, headers=_headers(token), timeout=mailbox.timeout)
+    response.raise_for_status()
+    return response.json().get("value", [])
+
+
+def _mark_as_read(mailbox: GraphMailbox, token: str, message_id: str) -> None:
+    url = f"{GRAPH_BASE_URL}/users/{mailbox.mailbox}/messages/{message_id}"
+    response = requests.patch(
+        url, headers=_headers(token), json={"isRead": True}, timeout=mailbox.timeout
+    )
+    response.raise_for_status()
+
+
+def _sender_email_and_name(message: dict) -> tuple[str, str]:
+    sender = (message.get("from") or {}).get("emailAddress") or {}
+    return sender.get("address", ""), sender.get("name", "")
+
+
+def _safe_filename(subject: str, extension: str) -> str:
+    safe_subject = re.sub(r"[^\w\-. ]", "_", subject or "email").strip()[:80] or "email"
+    return f"{safe_subject}.{extension}"
+
+
+def _assign_correspondent(result, correspondent) -> None:
+    if correspondent is None or not result.created:
+        return
+    result.document.correspondent = correspondent
+    result.document.save(update_fields=["correspondent"])
+
+
+def _ingest_attachments(mailbox, token, message, department, correspondent, origin_metadata) -> None:
+    for attachment in _fetch_attachments(mailbox, token, message["id"]):
+        if attachment.get("@odata.type") != "#microsoft.graph.fileAttachment":
+            continue
+        content = attachment.get("contentBytes")
+        if not content:
+            continue
+        result = ingest_file(
+            BytesIO(base64.b64decode(content)),
+            filename=attachment.get("name") or "attachment",
+            source=Document.Source.MAIL,
+            department=department,
+            visibility=mailbox.visibility,
+            content_type=attachment.get("contentType", ""),
+            origin_metadata=origin_metadata,
+            on_duplicate=mailbox.on_duplicate,
+            correspondent=correspondent,
+        )
+        _assign_correspondent(result, correspondent)
+        logger.info(
+            "Ingest-Graph-Postfach: %s -> Document %s (created=%s, duplicate=%s)",
+            attachment.get("name"),
+            result.document.id,
+            result.created,
+            result.duplicate,
+        )
+
+
+def _ingest_body(mailbox, message, department, correspondent, origin_metadata) -> None:
+    body = message.get("body") or {}
+    content = body.get("content") or ""
+    if not content:
+        return
+    content_type = body.get("contentType") or "text"
+    extension = "html" if content_type == "html" else "txt"
+    result = ingest_file(
+        BytesIO(content.encode("utf-8")),
+        filename=_safe_filename(message.get("subject", ""), extension),
+        source=Document.Source.MAIL,
+        title=message.get("subject") or None,
+        department=department,
+        visibility=mailbox.visibility,
+        content_type="text/html" if extension == "html" else "text/plain",
+        origin_metadata=origin_metadata,
+        on_duplicate=mailbox.on_duplicate,
+        correspondent=correspondent,
+    )
+    _assign_correspondent(result, correspondent)
+    logger.info(
+        "Ingest-Graph-Postfach: Mailbody -> Document %s (created=%s, duplicate=%s)",
+        result.document.id,
+        result.created,
+        result.duplicate,
+    )
+
+
+def scan_mailbox(mailbox: GraphMailbox) -> None:
+    """One polling pass over a single configured Graph mailbox.
+
+    Every message is handled independently: a failure on one message is
+    logged and it's left unread for the next poll, the scan continues
+    with the rest (Fehlertoleranz aus den Anforderungen).
+    """
+
+    department = _resolve_department(mailbox.department)
+    token_client = _token_client(mailbox)
+    token = token_client.get_token()
+
+    for message in _fetch_unread_messages(mailbox, token):
+        message_id = message["id"]
+        try:
+            sender_email, sender_name = _sender_email_and_name(message)
+            correspondent = find_or_create_correspondent_by_email(sender_email, sender_name)
+            origin_metadata = {
+                "message_id": message_id,
+                "sender": sender_email,
+                "subject": message.get("subject", ""),
+                "received_at": message.get("receivedDateTime", ""),
+            }
+
+            if message.get("hasAttachments"):
+                _ingest_attachments(
+                    mailbox, token, message, department, correspondent, origin_metadata
+                )
+            if mailbox.ingest_body:
+                _ingest_body(mailbox, message, department, correspondent, origin_metadata)
+
+            _mark_as_read(mailbox, token, message_id)
+        except Exception:
+            logger.exception(
+                "Ingest-Graph-Postfach: Verarbeitung fehlgeschlagen für Message %s", message_id
+            )
+
+
+def scan_all_graph_mailboxes() -> None:
+    for mailbox in get_graph_mailboxes():
+        try:
+            scan_mailbox(mailbox)
+        except Exception:
+            logger.exception(
+                "Ingest-Graph-Postfach: Poll fehlgeschlagen für Postfach %s", mailbox.mailbox
+            )

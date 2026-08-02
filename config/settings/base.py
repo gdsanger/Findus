@@ -319,6 +319,51 @@ FINDUS_INGEST_ALLOWED_EXTENSIONS = env_list(
 )
 FINDUS_INGEST_POLL_INTERVAL_SECONDS = float(env("FINDUS_INGEST_POLL_INTERVAL_SECONDS", "10"))
 
+# --------------------------------------------------------------------------
+# Ingest: Mail-Connectoren (apps.ingest.connectors.mail_imap /
+# apps.ingest.connectors.mail_graph) -- der eigentliche Wert-Keil: pollt ein
+# IMAP- und/oder ein Graph-Postfach, legt Anhänge (+ optional den Mailbody)
+# als Document an und markiert verarbeitete Mails als gelesen (Idempotenz,
+# kein Extra-Zielordner).
+#
+# Genau ein Postfach pro Backend, kein Array: Customer-Zero-Prototyp ist
+# ein Container pro Kunde (siehe Architektur.md, "Deployment"), also
+# dieselbe Dict-Form wie FINDUS_MAIL_BACKENDS oben statt einer Liste.
+# --------------------------------------------------------------------------
+FINDUS_INGEST_MAIL_SOURCES = {
+    "imap": {
+        "enabled": env_bool("FINDUS_INGEST_IMAP_ENABLED", False),
+        "host": env("FINDUS_INGEST_IMAP_HOST", ""),
+        "port": int(env("FINDUS_INGEST_IMAP_PORT", "993")),
+        "username": env("FINDUS_INGEST_IMAP_USERNAME", ""),
+        "password": env("FINDUS_INGEST_IMAP_PASSWORD", ""),
+        "use_ssl": env_bool("FINDUS_INGEST_IMAP_USE_SSL", True),
+        "folder": env("FINDUS_INGEST_IMAP_FOLDER", "INBOX"),
+        "department": env("FINDUS_INGEST_IMAP_DEPARTMENT", "") or None,
+        "visibility": env("FINDUS_INGEST_IMAP_VISIBILITY", "department"),
+        "on_duplicate": env("FINDUS_INGEST_IMAP_ON_DUPLICATE", "skip"),
+        "ingest_body": env_bool("FINDUS_INGEST_IMAP_INGEST_BODY", True),
+    },
+    "graph": {
+        # Gleiche App-Registrierung wie FINDUS_MAIL_BACKENDS["graph"]
+        # (Mail.Send) -- braucht zusätzlich Mail.Read (application) für
+        # dieses Postfach, siehe apps.mail.backends.graph.GraphTokenClient.
+        "enabled": env_bool("FINDUS_INGEST_GRAPH_ENABLED", False),
+        "tenant_id": env("FINDUS_GRAPH_TENANT_ID", ""),
+        "client_id": env("FINDUS_GRAPH_CLIENT_ID", ""),
+        "client_secret": env("FINDUS_GRAPH_CLIENT_SECRET", ""),
+        "mailbox": env("FINDUS_INGEST_GRAPH_MAILBOX", ""),
+        "folder": env("FINDUS_INGEST_GRAPH_FOLDER", "inbox"),
+        "department": env("FINDUS_INGEST_GRAPH_DEPARTMENT", "") or None,
+        "visibility": env("FINDUS_INGEST_GRAPH_VISIBILITY", "department"),
+        "on_duplicate": env("FINDUS_INGEST_GRAPH_ON_DUPLICATE", "skip"),
+        "ingest_body": env_bool("FINDUS_INGEST_GRAPH_INGEST_BODY", True),
+    },
+}
+FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS = float(
+    env("FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS", "60")
+)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

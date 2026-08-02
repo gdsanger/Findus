@@ -113,6 +113,19 @@ services:
       - .:/app
       - findus_ingest_data:/data/ingest
 
+  mail-ingest:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python manage.py watch_mail_ingest
+    volumes:
+      - .:/app
+
 volumes:
   findus_postgres_data:
   findus_redis_data:
