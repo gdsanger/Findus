@@ -7,7 +7,7 @@ from django.test import TestCase
 from apps.accounts.models import Department
 from apps.ai.providers.base import EmbeddingResult
 
-from .models import Chunk, Correspondent, Document, Project, Tag
+from .models import Chunk, Correspondent, Document, Tag, Vorgang
 from .retrieval import DocumentRetrievalService
 
 User = get_user_model()
@@ -110,7 +110,7 @@ class DocumentRetrievalSearchTests(TestCase):
 
     def test_search_combines_with_structured_filters(self):
         correspondent = Correspondent.objects.create(name="ACME")
-        project = Project.objects.create(name="Project X")
+        vorgang = Vorgang.objects.create(name="Vorgang X")
         tag = Tag.objects.create(name="invoice")
 
         matching_doc = Document.objects.create(
@@ -119,7 +119,7 @@ class DocumentRetrievalSearchTests(TestCase):
             correspondent=correspondent,
         )
         matching_doc.departments.add(self.dept_a)
-        matching_doc.projects.add(project)
+        matching_doc.vorgaenge.add(vorgang)
         matching_doc.tags.add(tag)
         _add_chunk(matching_doc, position=0, vector=_one_hot(0))
 

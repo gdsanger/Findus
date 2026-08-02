@@ -6,9 +6,9 @@ from .models import (
     Correspondent,
     Document,
     DocumentLink,
-    Project,
     Tag,
     Task,
+    Vorgang,
 )
 
 
@@ -65,7 +65,7 @@ class DocumentAdmin(admin.ModelAdmin):
     )
     list_filter = ("processing_status", "extraction_method", "visibility", "departments", "tags")
     search_fields = ("title", "text_content")
-    autocomplete_fields = ("correspondent", "owner", "projects", "tags")
+    autocomplete_fields = ("correspondent", "owner", "vorgaenge", "tags")
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
     inlines = [ChunkInline, DocumentLinkInline, DocumentTaskInline]
@@ -77,8 +77,8 @@ class CorrespondentAdmin(admin.ModelAdmin):
     search_fields = ("name", "email")
 
 
-@admin.register(Project)
-class ProjectAdmin(admin.ModelAdmin):
+@admin.register(Vorgang)
+class VorgangAdmin(admin.ModelAdmin):
     list_display = ("name", "created_at")
     search_fields = ("name",)
 
