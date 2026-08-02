@@ -8,6 +8,7 @@ acceptance criterion ("kein echter Netz-Call im Test").
 
 from __future__ import annotations
 
+import base64
 import json
 from unittest.mock import Mock, patch
 
@@ -16,14 +17,21 @@ from django.test import SimpleTestCase, override_settings
 from apps.ai.providers import (
     GenerationChunk,
     GenerationResult,
+    ImageInput,
     Message,
     ProviderError,
+    VisionResult,
     get_embedding_provider,
     get_generation_provider,
+    get_vision_provider,
 )
 from apps.ai.providers.anthropic import AnthropicProvider
 from apps.ai.providers.base import Usage, with_retry
-from apps.ai.providers.fake import FakeEmbeddingProvider, FakeGenerationProvider
+from apps.ai.providers.fake import (
+    FakeEmbeddingProvider,
+    FakeGenerationProvider,
+    FakeVisionProvider,
+)
 from apps.ai.providers.gemini import GeminiProvider
 from apps.ai.providers.ollama import OllamaProvider
 from apps.ai.providers.openai import OpenAIProvider
@@ -87,6 +95,35 @@ class RegistrySwitchTests(SimpleTestCase):
             with self.assertRaises(ProviderError):
                 get_embedding_provider("ollama")
 
+    @override_settings(FINDUS_AI_VISION_PROVIDER="fake")
+    def test_vision_provider_selected_from_settings(self):
+        provider = get_vision_provider()
+        self.assertIsInstance(provider, FakeVisionProvider)
+
+    def test_vision_provider_configurable_independently_of_embed_generate(self):
+        """Vision picks its own provider name -- switching it must not
+        change what get_embedding_provider()/get_generation_provider()
+        return.
+        """
+
+        with override_settings(
+            FINDUS_AI_EMBEDDING_PROVIDER="fake",
+            FINDUS_AI_GENERATION_PROVIDER="fake",
+            FINDUS_AI_VISION_PROVIDER="ollama",
+        ):
+            self.assertIsInstance(get_embedding_provider(), FakeEmbeddingProvider)
+            self.assertIsInstance(get_generation_provider(), FakeGenerationProvider)
+            self.assertIsInstance(get_vision_provider(), OllamaProvider)
+
+    def test_anthropic_not_registered_for_vision(self):
+        # Anthropic has no vision adapter here (yet) -- must not be selectable.
+        with self.assertRaises(ProviderError):
+            get_vision_provider("anthropic")
+
+    def test_gemini_not_registered_for_vision(self):
+        with self.assertRaises(ProviderError):
+            get_vision_provider("gemini")
+
 
 class FakeProviderBehaviourTests(SimpleTestCase):
     def test_embed_returns_vector_model_and_version(self):
@@ -112,6 +149,15 @@ class FakeProviderBehaviourTests(SimpleTestCase):
         self.assertTrue(chunks[-1].done)
         streamed_text = "".join(chunk.delta for chunk in chunks)
         self.assertEqual(streamed_text.strip(), "a b c")
+
+    def test_describe_image_returns_text_model_and_version(self):
+        provider = FakeVisionProvider(model="fake-vision", version="2024-01", reply="a red logo")
+        result = provider.describe_image(ImageInput(data=b"\x89PNG..."), "describe this image")
+        self.assertIsInstance(result, VisionResult)
+        self.assertEqual(result.text, "a red logo")
+        self.assertEqual(result.model, "fake-vision")
+        self.assertEqual(result.version, "2024-01")
+        self.assertEqual(len(provider.calls), 1)
 
 
 class RetryBackoffTests(SimpleTestCase):
@@ -233,6 +279,8 @@ class OpenAIAdapterTests(SimpleTestCase):
             embedding_model_version="1",
             generation_model="gpt-4o-mini",
             generation_model_version="1",
+            vision_model="gpt-4o-mini",
+            vision_model_version="1",
             timeout=5,
             max_retries=0,
             retry_backoff_seconds=0,
@@ -301,6 +349,71 @@ class OpenAIAdapterTests(SimpleTestCase):
         self.assertEqual(capability, "embed")
         self.assertEqual(name, "openai")
         self.assertEqual(usage, Usage(prompt_tokens=7, completion_tokens=0))
+
+    @patch("apps.ai.providers.http.requests.request")
+    def test_describe_image_sends_base64_image_and_returns_text(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={
+                "choices": [{"message": {"content": "a scanned invoice"}}],
+                "usage": {
+                    "prompt_tokens": 300,
+                    "completion_tokens": 12,
+                    "prompt_tokens_details": {"image_tokens": 255},
+                },
+            }
+        )
+        result = self._provider().describe_image(
+            ImageInput(data=b"fake-png-bytes", mime_type="image/png"),
+            "Transcribe this page",
+        )
+        self.assertEqual(result.text, "a scanned invoice")
+        self.assertEqual(result.model, "gpt-4o-mini")
+
+        payload = mock_request.call_args.kwargs["json"]
+        content = payload["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "Transcribe this page"})
+        image_url = content[1]["image_url"]["url"]
+        self.assertTrue(image_url.startswith("data:image/png;base64,"))
+        # The key must never be logged/rendered -- only in the auth header.
+        self.assertEqual(mock_request.call_args.kwargs["headers"]["Authorization"], "Bearer sk-test")
+
+    @patch("apps.ai.providers.http.requests.request")
+    def test_describe_image_reports_image_tokens_to_usage_hook(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {
+                    "prompt_tokens": 300,
+                    "completion_tokens": 12,
+                    "prompt_tokens_details": {"image_tokens": 255},
+                },
+            }
+        )
+        seen = []
+        provider = self._provider()
+        provider._usage_hook = lambda capability, name, model, usage: seen.append(
+            (capability, name, model, usage)
+        )
+        provider.describe_image(ImageInput(data=b"x"), "describe")
+        self.assertEqual(len(seen), 1)
+        capability, name, model, usage = seen[0]
+        self.assertEqual(capability, "describe_image")
+        self.assertEqual(usage, Usage(prompt_tokens=300, completion_tokens=12, image_tokens=255))
+
+    def test_describe_image_without_vision_model_raises_clear_error(self):
+        provider = OpenAIProvider(
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+            embedding_model="text-embedding-3-small",
+            embedding_model_version="1",
+            generation_model="gpt-4o-mini",
+            generation_model_version="1",
+            timeout=5,
+            max_retries=0,
+            retry_backoff_seconds=0,
+        )
+        with self.assertRaises(ProviderError):
+            provider.describe_image(ImageInput(data=b"x"), "describe")
 
 
 class AnthropicAdapterTests(SimpleTestCase):
@@ -405,6 +518,8 @@ class OllamaAdapterTests(SimpleTestCase):
             embedding_model_version="1",
             generation_model="llama3.1",
             generation_model_version="1",
+            vision_model="llava",
+            vision_model_version="1",
             timeout=5,
             max_retries=0,
             retry_backoff_seconds=0,
@@ -433,3 +548,38 @@ class OllamaAdapterTests(SimpleTestCase):
         text = "".join(c.delta for c in chunks)
         self.assertEqual(text, "hello")
         self.assertTrue(chunks[-1].done)
+
+    @patch("apps.ai.providers.http.requests.request")
+    def test_describe_image_sends_base64_image_to_llava(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={"message": {"content": "a scanned invoice page"}}
+        )
+        result = self._provider().describe_image(
+            ImageInput(data=b"fake-png-bytes", mime_type="image/png"),
+            "Transcribe this page",
+        )
+        self.assertEqual(result.text, "a scanned invoice page")
+        self.assertEqual(result.model, "llava")
+
+        payload = mock_request.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "llava")
+        message = payload["messages"][0]
+        self.assertEqual(message["content"], "Transcribe this page")
+        self.assertEqual(
+            message["images"],
+            [base64.b64encode(b"fake-png-bytes").decode("ascii")],
+        )
+
+    def test_describe_image_without_vision_model_raises_clear_error(self):
+        provider = OllamaProvider(
+            base_url="http://localhost:11434",
+            embedding_model="nomic-embed-text",
+            embedding_model_version="1",
+            generation_model="llama3.1",
+            generation_model_version="1",
+            timeout=5,
+            max_retries=0,
+            retry_backoff_seconds=0,
+        )
+        with self.assertRaises(ProviderError):
+            provider.describe_image(ImageInput(data=b"x"), "describe")

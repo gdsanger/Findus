@@ -9,6 +9,7 @@ set, is sent as a bearer token for setups proxied behind auth.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Iterable, Iterator, Optional
 
@@ -17,13 +18,23 @@ from .base import (
     GenerationChunk,
     GenerationOutput,
     GenerationResult,
+    ImageInput,
     Message,
+    ProviderError,
     UsageHook,
+    VisionResult,
 )
 from .http import request_json, stream_lines
 
 
 class OllamaProvider:
+    """Embeddings + generation + (via `vision_model`, e.g. `llava`)
+    vision -- the local/no-cost path for all three capabilities, so a
+    cloud outage or price change never blocks re-indexing, generation,
+    or the extraction cascade's vision stage (see Architektur.md,
+    "Lock-in-Hedges").
+    """
+
     name = "ollama"
 
     def __init__(
@@ -38,6 +49,8 @@ class OllamaProvider:
         max_retries: int,
         retry_backoff_seconds: float,
         api_key: str = "",
+        vision_model: str = "",
+        vision_model_version: str = "",
         usage_hook: Optional[UsageHook] = None,
     ):
         self._base_url = base_url.rstrip("/")
@@ -49,6 +62,8 @@ class OllamaProvider:
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds
         self._api_key = api_key
+        self._vision_model = vision_model
+        self._vision_model_version = vision_model_version
         self._usage_hook = usage_hook
 
     def __repr__(self) -> str:
@@ -125,3 +140,33 @@ class OllamaProvider:
                 yield GenerationChunk(delta="", done=True)
                 return
         yield GenerationChunk(delta="", done=True)
+
+    def describe_image(self, image: ImageInput, prompt: str) -> VisionResult:
+        if not self._vision_model:
+            raise ProviderError(f"{self.name}: no vision_model configured for describe_image")
+
+        body = request_json(
+            "POST",
+            f"{self._base_url}/api/chat",
+            provider=self.name,
+            headers=self._headers(),
+            json={
+                "model": self._vision_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                        "images": [base64.b64encode(image.data).decode("ascii")],
+                    }
+                ],
+                "stream": False,
+            },
+            timeout=self._timeout,
+            max_retries=self._max_retries,
+            retry_backoff_seconds=self._retry_backoff_seconds,
+        )
+        return VisionResult(
+            text=body["message"]["content"],
+            model=self._vision_model,
+            version=self._vision_model_version,
+        )

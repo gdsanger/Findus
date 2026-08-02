@@ -224,13 +224,16 @@ MCP_HOST = env("MCP_HOST", "0.0.0.0")
 MCP_PORT = int(env("MCP_PORT", "8001"))
 
 # --------------------------------------------------------------------------
-# AI provider layer (apps.ai.providers) -- embeddings + generation are
-# configured independently, so e.g. embeddings can run locally via Ollama
-# while generation uses a cloud provider. See Architektur.md,
-# "Provider-Neutralität & Lock-in-Hedges".
+# AI provider layer (apps.ai.providers) -- embeddings, generation and vision
+# (describe_image) are configured independently, so e.g. embeddings can run
+# locally via Ollama while generation uses a cloud provider. Vision defaults
+# to local llava/Ollama, since document images carry the same DSGVO concern
+# as generation prompts (see Architektur.md, "Provider-Neutralität &
+# Lock-in-Hedges" and "LLM-Anbindung").
 # --------------------------------------------------------------------------
 FINDUS_AI_EMBEDDING_PROVIDER = env("FINDUS_AI_EMBEDDING_PROVIDER", "ollama")
 FINDUS_AI_GENERATION_PROVIDER = env("FINDUS_AI_GENERATION_PROVIDER", "ollama")
+FINDUS_AI_VISION_PROVIDER = env("FINDUS_AI_VISION_PROVIDER", "ollama")
 
 FINDUS_AI_TIMEOUT_SECONDS = float(env("FINDUS_AI_TIMEOUT_SECONDS", "30"))
 FINDUS_AI_MAX_RETRIES = int(env("FINDUS_AI_MAX_RETRIES", "3"))
@@ -248,10 +251,12 @@ FINDUS_CHUNK_OVERLAP_TOKENS = int(env("FINDUS_CHUNK_OVERLAP_TOKENS", "50"))
 FINDUS_CHUNK_EMBEDDING_BATCH_SIZE = int(env("FINDUS_CHUNK_EMBEDDING_BATCH_SIZE", "64"))
 
 # Per-provider settings, keyed by the same name used in
-# FINDUS_AI_{EMBEDDING,GENERATION}_PROVIDER. `*_model_version` is not read
-# back from any provider API (none of the four report it consistently) --
+# FINDUS_AI_{EMBEDDING,GENERATION,VISION}_PROVIDER. `*_model_version` is not
+# read back from any provider API (none of them report it consistently) --
 # it's an operator-set tag that travels onto `Chunk.embedding_model_version`
-# so a later model swap re-indexes only what actually changed.
+# so a later model swap re-indexes only what actually changed. `vision_model`
+# is only read by providers registered for vision (openai, ollama) -- see
+# apps.ai.providers.registry._VISION_BUILDERS.
 FINDUS_AI_PROVIDERS = {
     "openai": {
         "api_key": env("FINDUS_OPENAI_API_KEY", ""),
@@ -260,6 +265,8 @@ FINDUS_AI_PROVIDERS = {
         "embedding_model_version": env("FINDUS_OPENAI_EMBEDDING_MODEL_VERSION", "1"),
         "generation_model": env("FINDUS_OPENAI_GENERATION_MODEL", "gpt-4o-mini"),
         "generation_model_version": env("FINDUS_OPENAI_GENERATION_MODEL_VERSION", "1"),
+        "vision_model": env("FINDUS_OPENAI_VISION_MODEL", "gpt-4o-mini"),
+        "vision_model_version": env("FINDUS_OPENAI_VISION_MODEL_VERSION", "1"),
     },
     "anthropic": {
         "api_key": env("FINDUS_ANTHROPIC_API_KEY", ""),
@@ -285,6 +292,8 @@ FINDUS_AI_PROVIDERS = {
         "embedding_model_version": env("FINDUS_OLLAMA_EMBEDDING_MODEL_VERSION", "1"),
         "generation_model": env("FINDUS_OLLAMA_GENERATION_MODEL", "llama3.1"),
         "generation_model_version": env("FINDUS_OLLAMA_GENERATION_MODEL_VERSION", "1"),
+        "vision_model": env("FINDUS_OLLAMA_VISION_MODEL", "llava"),
+        "vision_model_version": env("FINDUS_OLLAMA_VISION_MODEL_VERSION", "1"),
     },
 }
 

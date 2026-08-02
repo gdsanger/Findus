@@ -35,14 +35,21 @@ class Message:
 
 @dataclass(frozen=True)
 class Usage:
-    """Token counts for one provider call, for the cost-tracking hook."""
+    """Token counts for one provider call, for the cost-tracking hook.
+
+    `image_tokens` is reported separately from `prompt_tokens` (rather
+    than folded in) because vision-capable providers bill/report image
+    input differently from text -- callers that want an image-inclusive
+    cost estimate need to see the split, not just a combined number.
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    image_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
-        return self.prompt_tokens + self.completion_tokens
+        return self.prompt_tokens + self.completion_tokens + self.image_tokens
 
 
 # (capability, provider_name, model, usage) -> None. Register via
@@ -79,6 +86,26 @@ class GenerationResult:
 GenerationOutput = Union[GenerationResult, Iterator[GenerationChunk]]
 
 
+@dataclass(frozen=True)
+class ImageInput:
+    """One image -- or a rendered PDF page, which is just an image by
+    the time it reaches a vision provider -- to describe. `data` is raw
+    bytes, never a file path: workers/containers calling a provider
+    don't necessarily share a filesystem with whatever produced the
+    image.
+    """
+
+    data: bytes
+    mime_type: str = "image/png"
+
+
+@dataclass(frozen=True)
+class VisionResult:
+    text: str
+    model: str
+    version: str
+
+
 @runtime_checkable
 class EmbeddingProvider(Protocol):
     def embed(self, texts: Iterable[str]) -> EmbeddingResult:
@@ -92,6 +119,16 @@ class GenerationProvider(Protocol):
         """Return a `GenerationResult`, or an iterator of `GenerationChunk`
         when `stream=True` (SSE-suitable: callers can forward each delta
         to a client as it arrives).
+        """
+        ...
+
+
+@runtime_checkable
+class VisionProvider(Protocol):
+    def describe_image(self, image: ImageInput, prompt: str) -> VisionResult:
+        """Transcribe/describe `image` per `prompt`, e.g. "transcribe
+        this invoice page" -- the extraction cascade's last-resort
+        stage for pages that OCR/text-extraction couldn't read.
         """
         ...
 
