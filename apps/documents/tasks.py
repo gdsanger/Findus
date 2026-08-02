@@ -1,19 +1,21 @@
 import logging
 
+from .processing import process_document
+
 logger = logging.getLogger(__name__)
 
 
 def process_document_task(document_id):
     """Django-Q2 worker entry point, queued by `apps.ingest.service.ingest_file`
-    right after a `Document` is created (`processing_status="pending"`).
+    right after a `Document` is created (`processing_status="pending"`),
+    and reused by `manage.py reindex_documents --queue` for re-embedding.
 
-    OCR/Markdown/Chunking/Embedding are separate issues and plug in here
-    later; for now this only confirms the document reached the worker.
+    `process_document()` already records failures on the `Document`
+    itself (`processing_status="failed"` + `processing_error`) and
+    re-raises, so Django-Q also records the task as failed instead of
+    silently dropping it.
     """
-    logger.info(
-        "Findus worker received document %s for processing (pipeline not yet implemented)",
-        document_id,
-    )
+    process_document(document_id)
 
 
 def example_ping_task(message="pong"):
