@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ document.title }} – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=document.title %}
+
+<section class="findus-section">
+    <div class="findus-card findus-detail-meta">
+        <dl class="findus-detail-meta-list">
+            <div>
+                <dt>Absender</dt>
+                <dd>{{ document.correspondent.name|default:"—" }}</dd>
+            </div>
+            <div>
+                <dt>Status</dt>
+                <dd>{{ document.get_processing_status_display }}</dd>
+            </div>
+            <div>
+                <dt>Datum</dt>
+                <dd>{{ document.created_at|date:"d.m.Y H:i" }}</dd>
+            </div>
+            <div>
+                <dt>Vorgänge</dt>
+                <dd>
+                    {% for vorgang in document.vorgaenge.all %}
+                    <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
+                    {% empty %}—{% endfor %}
+                </dd>
+            </div>
+            <div>
+                <dt>Tags</dt>
+                <dd>
+                    {% for tag in document.tags.all %}
+                    <span class="badge text-bg-secondary">{{ tag }}</span>
+                    {% empty %}—{% endfor %}
+                </dd>
+            </div>
+        </dl>
+    </div>
+
+    <div class="findus-card findus-detail-content">
+        {% if document.text_content %}
+        <pre class="findus-detail-text">{{ document.text_content }}</pre>
+        {% else %}
+        <p class="text-muted">Kein extrahierter Text vorhanden.</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

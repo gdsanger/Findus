@@ -1,10 +1,12 @@
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 
 from .models import Correspondent, Document, Tag, Vorgang
+from .retrieval import DocumentRetrievalService
 
 DOCUMENTS_PAGE_SIZE = 20
+SEARCH_RESULTS_LIMIT = 50
 
 
 def _filtered_documents(request):
@@ -40,10 +42,37 @@ def _filtered_documents(request):
     return documents
 
 
+def _search_hits(request, query):
+    """Rank visible documents for `query` through the retrieval service
+    (#1005) -- semantic search never touches Document/Chunk directly, and
+    it applies the same combinable Absender/Vorgang/Tag/Status filters as
+    structured browsing above.
+    """
+    service = DocumentRetrievalService(request.user)
+    tag_id = request.GET.get("tag", "").strip()
+
+    return service.search(
+        query,
+        limit=SEARCH_RESULTS_LIMIT,
+        correspondent=request.GET.get("correspondent", "").strip() or None,
+        vorgang=request.GET.get("vorgang", "").strip() or None,
+        tags=[tag_id] if tag_id else None,
+        status=request.GET.get("status", "").strip() or None,
+    )
+
+
 @login_required
 def document_list(request):
-    documents = _filtered_documents(request)
-    paginator = Paginator(documents, DOCUMENTS_PAGE_SIZE)
+    query = request.GET.get("q", "").strip()
+
+    if query:
+        results = _search_hits(request, query)
+        result_partial = "documents/partials/_search_results.html"
+    else:
+        results = _filtered_documents(request)
+        result_partial = "documents/partials/_document_list.html"
+
+    paginator = Paginator(results, DOCUMENTS_PAGE_SIZE)
     page_obj = paginator.get_page(request.GET.get("page"))
 
     query_without_page = request.GET.copy()
@@ -52,6 +81,8 @@ def document_list(request):
     context = {
         "page_obj": page_obj,
         "query_without_page": query_without_page.urlencode(),
+        "result_partial": result_partial,
+        "search_query": query,
         "correspondents": Correspondent.objects.all(),
         "vorgaenge": Vorgang.objects.all(),
         "tags": Tag.objects.all(),
@@ -65,5 +96,16 @@ def document_list(request):
     }
 
     if request.htmx:
-        return render(request, "documents/partials/_document_list.html", context)
+        return render(request, result_partial, context)
     return render(request, "documents/home.html", context)
+
+
+@login_required
+def document_detail(request, pk):
+    document = get_object_or_404(
+        Document.objects.visible_to(request.user)
+        .select_related("correspondent")
+        .prefetch_related("vorgaenge", "tags"),
+        pk=pk,
+    )
+    return render(request, "documents/detail.html", {"document": document})

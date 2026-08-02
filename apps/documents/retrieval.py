@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, Optional
 
-from django.db.models import Min, QuerySet
+from django.db.models import QuerySet
 
 from apps.ai.providers import EmbeddingProvider, get_embedding_provider
 from pgvector.django import CosineDistance
@@ -37,10 +37,13 @@ class DocumentHit:
 
     `score` is cosine similarity (1.0 = identical direction, 0.0 =
     orthogonal), i.e. `1 - CosineDistance`, so higher is always better.
+    `snippet` is the content of the best-matching chunk -- the context
+    the UI shows under the title, not the whole document text.
     """
 
     document: Document
     score: float
+    snippet: str = ""
 
 
 class DocumentRetrievalService:
@@ -66,7 +69,11 @@ class DocumentRetrievalService:
         date_to: Optional[date] = None,
         status: Optional[str] = None,
     ) -> QuerySet[Document]:
-        documents = Document.objects.visible_to(self.user)
+        documents = (
+            Document.objects.visible_to(self.user)
+            .select_related("correspondent")
+            .prefetch_related("vorgaenge", "tags")
+        )
         if correspondent is not None:
             documents = documents.filter(correspondent=correspondent)
         if vorgang is not None:
@@ -130,20 +137,33 @@ class DocumentRetrievalService:
         provider = self.embedding_provider or get_embedding_provider()
         query_vector = provider.embed([query]).vectors[0]
 
-        ranked_documents = (
+        # Ordered by distance ascending across *all* chunks, so the first
+        # row seen for a given document is necessarily its best-matching
+        # chunk -- no separate aggregation query needed to also carry the
+        # chunk's content along as the result snippet.
+        chunk_rows = (
             Chunk.objects.filter(document__in=visible_documents)
             .annotate(distance=CosineDistance("embedding", query_vector))
-            .values("document_id")
-            .annotate(best_distance=Min("distance"))
-            .order_by("best_distance")[:limit]
+            .order_by("distance")
+            .values("document_id", "content", "distance")
         )
-        best_distance_by_document_id = {
-            row["document_id"]: row["best_distance"] for row in ranked_documents
-        }
 
-        documents_by_id = visible_documents.in_bulk(best_distance_by_document_id.keys())
+        best_row_by_document_id: dict[int, dict] = {}
+        for row in chunk_rows:
+            document_id = row["document_id"]
+            if document_id in best_row_by_document_id:
+                continue
+            best_row_by_document_id[document_id] = row
+            if len(best_row_by_document_id) >= limit:
+                break
+
+        documents_by_id = visible_documents.in_bulk(best_row_by_document_id.keys())
         return [
-            DocumentHit(document=documents_by_id[document_id], score=1 - distance)
-            for document_id, distance in best_distance_by_document_id.items()
+            DocumentHit(
+                document=documents_by_id[document_id],
+                score=1 - row["distance"],
+                snippet=row["content"],
+            )
+            for document_id, row in best_row_by_document_id.items()
             if document_id in documents_by_id
         ]

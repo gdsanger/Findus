@@ -264,6 +264,10 @@ body {
     box-shadow: inset 3px 0 0 var(--findus-accent);
 }
 
+.findus-nav-search {
+    margin-bottom: var(--findus-space-4);
+}
+
 .findus-nav-spacer {
     flex: 1 1 auto;
 }
@@ -356,6 +360,11 @@ body {
     min-width: 10rem;
 }
 
+.findus-search-field {
+    flex: 1 1 20rem;
+    min-width: 16rem;
+}
+
 .findus-filter-loading {
     align-self: center;
     color: var(--findus-text-muted);
@@ -364,4 +373,89 @@ body {
 
 .findus-pagination {
     margin-top: var(--findus-space-4);
+}
+
+/* Semantic search results ---------------------------------------------- */
+.findus-search-results {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-3);
+}
+
+.findus-search-hit {
+    display: block;
+    padding: var(--findus-space-4);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color var(--findus-transition-fast);
+}
+
+.findus-search-hit:hover {
+    color: inherit;
+    border-color: var(--findus-accent);
+}
+
+.findus-search-hit-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--findus-space-3);
+}
+
+.findus-search-hit-title {
+    font-weight: 600;
+}
+
+.findus-search-hit-score {
+    flex: 0 0 auto;
+    color: var(--findus-accent);
+    font-size: var(--findus-font-size-sm);
+    font-weight: 600;
+}
+
+.findus-search-hit-snippet {
+    margin: var(--findus-space-2) 0 0;
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-search-hit-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-top: var(--findus-space-3);
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
+/* Document detail --------------------------------------------------------*/
+.findus-detail-meta {
+    margin-bottom: var(--findus-space-4);
+}
+
+.findus-detail-meta-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-5);
+    margin: 0;
+}
+
+.findus-detail-meta-list dt {
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-detail-meta-list dd {
+    margin: 0;
+}
+
+.findus-detail-text {
+    max-height: 32rem;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: inherit;
 }

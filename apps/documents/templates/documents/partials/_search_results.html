@@ -1,0 +1,60 @@
+{% if page_obj %}
+<div class="findus-search-results">
+    {% for hit in page_obj %}
+    <a href="{% url 'documents:detail' hit.document.id %}" class="findus-search-hit">
+        <div class="findus-search-hit-header">
+            <span class="findus-search-hit-title">{{ hit.document.title }}</span>
+            <span class="findus-search-hit-score" title="Relevanz">{% widthratio hit.score 1 100 %}%</span>
+        </div>
+        {% if hit.snippet %}
+        <p class="findus-search-hit-snippet">{{ hit.snippet|truncatechars:220 }}</p>
+        {% endif %}
+        <div class="findus-search-hit-meta">
+            <span>{{ hit.document.correspondent.name|default:"—" }}</span>
+            {% for vorgang in hit.document.vorgaenge.all %}
+            <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
+            {% endfor %}
+            {% for tag in hit.document.tags.all %}
+            <span class="badge text-bg-secondary">{{ tag }}</span>
+            {% endfor %}
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+{% if page_obj.paginator.num_pages > 1 %}
+<nav aria-label="Seiten" class="findus-pagination">
+    <ul class="pagination pagination-sm mb-0">
+        <li class="page-item {% if not page_obj.has_previous %}disabled{% endif %}">
+            <a
+                class="page-link"
+                {% if page_obj.has_previous %}
+                href="?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                hx-target="#document-list-region"
+                hx-swap="innerHTML"
+                hx-push-url="true"
+                {% endif %}
+            >Zurück</a>
+        </li>
+        <li class="page-item disabled">
+            <span class="page-link">Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}</span>
+        </li>
+        <li class="page-item {% if not page_obj.has_next %}disabled{% endif %}">
+            <a
+                class="page-link"
+                {% if page_obj.has_next %}
+                href="?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                hx-target="#document-list-region"
+                hx-swap="innerHTML"
+                hx-push-url="true"
+                {% endif %}
+            >Weiter</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+{% else %}
+<p class="text-muted">Keine Treffer für „{{ search_query }}“.</p>
+{% endif %}

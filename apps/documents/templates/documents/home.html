@@ -9,10 +9,22 @@
         hx-get="{% url 'documents:home' %}"
         hx-target="#document-list-region"
         hx-swap="innerHTML"
-        hx-trigger="change"
+        hx-trigger="submit, change"
         hx-push-url="true"
         hx-indicator="#document-list-indicator"
     >
+        <div class="findus-filter-field findus-search-field">
+            <label class="form-label" for="filter-q">Suche</label>
+            <input
+                type="search"
+                id="filter-q"
+                name="q"
+                class="form-control form-control-sm"
+                placeholder="Dokumente semantisch durchsuchen …"
+                value="{{ search_query }}"
+                autocomplete="off"
+            >
+        </div>
         <div class="findus-filter-field">
             <label class="form-label" for="filter-correspondent">Absender</label>
             <select id="filter-correspondent" name="correspondent" class="form-select form-select-sm">
@@ -53,7 +65,7 @@
     </form>
 
     <div id="document-list-region">
-        {% include "documents/partials/_document_list.html" %}
+        {% include result_partial %}
     </div>
 </section>
 {% endblock %}
