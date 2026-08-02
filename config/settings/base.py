@@ -355,6 +355,13 @@ FINDUS_INGEST_ALLOWED_EXTENSIONS = env_list(
 FINDUS_INGEST_POLL_INTERVAL_SECONDS = float(env("FINDUS_INGEST_POLL_INTERVAL_SECONDS", "10"))
 
 # --------------------------------------------------------------------------
+# Ingest: UI-Upload (#1019) -- reuses `FINDUS_INGEST_ALLOWED_EXTENSIONS`
+# above for the type check, adds an upload-specific size cap (the folder/
+# mail connectors don't need one: those files already sit on trusted infra).
+# --------------------------------------------------------------------------
+FINDUS_UPLOAD_MAX_SIZE_MB = float(env("FINDUS_UPLOAD_MAX_SIZE_MB", "25"))
+
+# --------------------------------------------------------------------------
 # Ingest: Mail-Connectoren (apps.ingest.connectors.mail_imap /
 # apps.ingest.connectors.mail_graph) -- der eigentliche Wert-Keil: pollt ein
 # IMAP- und/oder ein Graph-Postfach, legt Anhänge (+ optional den Mailbody)

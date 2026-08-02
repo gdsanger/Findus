@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -520,3 +521,121 @@ class DocumentMetaEditTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.doc.refresh_from_db()
         self.assertEqual(list(self.doc.vorgaenge.all()), [])
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class DocumentUploadViewTests(TestCase):
+    """Covers the UI upload (#1019): files go through the same ingest
+    contract (`apps.ingest.service.ingest_file`) as the folder/mail
+    connectors -- dedup, storage, visibility, enqueue -- just fed by an
+    HTMX multipart POST instead of a watched folder/mailbox.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+    def _upload(self, files, user=None):
+        self.client.force_login(user or self.user_a)
+        with patch("apps.ingest.service._enqueue_processing", return_value="task-1"):
+            return self.client.post(reverse("documents:upload"), {"files": files})
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.post(
+            reverse("documents:upload"),
+            {"files": [SimpleUploadedFile("a.pdf", b"%PDF-1.4", content_type="application/pdf")]},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_upload_creates_document_pending_and_enqueues_processing(self):
+        response = self._upload(
+            [SimpleUploadedFile("rechnung.pdf", b"%PDF-1.4 content", content_type="application/pdf")]
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Hochgeladen")
+        document = Document.objects.get()
+        self.assertEqual(document.source, Document.Source.UPLOAD)
+        self.assertEqual(document.owner, self.user_a)
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.PENDING)
+
+    def test_upload_response_triggers_list_refresh(self):
+        response = self._upload(
+            [SimpleUploadedFile("rechnung.pdf", b"%PDF-1.4 content", content_type="application/pdf")]
+        )
+
+        self.assertEqual(response["HX-Trigger"], "findus:documents-changed")
+
+    def test_multiple_files_are_ingested_independently(self):
+        response = self._upload(
+            [
+                SimpleUploadedFile("a.pdf", b"content a", content_type="application/pdf"),
+                SimpleUploadedFile("b.pdf", b"content b", content_type="application/pdf"),
+            ]
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 2)
+
+    def test_duplicate_sha256_is_recognized_and_not_reimported(self):
+        self._upload([SimpleUploadedFile("a.pdf", b"same bytes", content_type="application/pdf")])
+
+        response = self._upload(
+            [SimpleUploadedFile("b.pdf", b"same bytes", content_type="application/pdf")]
+        )
+
+        self.assertContains(response, "Duplikat")
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_disallowed_extension_is_rejected_without_creating_document(self):
+        with override_settings(FINDUS_INGEST_ALLOWED_EXTENSIONS=["pdf"]):
+            response = self._upload(
+                [SimpleUploadedFile("malware.exe", b"binary", content_type="application/octet-stream")]
+            )
+
+        self.assertContains(response, "wird nicht unterstützt")
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_oversized_file_is_rejected_without_creating_document(self):
+        with override_settings(FINDUS_UPLOAD_MAX_SIZE_MB=0.00001):
+            response = self._upload(
+                [SimpleUploadedFile("big.pdf", b"more than ten bytes", content_type="application/pdf")]
+            )
+
+        self.assertContains(response, "zu groß")
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_uploaded_document_is_scoped_to_uploader_department(self):
+        self._upload([SimpleUploadedFile("a.pdf", b"content a", content_type="application/pdf")])
+
+        document = Document.objects.get()
+        self.assertEqual(document.visibility, Document.Visibility.DEPARTMENT)
+        self.assertIn(self.dept_a, document.departments.all())
+
+    def test_uploaded_document_is_private_for_user_without_department(self):
+        lone_user = User.objects.create_user(username="carol", password="x")
+
+        self._upload([SimpleUploadedFile("a.pdf", b"content a", content_type="application/pdf")], user=lone_user)
+
+        document = Document.objects.get()
+        self.assertEqual(document.visibility, Document.Visibility.PRIVATE)
+        self.assertEqual(document.owner, lone_user)
+
+    def test_uploaded_document_is_only_visible_per_visibility_rule(self):
+        other_dept = Department.objects.create(name="Dept B")
+        other_user = User.objects.create_user(username="bob", password="x")
+        other_user.departments.add(other_dept)
+
+        self._upload([SimpleUploadedFile("a.pdf", b"content a", content_type="application/pdf")])
+
+        self.client.force_login(other_user)
+        response = self.client.get(reverse("documents:home"))
+        self.assertNotContains(response, "a.pdf")

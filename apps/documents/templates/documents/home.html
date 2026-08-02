@@ -5,11 +5,44 @@
 
 <section class="findus-section">
     <form
+        id="upload-dropzone"
+        class="findus-upload-dropzone"
+        hx-post="{% url 'documents:upload' %}"
+        hx-encoding="multipart/form-data"
+        hx-trigger="change from:#upload-input"
+        hx-target="#upload-feedback"
+        hx-swap="innerHTML"
+        hx-indicator="#upload-indicator"
+    >
+        <p class="findus-upload-hint">
+            Dateien hierher ziehen oder
+            <button type="button" class="btn btn-sm btn-primary" onclick="document.getElementById('upload-input').click()">
+                Hochladen
+            </button>
+        </p>
+        <p class="findus-upload-constraints text-muted">
+            Erlaubt: {{ upload_allowed_extensions|join:", "|upper }} · max. {{ upload_max_size_mb|floatformat:"0" }} MB je Datei
+        </p>
+        <input
+            type="file"
+            id="upload-input"
+            name="files"
+            multiple
+            accept="{% for ext in upload_allowed_extensions %}.{{ ext }}{% if not forloop.last %},{% endif %}{% endfor %}"
+            class="visually-hidden"
+        >
+        <span id="upload-indicator" class="htmx-indicator findus-filter-loading">Wird hochgeladen …</span>
+    </form>
+    <div id="upload-feedback" class="findus-upload-feedback" aria-live="polite"></div>
+</section>
+
+<section class="findus-section">
+    <form
         class="findus-filter-bar"
         hx-get="{% url 'documents:home' %}"
         hx-target="#document-list-region"
         hx-swap="innerHTML"
-        hx-trigger="submit, change"
+        hx-trigger="submit, change, findus:documents-changed from:body"
         hx-push-url="true"
         hx-indicator="#document-list-indicator"
     >
@@ -68,4 +101,39 @@
         {% include result_partial %}
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var dropzone = document.getElementById("upload-dropzone");
+    var input = document.getElementById("upload-input");
+    if (!dropzone || !input) {
+        return;
+    }
+
+    ["dragenter", "dragover"].forEach(function (eventName) {
+        dropzone.addEventListener(eventName, function (event) {
+            event.preventDefault();
+            dropzone.classList.add("findus-upload-dropzone--active");
+        });
+    });
+    ["dragleave", "drop"].forEach(function (eventName) {
+        dropzone.addEventListener(eventName, function (event) {
+            event.preventDefault();
+            dropzone.classList.remove("findus-upload-dropzone--active");
+        });
+    });
+    dropzone.addEventListener("drop", function (event) {
+        if (!event.dataTransfer || !event.dataTransfer.files.length) {
+            return;
+        }
+        input.files = event.dataTransfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    dropzone.addEventListener("htmx:afterRequest", function () {
+        input.value = "";
+    });
+})();
+</script>
 {% endblock %}

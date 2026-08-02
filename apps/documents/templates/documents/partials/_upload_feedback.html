@@ -1,0 +1,19 @@
+{% if results %}
+<ul class="findus-upload-results">
+    {% for result in results %}
+    <li class="findus-upload-result">
+        <span class="findus-upload-result-filename">{{ result.filename }}</span>
+        {% if result.status == "ok" %}
+        <span class="badge text-bg-success">Hochgeladen</span>
+        {% elif result.status == "duplicate" %}
+        <span class="badge text-bg-warning">Duplikat</span>
+        {% else %}
+        <span class="badge text-bg-danger">Fehler</span>
+        {% endif %}
+        {% if result.message %}
+        <span class="findus-upload-result-message">{{ result.message }}</span>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
