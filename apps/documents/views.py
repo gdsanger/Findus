@@ -1,12 +1,26 @@
+import logging
+
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_POST
+
+from apps.ingest.service import ingest_file
 
 from .models import Correspondent, Document, Tag, Task, Vorgang
 from .retrieval import DocumentRetrievalService
 
+logger = logging.getLogger(__name__)
+
 DOCUMENTS_PAGE_SIZE = 20
 SEARCH_RESULTS_LIMIT = 50
+
+_PENDING_STATUSES = {
+    Document.ProcessingStatus.PENDING,
+    Document.ProcessingStatus.EXTRACTING,
+    Document.ProcessingStatus.EMBEDDING,
+}
 
 
 def _filtered_documents(request):
@@ -78,11 +92,19 @@ def document_list(request):
     query_without_page = request.GET.copy()
     query_without_page.pop("page", None)
 
+    # Search hits (query set) wrap Document in a SearchHit, not a bare
+    # Document -- polling only applies to the plain list, so this is only
+    # ever computed for that branch.
+    has_pending = not query and any(
+        document.processing_status in _PENDING_STATUSES for document in page_obj
+    )
+
     context = {
         "page_obj": page_obj,
         "query_without_page": query_without_page.urlencode(),
         "result_partial": result_partial,
         "search_query": query,
+        "has_pending": has_pending,
         "correspondents": Correspondent.objects.all(),
         "vorgaenge": Vorgang.objects.all(),
         "tags": Tag.objects.all(),
@@ -93,11 +115,97 @@ def document_list(request):
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
         },
+        "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
+        "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
     }
 
     if request.htmx:
         return render(request, result_partial, context)
     return render(request, "documents/home.html", context)
+
+
+def _upload_departments_and_visibility(user):
+    """A department-less user can still upload -- it just lands `private`
+    (owner-only) instead of unscoped, since `Document.visibility` has no
+    "nobody" option.
+    """
+    departments = list(user.departments.all())
+    if departments:
+        return departments, Document.Visibility.DEPARTMENT
+    return departments, Document.Visibility.PRIVATE
+
+
+def _ingest_uploaded_file(user, departments, visibility, uploaded_file):
+    extension = uploaded_file.name.rsplit(".", 1)[-1].lower() if "." in uploaded_file.name else ""
+    allowed_extensions = {ext.lower() for ext in settings.FINDUS_INGEST_ALLOWED_EXTENSIONS}
+    if allowed_extensions and extension not in allowed_extensions:
+        return {
+            "filename": uploaded_file.name,
+            "status": "error",
+            "message": f"Dateityp „{extension or '?'}“ wird nicht unterstützt.",
+        }
+
+    max_size_bytes = settings.FINDUS_UPLOAD_MAX_SIZE_MB * 1024 * 1024
+    if uploaded_file.size > max_size_bytes:
+        return {
+            "filename": uploaded_file.name,
+            "status": "error",
+            "message": f"Datei zu groß (max. {settings.FINDUS_UPLOAD_MAX_SIZE_MB:g} MB).",
+        }
+
+    try:
+        result = ingest_file(
+            uploaded_file,
+            filename=uploaded_file.name,
+            source=Document.Source.UPLOAD,
+            department=departments[0] if departments else None,
+            owner=user,
+            visibility=visibility,
+            content_type=uploaded_file.content_type or "",
+        )
+    except Exception:
+        logger.exception("Upload: Ingest fehlgeschlagen für %s", uploaded_file.name)
+        return {
+            "filename": uploaded_file.name,
+            "status": "error",
+            "message": "Verarbeitung fehlgeschlagen.",
+        }
+
+    if result.created and len(departments) > 1:
+        # `ingest_file` only takes a single department (the folder/mail
+        # connectors have exactly one); a multi-department user's document
+        # still needs to be visible to all of them, so add the rest here.
+        result.document.departments.add(*departments[1:])
+
+    if result.duplicate:
+        return {
+            "filename": uploaded_file.name,
+            "status": "duplicate",
+            "message": "Bereits vorhanden (Duplikat erkannt).",
+        }
+    return {"filename": uploaded_file.name, "status": "ok", "document": result.document}
+
+
+@login_required
+@require_POST
+def document_upload(request):
+    """Upload documents from the browser through the ingest contract
+    (#1007) -- same dedup/storage/visibility/enqueue path as the folder and
+    mail connectors (`apps.ingest.service.ingest_file`), just fed by an
+    HTMX multipart POST instead of a watched folder/mailbox.
+    """
+    departments, visibility = _upload_departments_and_visibility(request.user)
+    uploaded_files = request.FILES.getlist("files")
+
+    results = [
+        _ingest_uploaded_file(request.user, departments, visibility, uploaded_file)
+        for uploaded_file in uploaded_files
+    ]
+
+    response = render(request, "documents/partials/_upload_feedback.html", {"results": results})
+    if results:
+        response["HX-Trigger"] = "findus:documents-changed"
+    return response
 
 
 def _visible_document(user, pk):

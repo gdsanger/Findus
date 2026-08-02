@@ -347,6 +347,63 @@ body {
     border-radius: var(--findus-radius-md);
 }
 
+/* Document upload dropzone ------------------------------------------------*/
+.findus-upload-dropzone {
+    padding: var(--findus-space-5);
+    text-align: center;
+    background-color: var(--findus-surface);
+    border: 2px dashed var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    transition: border-color var(--findus-transition-fast), background-color var(--findus-transition-fast);
+}
+
+.findus-upload-dropzone--active {
+    background-color: rgba(var(--findus-accent-rgb), 0.08);
+    border-color: var(--findus-accent);
+}
+
+.findus-upload-hint {
+    margin: 0 0 var(--findus-space-2);
+}
+
+.findus-upload-constraints {
+    margin: 0;
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-upload-feedback {
+    margin-top: var(--findus-space-3);
+}
+
+.findus-upload-results {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.findus-upload-result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    padding: var(--findus-space-3);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-upload-result-filename {
+    font-weight: 600;
+}
+
+.findus-upload-result-message {
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
 /* Document list filter bar ------------------------------------------------*/
 .findus-filter-bar {
     display: flex;
