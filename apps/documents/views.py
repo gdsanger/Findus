@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 
 from apps.ingest.service import ingest_file
 
-from .models import Correspondent, Document, Tag, Task, Vorgang
+from .models import Correspondent, Document, SuggestionStatus, Tag, Task, Vorgang
 from .retrieval import DocumentRetrievalService
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ SEARCH_RESULTS_LIMIT = 50
 _PENDING_STATUSES = {
     Document.ProcessingStatus.PENDING,
     Document.ProcessingStatus.EXTRACTING,
+    Document.ProcessingStatus.ANALYZING,
     Document.ProcessingStatus.EMBEDDING,
 }
 
@@ -264,3 +265,61 @@ def document_meta(request, pk):
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))
     return render(request, "documents/partials/_detail_meta.html", {"document": document})
+
+
+def _render_meta(request, document):
+    return render(request, "documents/partials/_detail_meta.html", {"document": document})
+
+
+@login_required
+@require_POST
+def document_tag_suggestion_accept(request, pk, suggestion_id):
+    """Accept a KI-Analyse tag suggestion (#1020): match/create the real
+
+    `Tag` by name+dimension and assign it -- the suggestion only ever
+    becomes a real tag through this explicit user action, never on its
+    own.
+    """
+    document = _visible_document(request.user, pk)
+    suggestion = get_object_or_404(document.tag_suggestions, pk=suggestion_id)
+    tag, _ = Tag.objects.get_or_create(name=suggestion.name, dimension=suggestion.dimension)
+    document.tags.add(tag)
+    suggestion.status = SuggestionStatus.ACCEPTED
+    suggestion.save(update_fields=["status", "updated_at"])
+    return _render_meta(request, document)
+
+
+@login_required
+@require_POST
+def document_tag_suggestion_reject(request, pk, suggestion_id):
+    document = _visible_document(request.user, pk)
+    suggestion = get_object_or_404(document.tag_suggestions, pk=suggestion_id)
+    suggestion.status = SuggestionStatus.REJECTED
+    suggestion.save(update_fields=["status", "updated_at"])
+    return _render_meta(request, document)
+
+
+@login_required
+@require_POST
+def document_vorgang_suggestion_accept(request, pk, suggestion_id):
+    """Accept a KI-Analyse Vorgang suggestion (#1020) -- same
+
+    match/create-then-assign principle as `document_tag_suggestion_accept`.
+    """
+    document = _visible_document(request.user, pk)
+    suggestion = get_object_or_404(document.vorgang_suggestions, pk=suggestion_id)
+    vorgang, _ = Vorgang.objects.get_or_create(name=suggestion.name)
+    document.vorgaenge.add(vorgang)
+    suggestion.status = SuggestionStatus.ACCEPTED
+    suggestion.save(update_fields=["status", "updated_at"])
+    return _render_meta(request, document)
+
+
+@login_required
+@require_POST
+def document_vorgang_suggestion_reject(request, pk, suggestion_id):
+    document = _visible_document(request.user, pk)
+    suggestion = get_object_or_404(document.vorgang_suggestions, pk=suggestion_id)
+    suggestion.status = SuggestionStatus.REJECTED
+    suggestion.save(update_fields=["status", "updated_at"])
+    return _render_meta(request, document)
