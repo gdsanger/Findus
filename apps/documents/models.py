@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from pgvector.django import HnswIndex, VectorField
 
 from apps.accounts.models import Department
@@ -235,3 +236,106 @@ class Chunk(TimeStampedModel):
 
     def __str__(self):
         return f"Chunk {self.position} of {self.document_id}"
+
+
+class TaskQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """Same two-level visibility model as `DocumentQuerySet.visible_to`
+
+        -- a Task reveals nothing beyond what its linked documents already
+        would, so it reuses the identical department/private scoping.
+        """
+        if user.is_superuser:
+            return self
+        return self.filter(
+            models.Q(
+                visibility=Task.Visibility.DEPARTMENT,
+                departments__in=user.departments.all(),
+            )
+            | models.Q(
+                visibility=Task.Visibility.PRIVATE,
+                owner=user,
+            )
+        ).distinct()
+
+
+class Task(TimeStampedModel):
+    """A necessity arising from one or more documents (pay an invoice,
+
+    review a utility bill, answer the tax office, ...). Deliberately flat:
+    no subtasks, no projects -- `ChecklistItem` covers the "steps within a
+    task" need instead.
+    """
+
+    class Kind(models.TextChoices):
+        PAY = "pay", "Zahlen"
+        REVIEW = "review", "Prüfen"
+        REPLY = "reply", "Beantworten"
+        SUBMIT = "submit", "Einreichen"
+        OTHER = "other", "Sonstiges"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Offen"
+        DONE = "done", "Erledigt"
+
+    class Visibility(models.TextChoices):
+        DEPARTMENT = "department", "Abteilung"
+        PRIVATE = "private", "Privat"
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.OTHER)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    due_date = models.DateField(null=True, blank=True)
+    done_at = models.DateTimeField(null=True, blank=True)
+
+    documents = models.ManyToManyField(Document, blank=True, related_name="tasks")
+
+    # Sichtbarkeit: owner + departments (n:n) + visibility-Schalter, wie bei Document.
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_tasks",
+    )
+    departments = models.ManyToManyField(Department, blank=True, related_name="tasks")
+    visibility = models.CharField(
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.DEPARTMENT,
+    )
+
+    objects = TaskQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["due_date", "-created_at"]
+
+    def __str__(self):
+        return self.title
+
+    def save(self, *args, **kwargs):
+        if self.status == self.Status.DONE:
+            if self.done_at is None:
+                self.done_at = timezone.now()
+        else:
+            self.done_at = None
+        super().save(*args, **kwargs)
+
+
+class ChecklistItem(TimeStampedModel):
+    """A checkable step within a Task -- deliberately not a real subtask
+
+    (no own status/due_date/documents), just an ordered, tickable line.
+    """
+
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="checklist_items")
+    text = models.CharField(max_length=255)
+    is_done = models.BooleanField(default=False)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["task_id", "order"]
+
+    def __str__(self):
+        return self.text
