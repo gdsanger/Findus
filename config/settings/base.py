@@ -197,6 +197,60 @@ AWS_DEFAULT_ACL = None
 MCP_HOST = env("MCP_HOST", "0.0.0.0")
 MCP_PORT = int(env("MCP_PORT", "8001"))
 
+# --------------------------------------------------------------------------
+# AI provider layer (apps.ai.providers) -- embeddings + generation are
+# configured independently, so e.g. embeddings can run locally via Ollama
+# while generation uses a cloud provider. See Architektur.md,
+# "Provider-Neutralität & Lock-in-Hedges".
+# --------------------------------------------------------------------------
+FINDUS_AI_EMBEDDING_PROVIDER = env("FINDUS_AI_EMBEDDING_PROVIDER", "ollama")
+FINDUS_AI_GENERATION_PROVIDER = env("FINDUS_AI_GENERATION_PROVIDER", "ollama")
+
+FINDUS_AI_TIMEOUT_SECONDS = float(env("FINDUS_AI_TIMEOUT_SECONDS", "30"))
+FINDUS_AI_MAX_RETRIES = int(env("FINDUS_AI_MAX_RETRIES", "3"))
+FINDUS_AI_RETRY_BACKOFF_SECONDS = float(env("FINDUS_AI_RETRY_BACKOFF_SECONDS", "0.5"))
+
+# Per-provider settings, keyed by the same name used in
+# FINDUS_AI_{EMBEDDING,GENERATION}_PROVIDER. `*_model_version` is not read
+# back from any provider API (none of the four report it consistently) --
+# it's an operator-set tag that travels onto `Chunk.embedding_model_version`
+# so a later model swap re-indexes only what actually changed.
+FINDUS_AI_PROVIDERS = {
+    "openai": {
+        "api_key": env("FINDUS_OPENAI_API_KEY", ""),
+        "base_url": env("FINDUS_OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        "embedding_model": env("FINDUS_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+        "embedding_model_version": env("FINDUS_OPENAI_EMBEDDING_MODEL_VERSION", "1"),
+        "generation_model": env("FINDUS_OPENAI_GENERATION_MODEL", "gpt-4o-mini"),
+        "generation_model_version": env("FINDUS_OPENAI_GENERATION_MODEL_VERSION", "1"),
+    },
+    "anthropic": {
+        "api_key": env("FINDUS_ANTHROPIC_API_KEY", ""),
+        "base_url": env("FINDUS_ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+        "generation_model": env("FINDUS_ANTHROPIC_GENERATION_MODEL", "claude-sonnet-5"),
+        "generation_model_version": env("FINDUS_ANTHROPIC_GENERATION_MODEL_VERSION", "1"),
+        "max_tokens": int(env("FINDUS_ANTHROPIC_MAX_TOKENS", "1024")),
+    },
+    "gemini": {
+        "api_key": env("FINDUS_GEMINI_API_KEY", ""),
+        "base_url": env(
+            "FINDUS_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
+        ),
+        "embedding_model": env("FINDUS_GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+        "embedding_model_version": env("FINDUS_GEMINI_EMBEDDING_MODEL_VERSION", "1"),
+        "generation_model": env("FINDUS_GEMINI_GENERATION_MODEL", "gemini-2.5-flash"),
+        "generation_model_version": env("FINDUS_GEMINI_GENERATION_MODEL_VERSION", "1"),
+    },
+    "ollama": {
+        "api_key": env("FINDUS_OLLAMA_API_KEY", ""),
+        "base_url": env("FINDUS_OLLAMA_BASE_URL", "http://localhost:11434"),
+        "embedding_model": env("FINDUS_OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+        "embedding_model_version": env("FINDUS_OLLAMA_EMBEDDING_MODEL_VERSION", "1"),
+        "generation_model": env("FINDUS_OLLAMA_GENERATION_MODEL", "llama3.1"),
+        "generation_model_version": env("FINDUS_OLLAMA_GENERATION_MODEL_VERSION", "1"),
+    },
+}
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

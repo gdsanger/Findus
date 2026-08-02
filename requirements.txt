@@ -1,6 +1,10 @@
 # Core
 Django==5.2.5
 python-dotenv==1.1.1
+requests==2.31.0
+
+# AI provider layer (apps.ai.providers): plain HTTP calls to OpenAI/
+# Claude/Gemini/Ollama -- no vendor SDKs, see apps/ai/providers/__init__.py
 
 # Database / vectors
 psycopg[binary]==3.2.10
