@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Dokumente – Findus{% endblock %}
 {% block content %}
-<h1 class="h3 mb-4">Dokumente</h1>
+{% include "partials/_content_header.html" with page_title="Dokumente" %}
 
-<section class="mb-5">
-    <h2 class="h5">Suche (HTMX-Beispiel)</h2>
-    <p class="text-muted">
+<section class="findus-section">
+    <h2 class="findus-section-title">Suche (HTMX-Beispiel)</h2>
+    <p class="text-body-secondary">
         Tippen swappt die Ergebnisliste unten per <code>hx-get</code> ein
         server-gerendertes Partial &mdash; das Muster für spätere
         Such-/Listen-Interaktionen.
@@ -20,14 +20,14 @@
         hx-target="#example-list"
         hx-swap="innerHTML"
     >
-    <div id="example-list">
+    <div id="example-list" class="findus-card">
         {% include "documents/partials/_example_list.html" %}
     </div>
 </section>
 
-<section>
-    <h2 class="h5">Background-Task (Django-Q2 + Redis)</h2>
-    <p class="text-muted">
+<section class="findus-section">
+    <h2 class="findus-section-title">Background-Task (Django-Q2 + Redis)</h2>
+    <p class="text-body-secondary">
         Reiht einen Beispiel-Task über Redis beim Worker ein. Ergebnis steht
         im Log des <code>worker</code>-Containers.
     </p>

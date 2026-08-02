@@ -1,6 +1,6 @@
 {% load static %}
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,28 +11,45 @@
 </head>
 <body>
     {% csrf_token %}
-    <div class="d-flex" id="findus-layout">
-        <nav class="d-flex flex-column flex-shrink-0 p-3 bg-light border-end" id="findus-nav">
-            <a href="{% url 'documents:home' %}" class="d-flex align-items-center mb-3 text-decoration-none">
-                <span class="fs-4">Findus</span>
-            </a>
-            <ul class="nav nav-pills flex-column mb-auto">
-                <li class="nav-item">
-                    <a href="{% url 'documents:home' %}" class="nav-link link-dark">Dokumente</a>
-                </li>
-            </ul>
-            <hr>
-            {% if request.user.is_authenticated %}
-                <div class="d-flex align-items-center justify-content-between">
-                    <span class="small text-muted">{{ request.user }}</span>
-                    <form method="post" action="{% url 'logout' %}">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-sm btn-outline-secondary">Logout</button>
-                    </form>
-                </div>
-            {% endif %}
+    <div class="findus-shell">
+        {% block nav %}
+        <header class="findus-topbar d-lg-none">
+            <button
+                type="button"
+                class="findus-nav-toggle"
+                data-bs-toggle="offcanvas"
+                data-bs-target="#findus-offcanvas-nav"
+                aria-controls="findus-offcanvas-nav"
+                aria-label="Navigation öffnen"
+            >
+                <span class="findus-nav-toggle-bar"></span>
+                <span class="findus-nav-toggle-bar"></span>
+                <span class="findus-nav-toggle-bar"></span>
+            </button>
+            <span class="findus-topbar-title">Findus</span>
+        </header>
+
+        <div
+            class="offcanvas offcanvas-start findus-offcanvas"
+            tabindex="-1"
+            id="findus-offcanvas-nav"
+            aria-labelledby="findus-offcanvas-nav-label"
+        >
+            <div class="offcanvas-header">
+                <span class="visually-hidden" id="findus-offcanvas-nav-label">Navigation</span>
+                <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Schließen"></button>
+            </div>
+            <div class="offcanvas-body findus-nav-body">
+                {% include "partials/_nav.html" %}
+            </div>
+        </div>
+
+        <nav class="findus-sidebar d-none d-lg-flex flex-column" id="findus-nav" aria-label="Hauptnavigation">
+            {% include "partials/_nav.html" %}
         </nav>
-        <main class="flex-grow-1 p-4" id="findus-content">
+        {% endblock %}
+
+        <main class="findus-content" id="findus-content">
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -46,5 +63,6 @@
             ).value;
         });
     </script>
+    {% block scripts %}{% endblock %}
 </body>
 </html>
