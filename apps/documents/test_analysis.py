@@ -503,6 +503,45 @@ class DocumentDirectionTests(TestCase):
         self.assertEqual(result.correspondent.name, "Karl Ebner Vermietungs GmbH & Co. KG")
         self.assertFalse(result.correspondent.is_self)
 
+    def test_anthropic_case_db_match_overrides_model_direction(self):
+        """Anthropic-Fall (#1048): eine US-Firma ohne USt-IdNr (Reverse
+
+        Charge) verwirrt das Modell offenbar so sehr, dass es selbst
+        "intern" ausgibt -- der Empfaenger (ich) matcht aber per USt-IdNr
+        zweifelsfrei auf die eigene `is_self`-Identitaet, waehrend der
+        Absender gegen keinen bestehenden Kontakt matcht. Der DB-Abgleich
+        muss dann Vorrang vor der (falschen) Modell-Angabe haben, und der
+        Kontakt muss die Gegenstelle (Anthropic, PBC) sein, nie ich selbst.
+        """
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, vat_id="DE123456789"
+        )
+        reply = json.dumps(
+            {
+                "title": "Anthropic, PBC - Zahlungsbeleg ueber 90,00 EUR",
+                "summary": "Anthropic, PBC stellt einen Zahlungsbeleg ueber 90,00 EUR aus.",
+                "key_facts": {
+                    "sender_name": "Anthropic, PBC",
+                    "recipient_name": "Christian Angermeier",
+                    "recipient_vat_id": "DE123456789",
+                    "document_type": "Zahlungsbeleg",
+                    "amount": "90.00",
+                    "currency": "EUR",
+                },
+                "direction": "intern",
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="anthropic.pdf", text_content="Zahlungsbeleg Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.direction, Document.Direction.EINGANG)
+        self.assertIsNotNone(result.correspondent)
+        self.assertEqual(result.correspondent.name, "Anthropic, PBC")
+        self.assertFalse(result.correspondent.is_self)
+
     def test_both_self_leaves_correspondent_unset(self):
         """Sicherheitsnetz (#1048): bei "intern" (beide Seiten `is_self`)
 
