@@ -16,6 +16,7 @@
                 <th>Kontakt</th>
                 <th>Richtung</th>
                 <th>Status</th>
+                <th>Erledigung</th>
                 <th>Datum</th>
                 <th></th>
             </tr>
@@ -34,6 +35,9 @@
                     <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
                         {{ document.get_processing_status_display }}
                     </span>
+                </td>
+                <td>
+                    {% include "documents/partials/_action_status_control.html" %}
                 </td>
                 <td>{{ document.created_at|date:"d.m.Y" }}</td>
                 <td class="text-end">
@@ -89,7 +93,7 @@
 </div>
 {% else %}
 <p class="text-muted">
-    {% if selected.correspondent or selected.vorgang or selected.tag or selected.status or selected.direction %}
+    {% if selected.correspondent or selected.vorgang or selected.tag or selected.status or selected.direction or selected.action_status %}
     Keine Dokumente für die gewählten Filter.
     {% else %}
     Keine Dokumente vorhanden.

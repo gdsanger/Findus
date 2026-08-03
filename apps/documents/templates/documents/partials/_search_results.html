@@ -15,6 +15,11 @@
             <span class="badge {{ hit.document.direction|direction_badge_class }}">
                 {{ hit.document.get_direction_display }}
             </span>
+            {% if hit.document.action_status != "keine" %}
+            <span class="badge {{ hit.document.action_status|action_status_badge_class }}">
+                {{ hit.document.get_action_status_display }}
+            </span>
+            {% endif %}
             {% for vorgang in hit.document.vorgaenge.all %}
             <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
             {% endfor %}

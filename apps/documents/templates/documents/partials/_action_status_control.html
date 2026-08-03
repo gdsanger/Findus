@@ -1,0 +1,21 @@
+{% load documents_extras %}
+<span class="findus-action-status-control">
+    {% if document.action_status != "keine" %}
+    <span class="badge findus-action-status-badge {{ document.action_status|action_status_badge_class }}">
+        {{ document.get_action_status_display }}
+    </span>
+    {% endif %}
+    <select
+        name="action_status"
+        class="form-select form-select-sm findus-action-status-select"
+        aria-label="Erledigungsstatus"
+        hx-post="{% url 'documents:action_status' document.pk %}"
+        hx-trigger="change"
+        hx-target="closest .findus-action-status-control"
+        hx-swap="outerHTML"
+    >
+        {% for value, label in action_status_choices %}
+        <option value="{{ value }}" {% if value == document.action_status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+</span>

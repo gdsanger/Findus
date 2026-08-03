@@ -24,6 +24,11 @@ _DIRECTION_BADGE_CLASSES = {
     "intern": "text-bg-secondary",
 }
 
+_ACTION_STATUS_BADGE_CLASSES = {
+    "offen": "text-bg-warning",
+    "erledigt": "bg-success-subtle text-success-emphasis border border-success-subtle",
+}
+
 
 @register.filter(name="render_markdown")
 def render_markdown(value):
@@ -54,3 +59,15 @@ def direction_badge_class(direction):
     unclassified document doesn't visually compete with a classified one.
     """
     return _DIRECTION_BADGE_CLASSES.get(direction, "border text-body-secondary")
+
+
+@register.filter(name="action_status_badge_class")
+def action_status_badge_class(action_status):
+    """Bootstrap badge class for `Document.action_status` (#1057) --
+
+    `offen` gets a loud solid amber so open follow-ups stand out in the
+    list/detail; `erledigt` a subdued green so it doesn't compete for
+    attention once done. `keine` has no entry -- templates skip the badge
+    entirely for it instead of rendering a neutral one.
+    """
+    return _ACTION_STATUS_BADGE_CLASSES.get(action_status, "")

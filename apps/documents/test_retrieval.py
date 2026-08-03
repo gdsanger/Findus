@@ -199,6 +199,25 @@ class DocumentRetrievalListTests(TestCase):
 
         self.assertEqual(results, [incoming])
 
+    def test_list_documents_filters_by_action_status(self):
+        open_doc = Document.objects.create(
+            title="Offene Rechnung",
+            visibility=Document.Visibility.DEPARTMENT,
+            action_status=Document.ActionStatus.OPEN,
+        )
+        open_doc.departments.add(self.dept_a)
+
+        done_doc = Document.objects.create(
+            title="Erledigte Rechnung",
+            visibility=Document.Visibility.DEPARTMENT,
+            action_status=Document.ActionStatus.DONE,
+        )
+        done_doc.departments.add(self.dept_a)
+
+        results = list(self.service.list_documents(action_status=Document.ActionStatus.OPEN))
+
+        self.assertEqual(results, [open_doc])
+
     def test_list_documents_enforces_visibility(self):
         other_dept = Department.objects.create(name="Dept Other")
         other_user = User.objects.create_user(username="carol", password="x")
