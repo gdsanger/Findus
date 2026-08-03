@@ -141,6 +141,60 @@ class AnalyzeDocumentTests(TestCase):
         self.assertEqual(vorgang_suggestion.name, "Buchhaltung 2026")
         self.assertEqual(vorgang_suggestion.confidence, 0.7)
 
+    def test_dimension_prefixed_tag_name_is_split_when_dimension_also_set(self):
+        """#1034: the KI sometimes fills both `name` ("Dimension:Wert")
+
+        and `dimension`, which would otherwise double the dimension in
+        every display built from the two fields.
+        """
+        reply = json.dumps(
+            {
+                "title": "Doc",
+                "summary": "",
+                "key_facts": {},
+                "tag_suggestions": [
+                    {
+                        "name": "Dokumenttyp:Eingangsrechnung",
+                        "dimension": "Dokumenttyp",
+                        "confidence": 0.9,
+                    }
+                ],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="doc.pdf", text_content="Inhalt")
+
+        analyze_document(document.id, generation_provider=self._provider(reply))
+
+        suggestion = document.tag_suggestions.get()
+        self.assertEqual(suggestion.name, "Eingangsrechnung")
+        self.assertEqual(suggestion.dimension, "Dokumenttyp")
+
+    def test_dimension_prefixed_tag_name_fills_empty_dimension(self):
+        """Same bug, but `dimension` came back empty -- the prefix is the
+
+        only place the dimension is known, so it must still end up split
+        into the `dimension` field instead of staying in `name`.
+        """
+        reply = json.dumps(
+            {
+                "title": "Doc",
+                "summary": "",
+                "key_facts": {},
+                "tag_suggestions": [
+                    {"name": "Dokumenttyp:Eingangsrechnung", "confidence": 0.9}
+                ],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="doc.pdf", text_content="Inhalt")
+
+        analyze_document(document.id, generation_provider=self._provider(reply))
+
+        suggestion = document.tag_suggestions.get()
+        self.assertEqual(suggestion.name, "Eingangsrechnung")
+        self.assertEqual(suggestion.dimension, "Dokumenttyp")
+
     def test_clamps_out_of_range_confidence(self):
         reply = json.dumps(
             {
