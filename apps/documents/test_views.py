@@ -570,6 +570,17 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4 test")
         self.assertEqual(response["Content-Type"], "application/pdf")
 
+    def test_original_download_allows_same_origin_framing(self):
+        """The inline PDF preview (#1036) embeds this route in the slide-over
+        iframe. The global XFrameOptionsMiddleware default of DENY would block
+        that, so this endpoint must override to SAMEORIGIN -- while every other
+        page keeps DENY.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
+
+        self.assertEqual(response["X-Frame-Options"], "SAMEORIGIN")
+
     def test_original_download_is_scoped_by_visibility(self):
         """A user outside the document's department must not reach the
         original through the streaming endpoint either -- the whole point

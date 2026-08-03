@@ -6,6 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
 from apps.ingest.service import ingest_file
@@ -288,11 +289,18 @@ def document_task_create(request, pk):
 
 
 @login_required
+@xframe_options_sameorigin
 def document_original_download(request, pk):
     """Stream the original file through the same `visible_to` scoping as the
     detail page (#1024) -- the storage backend's own URL is a public S3/
     MinIO link that bypasses ACL entirely, so the original must never be
     linked directly, only served through this auth-gated view.
+
+    The global `XFrameOptionsMiddleware` defaults to `DENY`, which blocks the
+    inline PDF preview (#1036) from embedding this route in the slide-over's
+    iframe. `@xframe_options_sameorigin` relaxes the header to `SAMEORIGIN`
+    for *this endpoint only*, so our own app can embed it while DENY stays in
+    force everywhere else (no site-wide clickjacking weakening).
     """
     document = _visible_document(request.user, pk)
     if not document.original_file:
