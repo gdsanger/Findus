@@ -319,6 +319,31 @@ class AnalyzeDocumentTests(TestCase):
         self.assertIn("Thema:Steuer", user_message.content)
         self.assertIn("Steuererklaerung 2026", user_message.content)
 
+    def test_prompt_lists_existing_contacts_with_is_self_marker(self):
+        """#1048: bestehende Kontakte muessen inkl. `is_self`-Markierung in
+
+        den Prompt-Kontext, damit das Modell Aussteller/Empfaenger dagegen
+        abgleichen kann.
+        """
+        Correspondent.objects.create(
+            name="Software Entwicklung Angermeier", is_self=True, vat_id="DE123456789"
+        )
+        Correspondent.objects.create(name="Karl Ebner Vermietungs GmbH & Co. KG")
+        provider = self._provider()
+        document = Document.objects.create(title="doc.pdf", text_content="Inhalt")
+
+        analyze_document(document.id, generation_provider=provider)
+
+        user_message = provider.calls[0][1]
+        self.assertIn(
+            "Software Entwicklung Angermeier [ICH SELBST] (DE123456789)",
+            user_message.content,
+        )
+        self.assertIn("Karl Ebner Vermietungs GmbH & Co. KG", user_message.content)
+        self.assertNotIn(
+            "Karl Ebner Vermietungs GmbH & Co. KG [ICH SELBST]", user_message.content
+        )
+
 
 class DocumentDirectionTests(TestCase):
     """Eingang/Ausgang/Intern-Ableitung aus `Correspondent.is_self` (#1030)."""
@@ -394,3 +419,78 @@ class DocumentDirectionTests(TestCase):
         result = analyze_document(document.id, generation_provider=self._provider())
 
         self.assertEqual(result.direction, Document.Direction.UNBEKANNT)
+
+    def test_ausgang_sets_recipient_not_self_as_correspondent(self):
+        """RE0041-Fall (#1048): Aussteller ist `is_self` -> Kontakt darf
+
+        NICHT die eigene Identitaet sein, sondern muss die Gegenstelle
+        (Empfaenger) sein.
+        """
+        Correspondent.objects.create(name="Acme GmbH", is_self=True, vat_id="DE999999999")
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.AUSGANG)
+        self.assertIsNotNone(result.correspondent)
+        self.assertFalse(result.correspondent.is_self)
+        self.assertEqual(result.correspondent.name, "Christian Angermeier")
+
+    def test_model_direction_used_when_self_identity_wording_differs(self):
+        """RE0041-Fall (#1048): die eigene Identitaet ist im Dokument leicht
+
+        anders geschrieben ("Software Entwicklung Angermeier / Christian
+        Angermeier") als der gespeicherte `is_self`-Datensatz ("Christian
+        Angermeier") -- kein Treffer per USt-IdNr/IBAN/Name moeglich. Das
+        Modell kennt aus dem Prompt-Kontext trotzdem beide Parteien und
+        gibt "direction" explizit aus; dieser Wert muss dann greifen statt
+        bei "unbekannt" zu bleiben, und der Kontakt muss die Gegenstelle
+        sein (nie die eigene Identitaet).
+        """
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, vat_id="DE111111111"
+        )
+        reply = json.dumps(
+            {
+                "title": "Rechnung RE0041",
+                "summary": (
+                    "Software Entwicklung Angermeier stellt der Karl Ebner "
+                    "Vermietung eine Rechnung."
+                ),
+                "key_facts": {
+                    "sender_name": "Software Entwicklung Angermeier",
+                    "recipient_name": "Karl Ebner Vermietungs GmbH & Co. KG",
+                    "document_type": "Rechnung",
+                },
+                "direction": "ausgang",
+                "tag_suggestions": [
+                    {"name": "Ausgangsrechnung", "dimension": "Dokumenttyp", "confidence": 0.9}
+                ],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="RE0041.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.direction, Document.Direction.AUSGANG)
+        self.assertIsNotNone(result.correspondent)
+        self.assertEqual(result.correspondent.name, "Karl Ebner Vermietungs GmbH & Co. KG")
+        self.assertFalse(result.correspondent.is_self)
+
+    def test_both_self_leaves_correspondent_unset(self):
+        """Sicherheitsnetz (#1048): bei "intern" (beide Seiten `is_self`)
+
+        gibt es keine Gegenstelle -- niemals eine `is_self`-Identitaet als
+        Kontakt setzen, lieber `correspondent` leer lassen.
+        """
+        Correspondent.objects.create(name="Acme GmbH", is_self=True, vat_id="DE999999999")
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, vat_id="DE123456789"
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.INTERN)
+        self.assertIsNone(result.correspondent)

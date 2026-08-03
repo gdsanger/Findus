@@ -268,6 +268,14 @@ FINDUS_CHUNK_EMBEDDING_BATCH_SIZE = int(env("FINDUS_CHUNK_EMBEDDING_BATCH_SIZE",
 # --------------------------------------------------------------------------
 FINDUS_ANALYSIS_MAX_CHARS = int(env("FINDUS_ANALYSIS_MAX_CHARS", "12000"))
 
+# Kontakte im Analyse-Prompt (#1048): bestehende `Correspondent`s als
+# Kontext, damit die KI Aussteller/Empfaenger gegen bekannte Identitaeten
+# (inkl. is_self) abgleicht statt Duplikate zu erfinden. Begrenzt, damit ein
+# gewachsener Kontaktbestand den Prompt/die Kosten nicht unbeschraenkt
+# aufblaeht -- is_self-Kontakte gehen dabei immer zuerst rein (siehe
+# apps.documents.analysis._correspondent_context_lines).
+FINDUS_ANALYSIS_MAX_CONTACTS = int(env("FINDUS_ANALYSIS_MAX_CONTACTS", "200"))
+
 # --------------------------------------------------------------------------
 # Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
 # -> vision, cheapest usable stage wins. A page only escalates to the next
