@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Kontakte – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Kontakte" %}
+
+<section class="findus-section">
+    <form method="get" class="findus-filter-bar">
+        <div class="findus-filter-field findus-search-field">
+            <label class="form-label" for="filter-q">Suche</label>
+            <input
+                type="search"
+                id="filter-q"
+                name="q"
+                class="form-control form-control-sm"
+                placeholder="Kontakte durchsuchen …"
+                value="{{ search_query }}"
+            >
+        </div>
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <div class="findus-filter-field findus-filter-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Suchen</button>
+        </div>
+    </form>
+
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>
+                        <a href="?q={{ search_query|urlencode }}&sort=name" class="{% if sort == 'name' %}fw-semibold{% endif %}">
+                            Name
+                        </a>
+                    </th>
+                    <th>Das bin ich</th>
+                    <th>
+                        <a href="?q={{ search_query|urlencode }}&sort=documents" class="{% if sort == 'documents' %}fw-semibold{% endif %}">
+                            Dokumente
+                        </a>
+                    </th>
+                    <th>Eingang/Ausgang</th>
+                    <th>
+                        <a href="?q={{ search_query|urlencode }}&sort=activity" class="{% if sort == 'activity' %}fw-semibold{% endif %}">
+                            Letzte Aktivität
+                        </a>
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for correspondent in correspondents %}
+                <tr>
+                    <td><a href="{% url 'documents:correspondent_detail' correspondent.pk %}">{{ correspondent.name }}</a></td>
+                    <td>{% if correspondent.is_self %}<span class="badge text-bg-info">Das bin ich</span>{% else %}—{% endif %}</td>
+                    <td>{{ correspondent.document_count }}</td>
+                    <td>{{ correspondent.eingang_count }} / {{ correspondent.ausgang_count }}</td>
+                    <td>{{ correspondent.last_activity|date:"d.m.Y"|default:"—" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-muted">
+                        {% if search_query %}Keine Kontakte für „{{ search_query }}“.{% else %}Keine Kontakte vorhanden.{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

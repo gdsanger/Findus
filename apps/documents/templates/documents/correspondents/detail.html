@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ correspondent.name }} – Kontakt – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=correspondent.name %}
+
+<section class="findus-section findus-detail-actions">
+    {% if correspondent.is_self %}
+    <span class="badge text-bg-info">Das bin ich</span>
+    {% endif %}
+    <a href="{% url 'documents:stammdaten_edit' 'correspondents' correspondent.pk %}" class="btn btn-sm btn-outline-secondary">
+        Kontaktdaten bearbeiten
+    </a>
+</section>
+
+<section class="findus-section">
+    <div class="findus-card">
+        <dl class="findus-detail-meta-list">
+            <div><dt>E-Mail</dt><dd>{{ correspondent.email|default:"—" }}</dd></div>
+            <div><dt>USt-IdNr.</dt><dd>{{ correspondent.vat_id|default:"—" }}</dd></div>
+            <div><dt>IBAN</dt><dd>{{ correspondent.iban|default:"—" }}</dd></div>
+            <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
+            <div><dt>Eingang/Ausgang</dt><dd>{{ eingang_count }} / {{ ausgang_count }}</dd></div>
+            <div><dt>Offene Aufgaben</dt><dd>{{ open_tasks_count }}</dd></div>
+        </dl>
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Dokumente</h2>
+    {% include "documents/partials/_filter_bar.html" %}
+
+    <div id="document-list-region">
+        {% include "documents/partials/_document_list.html" %}
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Lightweight reset for this page's Tag/Status/Richtung/Vorgang filters --
+// no localStorage persistence needed here (unlike Home's filter bar), the
+// Kontakt scope itself never changes.
+(function () {
+    var form = document.querySelector(".findus-filter-bar");
+    var resetBtn = document.getElementById("filter-reset");
+    if (!form || !resetBtn) {
+        return;
+    }
+    resetBtn.addEventListener("click", function () {
+        form.querySelectorAll("select").forEach(function (el) {
+            el.value = "";
+        });
+        window.htmx.trigger(form, "submit");
+    });
+})();
+</script>
+{% endblock %}
