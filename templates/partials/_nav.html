@@ -45,6 +45,10 @@
             class="findus-nav-link{% if 'correspondent' in request.resolver_match.url_name %} active{% endif %}"
         >
             Kontakte
+            href="{% url 'documents:vorgang_list' %}"
+            class="findus-nav-link{% if 'vorgang' in request.resolver_match.url_name %} active{% endif %}"
+        >
+            Vorgänge
         </a>
     </li>
     <li>
