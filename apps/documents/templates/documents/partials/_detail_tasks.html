@@ -30,13 +30,31 @@
 {% endif %}
 
 <div class="findus-quick-create" id="quick-create-task">
-    <input type="text" name="title" class="form-control form-control-sm" placeholder="Titel der neuen Aufgabe …">
+    {% if quick_create_form.errors %}
+    <div class="text-danger small w-100">
+        {% for field in quick_create_form %}
+        {% for error in field.errors %}<div>{{ field.label }}: {{ error }}</div>{% endfor %}
+        {% endfor %}
+    </div>
+    {% endif %}
+    <input
+        type="text"
+        name="title"
+        class="form-control form-control-sm"
+        placeholder="Titel der neuen Aufgabe …"
+        value="{% if quick_create_form %}{{ quick_create_form.title.value|default_if_none:"" }}{% endif %}"
+    >
     <select name="kind" class="form-select form-select-sm">
         {% for value, label in task_kind_choices %}
-        <option value="{{ value }}">{{ label }}</option>
+        <option value="{{ value }}" {% if quick_create_form.kind.value == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
-    <input type="date" name="due_date" class="form-control form-control-sm">
+    <input
+        type="date"
+        name="due_date"
+        class="form-control form-control-sm"
+        value="{% if quick_create_form %}{{ quick_create_form.due_date.value|default_if_none:"" }}{% endif %}"
+    >
     <button
         type="button"
         class="btn btn-sm btn-outline-secondary"
