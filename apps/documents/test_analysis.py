@@ -2,6 +2,7 @@ import json
 
 from django.test import TestCase, override_settings
 
+from apps.ai.providers import GenerationResult
 from apps.ai.providers.fake import FakeGenerationProvider
 
 from .analysis import analyze_document
@@ -27,6 +28,35 @@ _VALID_REPLY = json.dumps(
         "vorgang_suggestions": [{"name": "Buchhaltung 2026", "confidence": 0.7}],
     }
 )
+
+
+# Missing comma between two key_facts entries -- the exact shape of the
+# LLM slip that #1028 fixes ("Expecting ',' delimiter: line 18 column 6").
+_SLIGHTLY_BROKEN_REPLY = _VALID_REPLY.replace(
+    '"sender_name": "Acme GmbH", "sender_email"',
+    '"sender_name": "Acme GmbH" "sender_email"',
+)
+assert _SLIGHTLY_BROKEN_REPLY != _VALID_REPLY
+
+
+class _SequencedGenerationProvider:
+    """Returns one reply per call, holding on the last one once exhausted --
+    for asserting the retry path (#1028) without a real provider.
+    """
+
+    name = "fake"
+
+    def __init__(self, replies, *, model="fake-generate", version="1"):
+        self._replies = list(replies)
+        self.model = model
+        self.version = version
+        self.calls = []
+
+    def generate(self, messages, *, stream=False):
+        messages = list(messages)
+        self.calls.append(messages)
+        index = min(len(self.calls) - 1, len(self._replies) - 1)
+        return GenerationResult(text=self._replies[index], model=self.model, version=self.version)
 
 
 class AnalyzeDocumentTests(TestCase):
@@ -158,6 +188,36 @@ class AnalyzeDocumentTests(TestCase):
         result = analyze_document(document.id, generation_provider=self._provider(wrapped))
 
         self.assertEqual(result.title, "Rechnung Nr. 42 von Acme GmbH")
+
+    def test_slightly_malformed_json_is_repaired_without_a_retry_call(self):
+        """The exact bug from #1028: a missing comma used to blow up
+        `json.loads` and leave `summary`/`key_facts` empty with an
+        `analysis_error`. The repair pass must fix it inline, so this
+        still costs exactly one `generate()` call.
+        """
+        provider = self._provider(_SLIGHTLY_BROKEN_REPLY)
+        document = Document.objects.create(title="doc.pdf", text_content="Inhalt")
+
+        result = analyze_document(document.id, generation_provider=provider)
+
+        self.assertIn("129,90 EUR", result.summary)
+        self.assertEqual(result.key_facts["document_type"], "Rechnung")
+        self.assertNotIn("analysis_error", result.metadata)
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_json_unrecoverable_by_repair_is_fixed_by_retry(self):
+        """When the repair pass can't turn the first reply into an
+        object at all, one retry with a stricter instruction gives the
+        model a second chance before `analysis_error` is recorded.
+        """
+        provider = _SequencedGenerationProvider(["Sicher, hier ist die Analyse.", _VALID_REPLY])
+        document = Document.objects.create(title="doc.pdf", text_content="Inhalt")
+
+        result = analyze_document(document.id, generation_provider=provider)
+
+        self.assertIn("129,90 EUR", result.summary)
+        self.assertNotIn("analysis_error", result.metadata)
+        self.assertEqual(len(provider.calls), 2)
 
     @override_settings(FINDUS_ANALYSIS_MAX_CHARS=10)
     def test_prompt_truncates_text_content_to_max_chars(self):

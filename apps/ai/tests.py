@@ -18,9 +18,11 @@ from apps.ai.providers import (
     GenerationChunk,
     GenerationResult,
     ImageInput,
+    JSONGenerationError,
     Message,
     ProviderError,
     VisionResult,
+    generate_json,
     get_embedding_provider,
     get_generation_provider,
     get_vision_provider,
@@ -158,6 +160,73 @@ class FakeProviderBehaviourTests(SimpleTestCase):
         self.assertEqual(result.model, "fake-vision")
         self.assertEqual(result.version, "2024-01")
         self.assertEqual(len(provider.calls), 1)
+
+
+class GenerateJsonTests(SimpleTestCase):
+    """`generate_json` (#1028): a defensive-parse + repair + retry net on
+    top of `generate()`, so an LLM's near-valid JSON doesn't have to be
+    thrown away just because `json.loads` is strict.
+    """
+
+    def test_clean_json_object_parsed_on_first_call(self):
+        provider = FakeGenerationProvider(reply=json.dumps({"a": 1}))
+
+        result = generate_json(provider, [Message(role="user", content="go")])
+
+        self.assertEqual(result.data, {"a": 1})
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_json_wrapped_in_code_fence_and_prose_parsed_on_first_call(self):
+        wrapped = f"Hier:\n```json\n{json.dumps({'a': 1})}\n```\n"
+        provider = FakeGenerationProvider(reply=wrapped)
+
+        result = generate_json(provider, [Message(role="user", content="go")])
+
+        self.assertEqual(result.data, {"a": 1})
+        self.assertEqual(result.attempts, 1)
+
+    def test_missing_comma_is_fixed_by_repair_pass_without_a_retry(self):
+        broken = '{"a": 1 "b": 2}'
+        provider = FakeGenerationProvider(reply=broken)
+
+        result = generate_json(provider, [Message(role="user", content="go")])
+
+        self.assertEqual(result.data, {"a": 1, "b": 2})
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_reply_unrecoverable_by_repair_triggers_one_retry(self):
+        class _SequencedProvider:
+            def __init__(self, replies):
+                self._replies = replies
+                self.calls = []
+
+            def generate(self, messages, *, stream=False):
+                self.calls.append(list(messages))
+                text = self._replies[len(self.calls) - 1]
+                return GenerationResult(text=text, model="m", version="1")
+
+        provider = _SequencedProvider(["not json at all", json.dumps({"a": 1})])
+
+        result = generate_json(provider, [Message(role="user", content="go")])
+
+        self.assertEqual(result.data, {"a": 1})
+        self.assertEqual(result.attempts, 2)
+        self.assertEqual(len(provider.calls), 2)
+        # The retry must reiterate the original instructions, not replace them.
+        retry_messages = provider.calls[1]
+        self.assertEqual(retry_messages[0].content, "go")
+        self.assertIn("JSON", retry_messages[-1].content)
+
+    def test_final_failure_raises_with_truncated_raw_output(self):
+        provider = FakeGenerationProvider(reply="x" * 5000)
+
+        with self.assertRaises(JSONGenerationError) as ctx:
+            generate_json(provider, [Message(role="user", content="go")])
+
+        self.assertEqual(len(provider.calls), 2)
+        self.assertLessEqual(len(ctx.exception.raw_text), 2000)
 
 
 class RetryBackoffTests(SimpleTestCase):

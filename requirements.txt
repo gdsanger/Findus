@@ -5,6 +5,7 @@ requests==2.33.0
 
 # AI provider layer (apps.ai.providers): plain HTTP calls to OpenAI/
 # Claude/Gemini/Ollama -- no vendor SDKs, see apps/ai/providers/__init__.py
+json_repair==0.61.7
 
 # Database / vectors
 psycopg[binary]==3.2.10
