@@ -92,12 +92,18 @@ class Document(TimeStampedModel):
 
     class ProcessingStatus(models.TextChoices):
         """pending -> extracting (#1009, Text-Layer/OCR/Vision-Kaskade) ->
+        analyzing (#1020, KI-Analyse auf dem extrahierten Text) ->
         embedding (#1010, Chunking + Embeddings) -> ready, or failed at
-        either stage with `processing_error` set.
+        extraction/embedding with `processing_error` set. A fehlschlagende
+        KI-Analyse legt die Pipeline NICHT lahm (siehe
+        apps.documents.analysis) -- `analyzing` geht immer nach
+        `embedding` weiter, ggf. nur ohne Zusammenfassung/Key-Facts/
+        Vorschläge.
         """
 
         PENDING = "pending", "Ausstehend"
         EXTRACTING = "extracting", "Extraktion läuft"
+        ANALYZING = "analyzing", "Analyse läuft"
         EMBEDDING = "embedding", "Indizierung läuft"
         READY = "ready", "Bereit"
         FAILED = "failed", "Fehlgeschlagen"
@@ -163,6 +169,13 @@ class Document(TimeStampedModel):
     metadata = models.JSONField(default=dict, blank=True)
     processing_error = models.TextField(blank=True)
 
+    # KI-Analyse (#1020, apps.documents.analysis): lesbare Kurz-Zusammenfassung
+    # plus strukturierte Key-Facts (Absender/Datum/Typ/Betrag/Frist, jeweils
+    # KI-extrahiert -- daher hier statt in `metadata`, das reine
+    # Extraktions-Provenienz führt).
+    summary = models.TextField(blank=True)
+    key_facts = models.JSONField(default=dict, blank=True)
+
     original_file = models.FileField(upload_to="documents/%Y/%m/", blank=True)
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
 
@@ -173,6 +186,70 @@ class Document(TimeStampedModel):
 
     def __str__(self):
         return self.title
+
+
+class SuggestionStatus(models.TextChoices):
+    PENDING = "pending", "Offen"
+    ACCEPTED = "accepted", "Angenommen"
+    REJECTED = "rejected", "Verworfen"
+
+
+class SuggestionQuerySet(models.QuerySet):
+    def pending(self):
+        return self.filter(status=SuggestionStatus.PENDING)
+
+
+class TagSuggestion(TimeStampedModel):
+    """Ein von der KI-Analyse (#1020) vorgeschlagenes Tag -- Prinzip "die KI
+
+    müllt nicht selbstständig zu": erst wenn der Nutzer annimmt, wird ein
+    passendes `Tag` gematcht/angelegt und dem Document zugeordnet (siehe
+    `apps.documents.views`). Re-Analyse ersetzt nur noch offene (`pending`)
+    Vorschläge -- bereits angenommene/verworfene bleiben als Entscheidung
+    stehen, statt bei jedem Re-Run erneut aufzutauchen.
+    """
+
+    document = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="tag_suggestions"
+    )
+    name = models.CharField(max_length=100)
+    dimension = models.CharField(max_length=100, blank=True)
+    confidence = models.FloatField(default=0.0)
+    status = models.CharField(
+        max_length=20, choices=SuggestionStatus.choices, default=SuggestionStatus.PENDING
+    )
+
+    objects = SuggestionQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-confidence", "name"]
+
+    def __str__(self):
+        return f"{self.name} -> Document {self.document_id}"
+
+
+class VorgangSuggestion(TimeStampedModel):
+    """Ein von der KI-Analyse (#1020) vorgeschlagener Vorgang -- analog zu
+
+    `TagSuggestion`, siehe dort für das Vorschlag/Annahme-Prinzip.
+    """
+
+    document = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="vorgang_suggestions"
+    )
+    name = models.CharField(max_length=255)
+    confidence = models.FloatField(default=0.0)
+    status = models.CharField(
+        max_length=20, choices=SuggestionStatus.choices, default=SuggestionStatus.PENDING
+    )
+
+    objects = SuggestionQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-confidence", "name"]
+
+    def __str__(self):
+        return f"{self.name} -> Document {self.document_id}"
 
 
 class DocumentLink(TimeStampedModel):

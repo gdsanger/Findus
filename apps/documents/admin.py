@@ -7,8 +7,10 @@ from .models import (
     Document,
     DocumentLink,
     Tag,
+    TagSuggestion,
     Task,
     Vorgang,
+    VorgangSuggestion,
 )
 
 
@@ -53,6 +55,32 @@ class DocumentTaskInline(admin.TabularInline):
     verbose_name_plural = "Verknüpfte Aufgaben"
 
 
+class TagSuggestionInline(admin.TabularInline):
+    """Read-only view of the KI-Analyse's tag suggestions (#1020) -- accept
+
+    /reject happens in the document detail UI, not the admin, so no add
+    permission here either.
+    """
+
+    model = TagSuggestion
+    fields = ("name", "dimension", "confidence", "status")
+    readonly_fields = fields
+    extra = 0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class VorgangSuggestionInline(admin.TabularInline):
+    model = VorgangSuggestion
+    fields = ("name", "confidence", "status")
+    readonly_fields = fields
+    extra = 0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
     list_display = (
@@ -68,7 +96,7 @@ class DocumentAdmin(admin.ModelAdmin):
     autocomplete_fields = ("correspondent", "owner", "vorgaenge", "tags")
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
-    inlines = [ChunkInline, DocumentLinkInline, DocumentTaskInline]
+    inlines = [ChunkInline, DocumentLinkInline, DocumentTaskInline, TagSuggestionInline, VorgangSuggestionInline]
 
 
 @admin.register(Correspondent)

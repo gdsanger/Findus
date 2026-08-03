@@ -12,7 +12,18 @@ from django.urls import reverse
 from apps.accounts.models import Department
 from apps.ai.providers.base import EmbeddingResult
 
-from .models import Chunk, Correspondent, Document, DocumentLink, Tag, Task, Vorgang
+from .models import (
+    Chunk,
+    Correspondent,
+    Document,
+    DocumentLink,
+    SuggestionStatus,
+    Tag,
+    TagSuggestion,
+    Task,
+    Vorgang,
+    VorgangSuggestion,
+)
 
 User = get_user_model()
 
@@ -521,6 +532,123 @@ class DocumentMetaEditTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.doc.refresh_from_db()
         self.assertEqual(list(self.doc.vorgaenge.all()), [])
+
+
+class DocumentSuggestionActionTests(TestCase):
+    """Covers accepting/rejecting KI-Analyse tag/Vorgang suggestions (#1020)
+
+    -- the "Vorschläge, die der Nutzer annimmt/verwirft" principle: a
+    suggestion only ever becomes a real Tag/Vorgang assignment through this
+    explicit action, never automatically.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+        self.tag_suggestion = TagSuggestion.objects.create(
+            document=self.doc, name="Rechnung", dimension="Thema", confidence=0.9
+        )
+        self.vorgang_suggestion = VorgangSuggestion.objects.create(
+            document=self.doc, name="Buchhaltung 2026", confidence=0.7
+        )
+
+    def test_pending_suggestions_are_shown_on_detail_page(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Rechnung")
+        self.assertContains(response, "Buchhaltung 2026")
+
+    def test_accept_tag_suggestion_creates_and_assigns_tag(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:tag_suggestion_accept", args=[self.doc.id, self.tag_suggestion.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.tag_suggestion.refresh_from_db()
+        self.assertEqual(self.tag_suggestion.status, SuggestionStatus.ACCEPTED)
+        tag = Tag.objects.get(name="Rechnung", dimension="Thema")
+        self.assertIn(tag, self.doc.tags.all())
+
+    def test_reject_tag_suggestion_does_not_create_tag(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:tag_suggestion_reject", args=[self.doc.id, self.tag_suggestion.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.tag_suggestion.refresh_from_db()
+        self.assertEqual(self.tag_suggestion.status, SuggestionStatus.REJECTED)
+        self.assertEqual(Tag.objects.count(), 0)
+        self.assertEqual(self.doc.tags.count(), 0)
+
+    def test_accept_vorgang_suggestion_creates_and_assigns_vorgang(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse(
+                "documents:vorgang_suggestion_accept",
+                args=[self.doc.id, self.vorgang_suggestion.id],
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.vorgang_suggestion.refresh_from_db()
+        self.assertEqual(self.vorgang_suggestion.status, SuggestionStatus.ACCEPTED)
+        vorgang = Vorgang.objects.get(name="Buchhaltung 2026")
+        self.assertIn(vorgang, self.doc.vorgaenge.all())
+
+    def test_reject_vorgang_suggestion_does_not_create_vorgang(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse(
+                "documents:vorgang_suggestion_reject",
+                args=[self.doc.id, self.vorgang_suggestion.id],
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.vorgang_suggestion.refresh_from_db()
+        self.assertEqual(self.vorgang_suggestion.status, SuggestionStatus.REJECTED)
+        self.assertEqual(Vorgang.objects.count(), 0)
+
+    def test_accepted_suggestion_no_longer_shown_as_pending(self):
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:tag_suggestion_accept", args=[self.doc.id, self.tag_suggestion.id])
+        )
+        self.client.post(
+            reverse(
+                "documents:vorgang_suggestion_reject",
+                args=[self.doc.id, self.vorgang_suggestion.id],
+            )
+        )
+
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Übernehmen")
+
+    def test_suggestion_action_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:tag_suggestion_accept", args=[self.doc.id, self.tag_suggestion.id])
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.tag_suggestion.refresh_from_db()
+        self.assertEqual(self.tag_suggestion.status, SuggestionStatus.PENDING)
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
