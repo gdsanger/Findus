@@ -36,6 +36,15 @@ sender: a document's recipient is usually "me", and creating a fresh
 `Correspondent` for every recipient description would pollute the
 `is_self` identities that must already exist for direction detection to
 work at all.
+
+Tag-Dimension/-Wert (#1034): `Tag`/`TagSuggestion` keep `name` and
+`dimension` as separate fields on purpose (unique on the pair, see
+`Tag.Meta.constraints`), but a KI reply sometimes ignores the prompt and
+crams both into `name` as "Dimension:Wert" while *also* filling
+`dimension` -- doubling the dimension in every display built from the
+two fields. `_normalize_tag_fields` splits that back apart before a
+`TagSuggestion` is ever created, so `name` never carries a `dimension`
+prefix.
 """
 
 from __future__ import annotations
@@ -84,7 +93,11 @@ _SYSTEM_PROMPT = (
     "Wert als String, sonst null.\n"
     '- "tag_suggestions": Liste von Objekten "name", "dimension", '
     '"confidence" (0-1) -- bevorzugt bestehende Tags/Dimensionen '
-    "wiederverwenden, nicht wahllos neue erfinden.\n"
+    "wiederverwenden, nicht wahllos neue erfinden. \"name\" ist "
+    'IMMER nur der reine Wert, NIE "Dimension:Wert". Die Dimension '
+    'gehoert ausschliesslich in das Feld "dimension". Richtig: '
+    '{"name": "Eingangsrechnung", "dimension": "Dokumenttyp"}. Falsch: '
+    '{"name": "Dokumenttyp:Eingangsrechnung", "dimension": "Dokumenttyp"}.\n'
     '- "vorgang_suggestions": Liste von Objekten "name", "confidence" '
     "(0-1) -- bevorzugt einen bestehenden Vorgang, sonst ein neuer, "
     "praegnanter Name.\n"
@@ -121,6 +134,23 @@ def _clamp_confidence(value: object) -> float:
     return max(0.0, min(1.0, number))
 
 
+def _normalize_tag_fields(name: str, dimension: str) -> tuple[str, str]:
+    """Defend against a KI reply that -- despite the prompt (#1034) --
+
+    still crams the dimension into the name as "Dimension:Wert". Split
+    on the first ":" and keep only the bare value as the name; an
+    already-populated `dimension` field wins over the prefix (the
+    prefix is redundant in that case, not a second opinion to merge).
+    """
+    name = name.strip()
+    dimension = dimension.strip()
+    prefix, sep, rest = name.partition(":")
+    if sep and rest.strip():
+        name = rest.strip()
+        dimension = dimension or prefix.strip()
+    return name, dimension
+
+
 def _replace_tag_suggestions(document: Document, items: list) -> None:
     decided_names = {
         name.lower()
@@ -135,7 +165,9 @@ def _replace_tag_suggestions(document: Document, items: list) -> None:
     for item in items:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "").strip()
+        name, dimension = _normalize_tag_fields(
+            str(item.get("name") or ""), str(item.get("dimension") or "")
+        )
         if not name or name.lower() in seen:
             continue
         seen.add(name.lower())
@@ -143,7 +175,7 @@ def _replace_tag_suggestions(document: Document, items: list) -> None:
             TagSuggestion(
                 document=document,
                 name=name,
-                dimension=str(item.get("dimension") or "").strip(),
+                dimension=dimension,
                 confidence=_clamp_confidence(item.get("confidence")),
             )
         )
