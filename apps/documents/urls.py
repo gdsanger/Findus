@@ -46,6 +46,11 @@ urlpatterns = [
         name="original_preview_panel",
     ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
+    path(
+        "documents/<int:pk>/action-status/",
+        views.document_action_status,
+        name="action_status",
+    ),
     path("documents/<int:pk>/meta/edit/", views.document_meta_edit, name="meta_edit"),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
     path(

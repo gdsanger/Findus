@@ -127,6 +127,12 @@ class DocumentListViewTests(TestCase):
         self.assertContains(response, "findus:documents:filters")
         self.assertContains(response, 'id="filter-reset"')
 
+    def test_filter_persistence_script_covers_action_status(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, '"action_status"')
+
     def test_htmx_request_does_not_duplicate_persistence_script(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:home"), HTTP_HX_REQUEST="true")
@@ -191,6 +197,50 @@ class DocumentListViewTests(TestCase):
         response = self.client.get(reverse("documents:home"))
 
         self.assertContains(response, "Eingang")
+
+    def test_filter_by_action_status_excludes_non_matching(self):
+        self.own_doc.action_status = Document.ActionStatus.OPEN
+        self.own_doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"action_status": Document.ActionStatus.DONE}
+        )
+
+        self.assertNotContains(response, "Rechnung Acme")
+
+    def test_filter_by_action_status_includes_matching(self):
+        self.own_doc.action_status = Document.ActionStatus.OPEN
+        self.own_doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"action_status": Document.ActionStatus.OPEN}
+        )
+
+        self.assertContains(response, "Rechnung Acme")
+
+    def test_list_row_shows_action_status_badge_when_open(self):
+        self.own_doc.action_status = Document.ActionStatus.OPEN
+        self.own_doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus-action-status-badge text-bg-warning")
+
+    def test_list_row_hides_action_status_badge_when_none(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "findus-action-status-badge")
+
+    def test_filter_bar_includes_action_status_dropdown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, 'id="filter-action-status"')
+        self.assertContains(response, 'name="action_status"')
 
     def test_combined_filters_narrow_results(self):
         self.client.force_login(self.user_a)
@@ -430,6 +480,22 @@ class DocumentDetailViewTests(TestCase):
 
         self.assertContains(response, "Eingang")
 
+    def test_action_status_badge_is_shown_when_open(self):
+        self.doc.action_status = Document.ActionStatus.OPEN
+        self.doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "findus-action-status-badge text-bg-warning")
+
+    def test_action_status_control_is_shown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, 'name="action_status"')
+        self.assertContains(response, reverse("documents:action_status", args=[self.doc.id]))
+
     def test_summary_and_key_facts_are_shown_as_primary_view(self):
         """Covers #1024: once a KI-Analyse (#1020) has produced a summary,
         it -- plus the Key-Facts panel -- is the primary view, not the raw
@@ -520,6 +586,70 @@ class DocumentDetailViewTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         self.assertNotContains(response, "Geheimvertrag")
+
+
+class DocumentActionStatusViewTests(TestCase):
+    """Covers the #1057 badge+toggle endpoint: setting `action_status`
+
+    straight from the list row or detail page's control, via HTMX,
+    without going through the general "Zuordnung bearbeiten" edit form.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_post_sets_action_status(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:action_status", args=[self.doc.id]),
+            {"action_status": Document.ActionStatus.OPEN},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.OPEN)
+        self.assertContains(response, "findus-action-status-badge text-bg-warning")
+
+    def test_post_with_invalid_value_keeps_previous_status(self):
+        self.doc.action_status = Document.ActionStatus.OPEN
+        self.doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:action_status", args=[self.doc.id]), {"action_status": "bogus"}
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.OPEN)
+
+    def test_get_is_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:action_status", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:action_status", args=[self.doc.id]),
+            {"action_status": Document.ActionStatus.OPEN},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.NONE)
 
 
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-detail-media-")
@@ -1320,3 +1450,51 @@ class DocumentUploadViewTests(TestCase):
         self.client.force_login(other_user)
         response = self.client.get(reverse("documents:home"))
         self.assertNotContains(response, "a.pdf")
+
+
+class NavOpenActionStatusBadgeTests(TestCase):
+    """Covers the #1057 "Zu erledigen" nav shortcut: a link straight to the
+
+    `action_status=offen` filter preset, with a count badge fed by
+    `apps.documents.context_processors.open_action_status_count` -- present
+    on every page since it lives in the sidebar, not just the Home view.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+    def _make_document(self, action_status):
+        document = Document.objects.create(
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            action_status=action_status,
+        )
+        document.departments.add(self.dept_a)
+        return document
+
+    def test_nav_link_targets_open_action_status_preset(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "Zu erledigen")
+        self.assertContains(response, "?action_status=offen")
+
+    def test_nav_badge_counts_only_open_documents_visible_to_user(self):
+        self._make_document(Document.ActionStatus.OPEN)
+        self._make_document(Document.ActionStatus.OPEN)
+        self._make_document(Document.ActionStatus.DONE)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, '<span class="badge text-bg-warning findus-nav-badge">2</span>')
+
+    def test_nav_badge_is_absent_when_no_open_documents(self):
+        self._make_document(Document.ActionStatus.DONE)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "findus-nav-badge")

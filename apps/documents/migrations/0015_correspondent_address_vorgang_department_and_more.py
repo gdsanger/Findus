@@ -9,6 +9,13 @@ class Migration(migrations.Migration):
     dependencies = [
         ('accounts', '0001_initial'),
         ('documents', '0014_tasktemplate_tasktemplateitem'),
+        # Must run after the orphaned-column drop (#994 hand-built-schema
+        # leftover): that migration unconditionally `DROP COLUMN IF EXISTS
+        # address` on a column Django didn't know about. Ordering this
+        # AddField after it, rather than leaving both as sibling leaves,
+        # guarantees the real `address` column added here survives instead
+        # of being dropped again if the two ever applied in the other order.
+        ('documents', '0015_drop_orphaned_correspondent_address'),
     ]
 
     operations = [

@@ -16,9 +16,20 @@
     <li>
         <a
             href="{% url 'documents:home' %}"
-            class="findus-nav-link{% if request.resolver_match.url_name == 'home' %} active{% endif %}"
+            class="findus-nav-link{% if request.resolver_match.url_name == 'home' and not request.GET.action_status %} active{% endif %}"
         >
             Dokumente
+        </a>
+    </li>
+    <li>
+        <a
+            href="{% url 'documents:home' %}?action_status=offen"
+            class="findus-nav-link{% if request.resolver_match.url_name == 'home' and request.GET.action_status == 'offen' %} active{% endif %}"
+        >
+            Zu erledigen
+            {% if open_action_status_count %}
+            <span class="badge text-bg-warning findus-nav-badge">{{ open_action_status_count }}</span>
+            {% endif %}
         </a>
     </li>
     <li>

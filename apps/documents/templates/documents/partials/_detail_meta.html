@@ -25,6 +25,12 @@
             </dd>
         </div>
         <div>
+            <dt>Erledigung</dt>
+            <dd>
+                {% include "documents/partials/_action_status_control.html" %}
+            </dd>
+        </div>
+        <div>
             <dt>Status</dt>
             <dd>{{ document.get_processing_status_display }}</dd>
         </div>

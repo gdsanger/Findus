@@ -179,6 +179,19 @@ class Document(TimeStampedModel):
         INTERN = "intern", "Intern"
         UNBEKANNT = "unbekannt", "Unbekannt"
 
+    class ActionStatus(models.TextChoices):
+        """Muss noch jemand etwas mit diesem Dokument tun? (#1057) --
+
+        bewusst getrennt von `ProcessingStatus`: jenes ist die technische
+        Pipeline (Extraktion/Analyse/Indizierung), dies hier ist ein
+        fachlicher, vom Nutzer gesetzter Haken ("erledigt"/"offen"), den
+        auch ein `ready`-Dokument noch braucht.
+        """
+
+        NONE = "keine", "Kein Handlungsbedarf"
+        OPEN = "offen", "Offen"
+        DONE = "erledigt", "Erledigt"
+
     title = models.CharField(max_length=255)
     correspondent = models.ForeignKey(
         Correspondent,
@@ -219,6 +232,12 @@ class Document(TimeStampedModel):
         max_length=20,
         choices=Direction.choices,
         default=Direction.UNBEKANNT,
+        db_index=True,
+    )
+    action_status = models.CharField(
+        max_length=20,
+        choices=ActionStatus.choices,
+        default=ActionStatus.NONE,
         db_index=True,
     )
 

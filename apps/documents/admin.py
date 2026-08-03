@@ -89,6 +89,7 @@ class DocumentAdmin(admin.ModelAdmin):
         "title",
         "correspondent",
         "direction",
+        "action_status",
         "processing_status",
         "extraction_method",
         "visibility",
@@ -96,6 +97,7 @@ class DocumentAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "direction",
+        "action_status",
         "processing_status",
         "extraction_method",
         "visibility",

@@ -59,6 +59,10 @@ def filtered_documents(request):
     if direction:
         documents = documents.filter(direction=direction)
 
+    action_status = request.GET.get("action_status", "").strip()
+    if action_status:
+        documents = documents.filter(action_status=action_status)
+
     if vorgang_id or tag_id:
         documents = documents.distinct()
 
@@ -82,6 +86,7 @@ def _search_hits(request, query):
         tags=[tag_id] if tag_id else None,
         status=request.GET.get("status", "").strip() or None,
         direction=request.GET.get("direction", "").strip() or None,
+        action_status=request.GET.get("action_status", "").strip() or None,
     )
 
 
@@ -124,12 +129,14 @@ def document_list(request):
         "tags": Tag.objects.all(),
         "status_choices": Document.ProcessingStatus.choices,
         "direction_choices": Document.Direction.choices,
+        "action_status_choices": Document.ActionStatus.choices,
         "selected": {
             "correspondent": request.GET.get("correspondent", ""),
             "vorgang": request.GET.get("vorgang", ""),
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
+            "action_status": request.GET.get("action_status", ""),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
@@ -272,6 +279,7 @@ def document_detail(request, pk):
         "incoming_links": document.links_to.select_related("from_document").filter(
             from_document__in=visible_documents
         ),
+        "action_status_choices": Document.ActionStatus.choices,
     }
     return render(request, "documents/detail.html", context)
 
@@ -431,6 +439,27 @@ def document_meta_edit(request, pk):
 
 
 @login_required
+@require_POST
+def document_action_status(request, pk):
+    """Set `Document.action_status` (#1057) from the list row or detail --
+
+    a dedicated single-field endpoint rather than routing through
+    `document_meta`, since the badge+dropdown control needs to save on
+    every change without the "Zuordnung bearbeiten" edit form being open.
+    """
+    document = _visible_document(request.user, pk)
+    action_status = request.POST.get("action_status", "").strip()
+    if action_status in Document.ActionStatus.values:
+        document.action_status = action_status
+        document.save(update_fields=["action_status", "updated_at"])
+    return render(
+        request,
+        "documents/partials/_action_status_control.html",
+        {"document": document, "action_status_choices": Document.ActionStatus.choices},
+    )
+
+
+@login_required
 def document_meta(request, pk):
     """Display partial for `#document-meta` -- also the save target: a POST
     here sets Absender/Vorgänge/Tags, then re-renders the same read-only
@@ -450,7 +479,7 @@ def document_meta(request, pk):
         document.save(update_fields=["correspondent", "direction", "updated_at"])
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))
-    return render(request, "documents/partials/_detail_meta.html", {"document": document})
+    return _render_meta(request, document)
 
 
 _QUICK_CREATE_KINDS = {"correspondent", "vorgang", "tag"}
@@ -500,7 +529,11 @@ def document_meta_quick_create(request, pk, kind):
 
 
 def _render_meta(request, document):
-    return render(request, "documents/partials/_detail_meta.html", {"document": document})
+    return render(
+        request,
+        "documents/partials/_detail_meta.html",
+        {"document": document, "action_status_choices": Document.ActionStatus.choices},
+    )
 
 
 @login_required

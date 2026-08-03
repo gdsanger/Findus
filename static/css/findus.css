@@ -263,6 +263,10 @@ body {
     color: var(--findus-text);
 }
 
+.findus-nav-badge {
+    margin-left: auto;
+}
+
 .findus-nav-link.active {
     background-color: var(--findus-surface-raised);
     color: var(--findus-text);
@@ -513,6 +517,17 @@ body {
 
 .findus-detail-meta-list dd {
     margin: 0;
+}
+
+.findus-action-status-control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+}
+
+.findus-action-status-select {
+    width: auto;
+    display: inline-block;
 }
 
 .findus-detail-text {
