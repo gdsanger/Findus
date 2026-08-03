@@ -18,6 +18,12 @@ _LANGUAGE_LABELS = {
     "nl": "Niederländisch",
 }
 
+_DIRECTION_BADGE_CLASSES = {
+    "eingang": "text-bg-primary",
+    "ausgang": "text-bg-success",
+    "intern": "text-bg-secondary",
+}
+
 
 @register.filter(name="render_markdown")
 def render_markdown(value):
@@ -39,3 +45,12 @@ def language_label(code):
     if not code:
         return "—"
     return _LANGUAGE_LABELS.get(code, code.upper())
+
+
+@register.filter(name="direction_badge_class")
+def direction_badge_class(direction):
+    """Bootstrap badge class for `Document.direction` (#1031) -- a solid
+    color for a known direction, a subdued outline for `unbekannt` so an
+    unclassified document doesn't visually compete with a classified one.
+    """
+    return _DIRECTION_BADGE_CLASSES.get(direction, "border text-body-secondary")

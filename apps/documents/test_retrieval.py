@@ -180,6 +180,25 @@ class DocumentRetrievalListTests(TestCase):
 
         self.assertEqual(results, [old_doc])
 
+    def test_list_documents_filters_by_direction(self):
+        incoming = Document.objects.create(
+            title="Eingangsrechnung",
+            visibility=Document.Visibility.DEPARTMENT,
+            direction=Document.Direction.EINGANG,
+        )
+        incoming.departments.add(self.dept_a)
+
+        outgoing = Document.objects.create(
+            title="Ausgangsrechnung",
+            visibility=Document.Visibility.DEPARTMENT,
+            direction=Document.Direction.AUSGANG,
+        )
+        outgoing.departments.add(self.dept_a)
+
+        results = list(self.service.list_documents(direction=Document.Direction.EINGANG))
+
+        self.assertEqual(results, [incoming])
+
     def test_list_documents_enforces_visibility(self):
         other_dept = Department.objects.create(name="Dept Other")
         other_user = User.objects.create_user(username="carol", password="x")

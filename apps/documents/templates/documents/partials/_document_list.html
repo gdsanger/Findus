@@ -1,3 +1,4 @@
+{% load documents_extras %}
 {% if page_obj %}
 <div
     {% if has_pending %}
@@ -13,6 +14,7 @@
             <tr>
                 <th>Titel</th>
                 <th>Absender</th>
+                <th>Richtung</th>
                 <th>Status</th>
                 <th>Datum</th>
                 <th></th>
@@ -23,6 +25,11 @@
             <tr>
                 <td><a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a></td>
                 <td>{{ document.correspondent.name|default:"—" }}</td>
+                <td>
+                    <span class="badge {{ document.direction|direction_badge_class }}">
+                        {{ document.get_direction_display }}
+                    </span>
+                </td>
                 <td>
                     <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
                         {{ document.get_processing_status_display }}
@@ -82,7 +89,7 @@
 </div>
 {% else %}
 <p class="text-muted">
-    {% if selected.correspondent or selected.vorgang or selected.tag or selected.status %}
+    {% if selected.correspondent or selected.vorgang or selected.tag or selected.status or selected.direction %}
     Keine Dokumente für die gewählten Filter.
     {% else %}
     Keine Dokumente vorhanden.

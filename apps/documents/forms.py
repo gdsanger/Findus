@@ -9,10 +9,15 @@ _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
 class CorrespondentForm(forms.ModelForm):
     class Meta:
         model = Correspondent
-        fields = ["name", "email"]
+        fields = ["name", "email", "is_self", "vat_id", "tax_number", "iban"]
+        labels = {"is_self": "Das bin ich"}
         widgets = {
             "name": _TEXT_WIDGET,
             "email": forms.EmailInput(attrs={"class": "form-control form-control-sm"}),
+            "is_self": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "vat_id": _TEXT_WIDGET,
+            "tax_number": _TEXT_WIDGET,
+            "iban": _TEXT_WIDGET,
         }
 
 

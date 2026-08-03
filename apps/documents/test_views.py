@@ -148,6 +148,37 @@ class DocumentListViewTests(TestCase):
 
         self.assertNotContains(response, "Rechnung Acme")
 
+    def test_filter_by_direction_excludes_non_matching(self):
+        self.own_doc.direction = Document.Direction.EINGANG
+        self.own_doc.save(update_fields=["direction"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"direction": Document.Direction.AUSGANG}
+        )
+
+        self.assertNotContains(response, "Rechnung Acme")
+
+    def test_filter_by_direction_includes_matching(self):
+        self.own_doc.direction = Document.Direction.EINGANG
+        self.own_doc.save(update_fields=["direction"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"direction": Document.Direction.EINGANG}
+        )
+
+        self.assertContains(response, "Rechnung Acme")
+
+    def test_list_row_shows_direction_badge(self):
+        self.own_doc.direction = Document.Direction.EINGANG
+        self.own_doc.save(update_fields=["direction"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "Eingang")
+
     def test_combined_filters_narrow_results(self):
         self.client.force_login(self.user_a)
         response = self.client.get(
@@ -376,6 +407,15 @@ class DocumentDetailViewTests(TestCase):
 
         self.assertContains(response, "OCR")
         self.assertContains(response, "Deutsch")
+
+    def test_direction_badge_is_shown(self):
+        self.doc.direction = Document.Direction.EINGANG
+        self.doc.save(update_fields=["direction"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Eingang")
 
     def test_summary_and_key_facts_are_shown_as_primary_view(self):
         """Covers #1024: once a KI-Analyse (#1020) has produced a summary,
@@ -702,6 +742,15 @@ class DocumentMetaEditTests(TestCase):
         self.assertContains(response, "Acme GmbH")
         self.assertContains(response, f'value="{correspondent.id}" selected')
 
+    def test_edit_form_shows_current_direction(self):
+        self.doc.direction = Document.Direction.AUSGANG
+        self.doc.save(update_fields=["direction"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertContains(response, f'value="{Document.Direction.AUSGANG}" selected')
+
     def test_edit_form_outside_visibility_returns_404(self):
         self.client.force_login(self.user_b)
         response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
@@ -733,6 +782,28 @@ class DocumentMetaEditTests(TestCase):
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.correspondent, correspondent)
         self.assertContains(response, "Acme GmbH")
+
+    def test_post_updates_direction(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"direction": Document.Direction.EINGANG},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.direction, Document.Direction.EINGANG)
+        self.assertContains(response, "Eingang")
+
+    def test_post_with_invalid_direction_keeps_previous_value(self):
+        self.doc.direction = Document.Direction.AUSGANG
+        self.doc.save(update_fields=["direction"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:meta", args=[self.doc.id]), {"direction": "bogus"})
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.direction, Document.Direction.AUSGANG)
 
     def test_post_with_non_numeric_correspondent_clears_instead_of_500(self):
         self.client.force_login(self.user_a)
@@ -914,6 +985,16 @@ class StammdatenCrudTests(TestCase):
         self.assertContains(response, "Acme GmbH")
         self.assertContains(response, "info@acme.example")
 
+    def test_correspondent_list_shows_self_flag(self):
+        Correspondent.objects.create(name="Eigene Firma GmbH", is_self=True)
+        Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
+
+        self.assertContains(response, "Ja")
+        self.assertContains(response, "Nein")
+
     def test_create_correspondent(self):
         self.client.force_login(self.user)
         response = self.client.post(
@@ -923,6 +1004,40 @@ class StammdatenCrudTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(Correspondent.objects.get().name, "Acme GmbH")
+
+    def test_create_correspondent_with_self_flag_and_matching_fields(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_list", args=["correspondents"]),
+            {
+                "name": "Eigene Firma GmbH",
+                "email": "info@example.com",
+                "is_self": "on",
+                "vat_id": "DE123456789",
+                "tax_number": "12/345/67890",
+                "iban": "DE02100100109307118603",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        correspondent = Correspondent.objects.get(name="Eigene Firma GmbH")
+        self.assertTrue(correspondent.is_self)
+        self.assertEqual(correspondent.vat_id, "DE123456789")
+        self.assertEqual(correspondent.tax_number, "12/345/67890")
+        self.assertEqual(correspondent.iban, "DE02100100109307118603")
+
+    def test_edit_correspondent_toggles_self_flag(self):
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_edit", args=["correspondents", correspondent.id]),
+            {"name": "Acme GmbH", "is_self": "on"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        correspondent.refresh_from_db()
+        self.assertTrue(correspondent.is_self)
 
     def test_create_vorgang(self):
         self.client.force_login(self.user)

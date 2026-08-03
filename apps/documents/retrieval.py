@@ -68,6 +68,7 @@ class DocumentRetrievalService:
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
         status: Optional[str] = None,
+        direction: Optional[str] = None,
     ) -> QuerySet[Document]:
         documents = (
             Document.objects.visible_to(self.user)
@@ -86,6 +87,8 @@ class DocumentRetrievalService:
             documents = documents.filter(created_at__date__lte=date_to)
         if status is not None:
             documents = documents.filter(processing_status=status)
+        if direction is not None:
+            documents = documents.filter(direction=direction)
         return documents.distinct()
 
     def list_documents(
@@ -97,6 +100,7 @@ class DocumentRetrievalService:
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
         status: Optional[str] = None,
+        direction: Optional[str] = None,
     ) -> QuerySet[Document]:
         """Structured browse -- no semantic query, just visibility + filters."""
         return self._filtered_documents(
@@ -106,6 +110,7 @@ class DocumentRetrievalService:
             date_from=date_from,
             date_to=date_to,
             status=status,
+            direction=direction,
         )
 
     def search(
@@ -119,6 +124,7 @@ class DocumentRetrievalService:
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
         status: Optional[str] = None,
+        direction: Optional[str] = None,
     ) -> list[DocumentHit]:
         """Embed `query` via the AI provider layer, rank visible documents
         by their best-matching chunk (cosine distance over
@@ -132,6 +138,7 @@ class DocumentRetrievalService:
             date_from=date_from,
             date_to=date_to,
             status=status,
+            direction=direction,
         )
 
         provider = self.embedding_provider or get_embedding_provider()

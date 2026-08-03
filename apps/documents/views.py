@@ -54,6 +54,10 @@ def _filtered_documents(request):
     if status:
         documents = documents.filter(processing_status=status)
 
+    direction = request.GET.get("direction", "").strip()
+    if direction:
+        documents = documents.filter(direction=direction)
+
     if vorgang_id or tag_id:
         documents = documents.distinct()
 
@@ -63,8 +67,8 @@ def _filtered_documents(request):
 def _search_hits(request, query):
     """Rank visible documents for `query` through the retrieval service
     (#1005) -- semantic search never touches Document/Chunk directly, and
-    it applies the same combinable Absender/Vorgang/Tag/Status filters as
-    structured browsing above.
+    it applies the same combinable Absender/Vorgang/Tag/Status/Richtung
+    filters as structured browsing above.
     """
     service = DocumentRetrievalService(request.user)
     tag_id = request.GET.get("tag", "").strip()
@@ -76,6 +80,7 @@ def _search_hits(request, query):
         vorgang=request.GET.get("vorgang", "").strip() or None,
         tags=[tag_id] if tag_id else None,
         status=request.GET.get("status", "").strip() or None,
+        direction=request.GET.get("direction", "").strip() or None,
     )
 
 
@@ -113,11 +118,13 @@ def document_list(request):
         "vorgaenge": Vorgang.objects.all(),
         "tags": Tag.objects.all(),
         "status_choices": Document.ProcessingStatus.choices,
+        "direction_choices": Document.Direction.choices,
         "selected": {
             "correspondent": request.GET.get("correspondent", ""),
             "vorgang": request.GET.get("vorgang", ""),
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
+            "direction": request.GET.get("direction", ""),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
@@ -326,6 +333,7 @@ def _meta_edit_context(document):
         "all_correspondents": Correspondent.objects.all(),
         "all_vorgaenge": Vorgang.objects.all(),
         "all_tags": Tag.objects.all(),
+        "direction_choices": Document.Direction.choices,
         "selected_correspondent_id": document.correspondent_id,
         "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
         "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
@@ -355,7 +363,10 @@ def document_meta(request, pk):
             if correspondent_id.isdigit()
             else None
         )
-        document.save(update_fields=["correspondent", "updated_at"])
+        direction = request.POST.get("direction", "").strip()
+        if direction in Document.Direction.values:
+            document.direction = direction
+        document.save(update_fields=["correspondent", "direction", "updated_at"])
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))
     return render(request, "documents/partials/_detail_meta.html", {"document": document})
