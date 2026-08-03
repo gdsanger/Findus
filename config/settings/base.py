@@ -391,8 +391,10 @@ FINDUS_UPLOAD_MAX_SIZE_MB = float(env("FINDUS_UPLOAD_MAX_SIZE_MB", "25"))
 # --------------------------------------------------------------------------
 # Ingest: Mail-Connectoren (apps.ingest.connectors.mail_imap /
 # apps.ingest.connectors.mail_graph) -- der eigentliche Wert-Keil: pollt ein
-# IMAP- und/oder ein Graph-Postfach, legt Anhänge (+ optional den Mailbody)
-# als Document an und markiert verarbeitete Mails als gelesen (Idempotenz,
+# IMAP- und/oder ein Graph-Postfach und legt je Anhang ein Document an; nur
+# wenn eine Mail *keine* Anhänge hat, wird stattdessen der Mailbody selbst
+# zum Document (steuerbar über "ingest_body", sonst ginge die Info
+# verloren). Verarbeitete Mails werden als gelesen markiert (Idempotenz,
 # kein Extra-Zielordner).
 #
 # Genau ein Postfach pro Backend, kein Array: Customer-Zero-Prototyp ist

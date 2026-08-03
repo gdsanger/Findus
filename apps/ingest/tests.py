@@ -312,7 +312,9 @@ class ImapMailConnectorTests(TestCase):
 
     @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
     @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_ingest_body_creates_additional_document(self, mock_enqueue, mock_imap_ssl):
+    def test_body_becomes_context_not_separate_document_when_attachment_present(
+        self, mock_enqueue, mock_imap_ssl
+    ):
         raw = _build_email_bytes(
             subject="Hallo",
             sender="anna@example.com",
@@ -324,7 +326,51 @@ class ImapMailConnectorTests(TestCase):
 
         scan_imap_mailbox(self._mailbox(ingest_body=True))
 
+        self.assertEqual(Document.objects.count(), 1)
+        document = Document.objects.get()
+        self.assertEqual(document.metadata["mail_subject"], "Hallo")
+        self.assertEqual(document.metadata["mail_from"], "anna@example.com")
+        self.assertIn("Hallo Welt", document.metadata["mail_body"])
+
+    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_two_attachments_produce_two_documents_no_body_document(
+        self, mock_enqueue, mock_imap_ssl
+    ):
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="anna@example.com",
+            body_text="Hallo Welt",
+            attachments=[
+                ("invoice.pdf", b"content-1", "application", "pdf"),
+                ("contract.pdf", b"content-2", "application", "pdf"),
+            ],
+        )
+        fake_connection = FakeImapConnection({b"1": raw})
+        mock_imap_ssl.return_value = fake_connection
+
+        scan_imap_mailbox(self._mailbox(ingest_body=True))
+
         self.assertEqual(Document.objects.count(), 2)
+        for document in Document.objects.all():
+            self.assertIn("Hallo Welt", document.metadata["mail_body"])
+
+    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_body_only_mail_creates_single_document(self, mock_enqueue, mock_imap_ssl):
+        raw = _build_email_bytes(
+            subject="Hallo",
+            sender="anna@example.com",
+            body_text="Hallo Welt",
+        )
+        fake_connection = FakeImapConnection({b"1": raw})
+        mock_imap_ssl.return_value = fake_connection
+
+        scan_imap_mailbox(self._mailbox(ingest_body=True))
+
+        self.assertEqual(Document.objects.count(), 1)
+        document = Document.objects.get()
+        self.assertEqual(document.metadata["mail_subject"], "Hallo")
 
     @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
     def test_failed_message_stays_unseen_for_retry(self, mock_imap_ssl):
@@ -434,6 +480,49 @@ class GraphMailConnectorTests(TestCase):
 
         self.assertEqual(Document.objects.count(), 1)
         mock_patch.assert_called_once()
+
+    @patch("apps.ingest.connectors.mail_graph.requests.patch")
+    @patch("apps.ingest.connectors.mail_graph.requests.get")
+    @patch("apps.mail.backends.graph.requests.post")
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_two_attachments_produce_two_documents_no_body_document(
+        self, mock_enqueue, mock_token_post, mock_get, mock_patch
+    ):
+        mock_token_post.return_value = _mock_json_response(
+            {"access_token": "tok-1", "expires_in": 3600}
+        )
+        message = {
+            "id": "msg-1",
+            "subject": "Rechnung",
+            "from": {"emailAddress": {"address": "anna@example.com", "name": "Anna Beispiel"}},
+            "receivedDateTime": "2026-08-01T10:00:00Z",
+            "hasAttachments": True,
+            "body": {"contentType": "text", "content": "Hallo Welt"},
+        }
+        attachment_1 = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "invoice.pdf",
+            "contentType": "application/pdf",
+            "contentBytes": "aGVsbG8gd29ybGQ=",
+        }
+        attachment_2 = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "contract.pdf",
+            "contentType": "application/pdf",
+            "contentBytes": "Y29udHJhY3Q=",
+        }
+        mock_get.side_effect = [
+            _mock_json_response({"value": [message]}),
+            _mock_json_response({"value": [attachment_1, attachment_2]}),
+        ]
+        mock_patch.return_value = _mock_json_response({})
+
+        scan_graph_mailbox(self._mailbox(ingest_body=True))
+
+        self.assertEqual(Document.objects.count(), 2)
+        for document in Document.objects.all():
+            self.assertEqual(document.metadata["mail_subject"], "Rechnung")
+            self.assertEqual(document.metadata["mail_body"], "Hallo Welt")
 
     @patch("apps.ingest.connectors.mail_graph.requests.patch")
     @patch("apps.ingest.connectors.mail_graph.requests.get")
