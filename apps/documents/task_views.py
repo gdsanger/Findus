@@ -9,6 +9,7 @@ import datetime
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Max
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -141,16 +142,39 @@ def task_detail(request, pk):
         form = TaskForm(instance=task)
 
     context = _task_form_context(request, form, task=task)
-    context["checklist_items"] = task.checklist_items.all()
+    context.update(_checklist_context(task))
     return render(request, "documents/tasks/detail.html", context)
 
 
+@login_required
+@require_POST
+def task_toggle_status(request, pk):
+    """Single-purpose companion to the full edit form -- flips only
+
+    `status` (and, through `Task.save`, `done_at`), so ticking a task off
+    doesn't require resubmitting every field through `TaskForm`.
+    """
+    task = _visible_task(request.user, pk)
+    task.status = Task.Status.OPEN if task.status == Task.Status.DONE else Task.Status.DONE
+    task.save()
+    return redirect("documents:task_detail", pk=task.pk)
+
+
+def _checklist_context(task):
+    checklist_items = list(task.checklist_items.all())
+    done_count = sum(1 for item in checklist_items if item.is_done)
+    total_count = len(checklist_items)
+    return {
+        "task": task,
+        "checklist_items": checklist_items,
+        "done_count": done_count,
+        "total_count": total_count,
+        "progress_percent": round(done_count / total_count * 100) if total_count else 0,
+    }
+
+
 def _render_checklist(request, task):
-    return render(
-        request,
-        "documents/tasks/partials/_checklist.html",
-        {"task": task, "checklist_items": task.checklist_items.all()},
-    )
+    return render(request, "documents/tasks/partials/_checklist.html", _checklist_context(task))
 
 
 @login_required
@@ -176,8 +200,45 @@ def checklist_item_toggle(request, pk, item_id):
 
 @login_required
 @require_POST
+def checklist_item_update(request, pk, item_id):
+    task = _visible_task(request.user, pk)
+    item = get_object_or_404(task.checklist_items, pk=item_id)
+    text = request.POST.get("text", "").strip()
+    if text:
+        item.text = text
+        item.save(update_fields=["text", "updated_at"])
+    return _render_checklist(request, task)
+
+
+@login_required
+@require_POST
 def checklist_item_delete(request, pk, item_id):
     task = _visible_task(request.user, pk)
     item = get_object_or_404(task.checklist_items, pk=item_id)
     item.delete()
+    return _render_checklist(request, task)
+
+
+@login_required
+@require_POST
+def checklist_item_move(request, pk, item_id, direction):
+    """Swaps `order` with the previous/next item -- no drag-and-drop, but
+
+    it covers the "sortieren" requirement without pulling in a JS library
+    for what is, in practice, short lists of steps within a task.
+    """
+    if direction not in ("up", "down"):
+        raise Http404
+
+    task = _visible_task(request.user, pk)
+    item = get_object_or_404(task.checklist_items, pk=item_id)
+    items = list(task.checklist_items.all())
+    index = items.index(item)
+
+    neighbor_index = index - 1 if direction == "up" else index + 1
+    if 0 <= neighbor_index < len(items):
+        neighbor = items[neighbor_index]
+        item.order, neighbor.order = neighbor.order, item.order
+        ChecklistItem.objects.bulk_update([item, neighbor], ["order"])
+
     return _render_checklist(request, task)

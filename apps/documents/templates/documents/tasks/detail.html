@@ -1,15 +1,33 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ task.title }} – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title=task.title %}
 
+<section class="findus-section findus-detail-actions">
+    <span class="badge {% if task.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+        {{ task.get_status_display }}
+    </span>
+    {% if task.due_date %}
+    <span class="badge text-bg-secondary">Fällig {{ task.due_date|date:"d.m.Y" }}</span>
+    {% endif %}
+
+    <form method="post" action="{% url 'documents:task_toggle_status' task.pk %}" class="d-inline">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-primary">
+            {% if task.status == 'done' %}Wieder öffnen{% else %}Als erledigt markieren{% endif %}
+        </button>
+    </form>
+    <a href="{% url 'documents:task_list' %}" class="btn btn-sm btn-outline-secondary">Zurück zur Liste</a>
+</section>
+
 <section class="findus-section">
-    <form method="post" class="findus-card findus-stammdaten-form">
+    <h2 class="findus-section-title">Bearbeiten</h2>
+    <form method="post" class="findus-card findus-task-form">
         {% csrf_token %}
         {% include "documents/tasks/_form_fields.html" %}
         <div class="findus-detail-meta-edit-actions">
             <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
-            <a href="{% url 'documents:task_list' %}" class="btn btn-sm btn-outline-secondary">Zurück zur Liste</a>
         </div>
     </form>
 </section>
@@ -20,4 +38,7 @@
         {% include "documents/tasks/partials/_checklist.html" %}
     </div>
 </section>
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'js/task-document-picker.js' %}" defer></script>
 {% endblock %}

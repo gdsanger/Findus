@@ -183,6 +183,31 @@ class TaskDetailViewTests(TestCase):
         self.assertEqual(self.task.status, Task.Status.DONE)
         self.assertIsNotNone(self.task.done_at)
 
+    def test_toggle_status_marks_open_task_done_and_sets_done_at(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(reverse("documents:task_toggle_status", args=[self.task.pk]))
+
+        self.assertRedirects(response, reverse("documents:task_detail", args=[self.task.pk]))
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, Task.Status.DONE)
+        self.assertIsNotNone(self.task.done_at)
+
+    def test_toggle_status_reopens_done_task_and_clears_done_at(self):
+        self.task.status = Task.Status.DONE
+        self.task.save()
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:task_toggle_status", args=[self.task.pk]))
+
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, Task.Status.OPEN)
+        self.assertIsNone(self.task.done_at)
+
+    def test_toggle_status_on_invisible_task_is_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(reverse("documents:task_toggle_status", args=[self.task.pk]))
+        self.assertEqual(response.status_code, 404)
+
 
 class ChecklistItemViewTests(TestCase):
     def setUp(self):
@@ -227,6 +252,63 @@ class ChecklistItemViewTests(TestCase):
         )
 
         self.assertEqual(self.task.checklist_items.count(), 0)
+
+    def test_update_checklist_item_renames_text(self):
+        item = ChecklistItem.objects.create(task=self.task, text="Belege sammeln")
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:checklist_item_update", args=[self.task.pk, item.pk]),
+            {"text": "Belege einscannen"},
+        )
+
+        item.refresh_from_db()
+        self.assertEqual(item.text, "Belege einscannen")
+        self.assertContains(response, "Belege einscannen")
+
+    def test_update_checklist_item_ignores_blank_text(self):
+        item = ChecklistItem.objects.create(task=self.task, text="Belege sammeln")
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:checklist_item_update", args=[self.task.pk, item.pk]),
+            {"text": "  "},
+        )
+
+        item.refresh_from_db()
+        self.assertEqual(item.text, "Belege sammeln")
+
+    def test_move_checklist_item_up_swaps_order_with_previous(self):
+        first = ChecklistItem.objects.create(task=self.task, text="Erstens", order=1)
+        second = ChecklistItem.objects.create(task=self.task, text="Zweitens", order=2)
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:checklist_item_move", args=[self.task.pk, second.pk, "up"])
+        )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(second.order, 1)
+        self.assertEqual(first.order, 2)
+
+    def test_move_checklist_item_up_at_top_is_a_no_op(self):
+        first = ChecklistItem.objects.create(task=self.task, text="Erstens", order=1)
+        ChecklistItem.objects.create(task=self.task, text="Zweitens", order=2)
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:checklist_item_move", args=[self.task.pk, first.pk, "up"])
+        )
+
+        first.refresh_from_db()
+        self.assertEqual(first.order, 1)
+
+    def test_move_checklist_item_invalid_direction_is_404(self):
+        item = ChecklistItem.objects.create(task=self.task, text="Belege sammeln")
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:checklist_item_move", args=[self.task.pk, item.pk, "sideways"])
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_checklist_action_on_invisible_task_is_404(self):
         self.client.force_login(self.user_b)

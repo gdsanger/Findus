@@ -1,15 +1,60 @@
-{% for field in form %}
-<div class="findus-filter-field">
-    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
-    {{ field }}
-    {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
+<div class="findus-task-form-section">
+    <h3 class="findus-section-subtitle">Angaben</h3>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.title.id_for_label }}">{{ form.title.label }}</label>
+        {{ form.title }}
+        {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors|striptags }}</div>{% endif %}
+    </div>
+    <div class="findus-task-form-row">
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.kind.id_for_label }}">{{ form.kind.label }}</label>
+            {{ form.kind }}
+            {% if form.kind.errors %}<div class="text-danger small">{{ form.kind.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>
+            {{ form.status }}
+            {% if form.status.errors %}<div class="text-danger small">{{ form.status.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.due_date.id_for_label }}">{{ form.due_date.label }}</label>
+            {{ form.due_date }}
+            {% if form.due_date.errors %}<div class="text-danger small">{{ form.due_date.errors|striptags }}</div>{% endif %}
+        </div>
+    </div>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.description.id_for_label }}">{{ form.description.label }}</label>
+        {{ form.description }}
+        {% if form.description.errors %}<div class="text-danger small">{{ form.description.errors|striptags }}</div>{% endif %}
+    </div>
 </div>
-{% endfor %}
-<div class="findus-filter-field">
-    <label class="form-label" for="task-documents">Dokumente</label>
-    <select id="task-documents" name="documents" class="form-select form-select-sm" multiple size="6">
-        {% for document in all_documents %}
-        <option value="{{ document.id }}" {% if document.id in selected_document_ids %}selected{% endif %}>{{ document.title }}</option>
-        {% endfor %}
-    </select>
+
+<div class="findus-task-form-section">
+    <h3 class="findus-section-subtitle">Verknüpfte Dokumente</h3>
+    <div class="findus-task-documents">
+        <input
+            type="search"
+            class="form-control form-control-sm"
+            placeholder="Dokumente durchsuchen …"
+            aria-label="Dokumente durchsuchen"
+            data-task-document-filter
+        >
+        <div class="findus-task-document-list" data-task-document-list>
+            {% for document in all_documents %}
+            <div class="form-check" data-document-title="{{ document.title|lower }}">
+                <input
+                    type="checkbox"
+                    class="form-check-input"
+                    name="documents"
+                    value="{{ document.id }}"
+                    id="task-document-{{ document.id }}"
+                    {% if document.id in selected_document_ids %}checked{% endif %}
+                >
+                <label class="form-check-label" for="task-document-{{ document.id }}">{{ document.title }}</label>
+            </div>
+            {% empty %}
+            <p class="text-muted mb-0">Keine Dokumente vorhanden.</p>
+            {% endfor %}
+        </div>
+    </div>
 </div>

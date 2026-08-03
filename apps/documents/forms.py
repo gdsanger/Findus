@@ -46,6 +46,13 @@ class TaskForm(forms.ModelForm):
     class Meta:
         model = Task
         fields = ["title", "kind", "status", "due_date", "description"]
+        labels = {
+            "title": "Titel",
+            "kind": "Art",
+            "status": "Status",
+            "due_date": "Frist",
+            "description": "Beschreibung",
+        }
         widgets = {
             "title": _TEXT_WIDGET,
             "kind": _SELECT_WIDGET,
@@ -54,6 +61,6 @@ class TaskForm(forms.ModelForm):
                 attrs={"class": "form-control form-control-sm", "type": "date"}
             ),
             "description": forms.Textarea(
-                attrs={"class": "form-control form-control-sm", "rows": 3}
+                attrs={"class": "form-control form-control-sm", "rows": 4}
             ),
         }
