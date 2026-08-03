@@ -6,8 +6,21 @@
 
 <section class="findus-section findus-detail-actions">
     {% if document.original_file %}
-    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:original_download' document.pk %}" target="_blank" rel="noopener">
+    {% if document.is_inline_previewable %}
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        hx-get="{% url 'documents:original_preview_panel' document.pk %}"
+        hx-target="#document-original-preview"
+        hx-swap="innerHTML"
+    >
         Original öffnen/herunterladen
+    </button>
+    {% else %}
+    <span class="findus-preview-hint text-muted small">Vorschau nicht verfügbar – bitte herunterladen.</span>
+    {% endif %}
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:original_download' document.pk %}">
+        Original herunterladen
     </a>
     {% endif %}
     <form
@@ -20,6 +33,8 @@
         <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
     </form>
 </section>
+
+<div id="document-original-preview"></div>
 
 <section class="findus-section">
     <div id="document-meta">
@@ -119,4 +134,21 @@
     <p class="text-muted">Keine Querverweise.</p>
     {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // The preview panel is fetched via HTMX (no hard reload); once it's
+    // swapped in, show it as a Bootstrap Offcanvas -- closing again is
+    // plain Bootstrap (data-bs-dismiss), no request involved.
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+        if (event.detail.target.id !== "document-original-preview") {
+            return;
+        }
+        var panel = event.detail.target.querySelector(".findus-preview-offcanvas");
+        if (panel) {
+            bootstrap.Offcanvas.getOrCreateInstance(panel).show();
+        }
+    });
+</script>
 {% endblock %}

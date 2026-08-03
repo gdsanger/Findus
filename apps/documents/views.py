@@ -1,5 +1,4 @@
 import logging
-import mimetypes
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -287,24 +286,68 @@ def document_task_create(request, pk):
     )
 
 
+def _stream_original(document, *, as_attachment):
+    response = FileResponse(
+        document.original_file.open("rb"),
+        content_type=document.mime_type,
+        as_attachment=as_attachment,
+        filename=document.original_filename,
+    )
+    # Browsers must trust our Content-Type, not sniff the bytes -- relevant
+    # both for the inline preview (never execute an uploaded file as HTML/JS)
+    # and the download (never second-guess the declared type).
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @login_required
 def document_original_download(request, pk):
     """Stream the original file through the same `visible_to` scoping as the
     detail page (#1024) -- the storage backend's own URL is a public S3/
     MinIO link that bypasses ACL entirely, so the original must never be
-    linked directly, only served through this auth-gated view.
+    linked directly, only served through this auth-gated view. Always
+    `Content-Disposition: attachment` (#1036) -- this is the explicit
+    Download button, as opposed to `document_original_preview` below.
     """
     document = _visible_document(request.user, pk)
     if not document.original_file:
         raise Http404("Kein Original vorhanden.")
+    return _stream_original(document, as_attachment=True)
 
-    filename = document.original_file.name.rsplit("/", 1)[-1]
-    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    return FileResponse(
-        document.original_file.open("rb"),
-        content_type=content_type,
-        as_attachment=False,
-        filename=filename,
+
+@login_required
+def document_original_preview(request, pk):
+    """Inline variant of the same auth-gated stream (#1036), embedded by the
+
+    detail page's Slide-Over as an `<iframe>`/`<img>` source. Gated by the
+    same `mime_type` whitelist as `Document.is_inline_previewable` so a
+    format the browser can't render natively never reaches this view --
+    the template only offers the Download button for those.
+    """
+    document = _visible_document(request.user, pk)
+    if not document.original_file or not document.is_inline_previewable:
+        raise Http404("Keine Vorschau verfügbar.")
+    return _stream_original(document, as_attachment=False)
+
+
+@login_required
+def document_original_preview_panel(request, pk):
+    """Render the Slide-Over markup for `document_original_preview` (#1036).
+
+    Fetched via HTMX from the detail page's trigger button so opening the
+    preview never causes a full page reload -- the swapped-in markup is
+    then shown as a Bootstrap Offcanvas by `detail.html`'s `htmx:afterSwap`
+    handler. Re-checks `is_inline_previewable` even though the trigger
+    button only renders for previewable documents, since this view is
+    reachable directly by URL too.
+    """
+    document = _visible_document(request.user, pk)
+    if not document.original_file or not document.is_inline_previewable:
+        raise Http404("Keine Vorschau verfügbar.")
+    return render(
+        request,
+        "documents/partials/_detail_original_preview.html",
+        {"document": document},
     )
 
 

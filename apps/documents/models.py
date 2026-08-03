@@ -1,3 +1,5 @@
+import mimetypes
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -217,11 +219,51 @@ class Document(TimeStampedModel):
 
     objects = DocumentQuerySet.as_manager()
 
+    # Inline-fähig heißt: der Browser kann es nativ rendern, ohne
+    # Konverter (#1036) -- PDF und alle Bildformate; alles andere (docx,
+    # xlsx, zip, eml, …) bleibt Download-only.
+    INLINE_PREVIEW_MIME_TYPES = {"application/pdf"}
+
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
         return self.title
+
+    @property
+    def original_filename(self):
+        """The filename as ingested (#1007), not the storage path -- `original_file.name`
+
+        is prefixed with the `upload_to` date path and isn't fit for a
+        `Content-Disposition` filename.
+        """
+        if not self.original_file:
+            return ""
+        return self.metadata.get("original_filename") or self.original_file.name.rsplit(
+            "/", 1
+        )[-1]
+
+    @property
+    def mime_type(self):
+        """The mime type recorded at ingest (#1007); falls back to a
+
+        filename guess for documents ingested before that field existed.
+        """
+        return (
+            self.metadata.get("mime_type")
+            or mimetypes.guess_type(self.original_filename)[0]
+            or "application/octet-stream"
+        )
+
+    @property
+    def is_inline_previewable(self):
+        """Whitelist check (#1036) for the detail page's Slide-Over --
+
+        only PDF/image get an inline preview; everything else only offers
+        the Download button.
+        """
+        mime = self.mime_type
+        return mime in self.INLINE_PREVIEW_MIME_TYPES or mime.startswith("image/")
 
 
 class SuggestionStatus(models.TextChoices):

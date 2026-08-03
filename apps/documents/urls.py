@@ -10,6 +10,12 @@ urlpatterns = [
     path("documents/<int:pk>/", views.document_detail, name="detail"),
     path("documents/<int:pk>/tasks/create/", views.document_task_create, name="document_task_create"),
     path("documents/<int:pk>/original/", views.document_original_download, name="original_download"),
+    path("documents/<int:pk>/original/preview/", views.document_original_preview, name="original_preview"),
+    path(
+        "documents/<int:pk>/original/preview/panel/",
+        views.document_original_preview_panel,
+        name="original_preview_panel",
+    ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path("documents/<int:pk>/meta/edit/", views.document_meta_edit, name="meta_edit"),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
