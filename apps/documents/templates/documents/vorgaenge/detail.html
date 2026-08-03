@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ vorgang.name }} – Vorgang – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=vorgang.name %}
+
+<section class="findus-section findus-detail-actions">
+    <a href="{% url 'documents:stammdaten_edit' 'vorgaenge' vorgang.pk %}" class="btn btn-sm btn-outline-secondary">
+        Name bearbeiten
+    </a>
+</section>
+
+<section class="findus-section">
+    <div class="findus-card">
+        <dl class="findus-detail-meta-list">
+            <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
+            <div><dt>Offene Aufgaben</dt><dd>{{ open_tasks_count }}</dd></div>
+            <div><dt>Angelegt</dt><dd>{{ vorgang.created_at|date:"d.m.Y" }}</dd></div>
+        </dl>
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Dokumente</h2>
+    {% include "documents/partials/_filter_bar.html" %}
+
+    <div id="document-list-region">
+        {% include "documents/partials/_document_list.html" %}
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
+    <div class="findus-detail-actions">
+        <a href="{% url 'documents:task_create' %}" class="btn btn-sm btn-outline-secondary">+ Neue Aufgabe</a>
+    </div>
+    {% if tasks %}
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Titel</th>
+                    <th>Art</th>
+                    <th>Status</th>
+                    <th>Fällig</th>
+                    <th>Dokument(e)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td><a href="{% url 'documents:task_detail' task.pk %}">{{ task.title }}</a></td>
+                    <td>{{ task.get_kind_display }}</td>
+                    <td>
+                        <span class="badge {% if task.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                            {{ task.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ task.due_date|date:"d.m.Y"|default:"—" }}</td>
+                    <td>
+                        {% for document in task.documents.all %}
+                        <a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>{% if not forloop.last %}, {% endif %}
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">Keine verknüpften Aufgaben.</p>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Lightweight reset for this page's Tag/Status/Richtung filters -- no
+// localStorage persistence needed here (unlike Home's filter bar), the
+// Vorgang scope itself never changes.
+(function () {
+    var form = document.querySelector(".findus-filter-bar");
+    var resetBtn = document.getElementById("filter-reset");
+    if (!form || !resetBtn) {
+        return;
+    }
+    resetBtn.addEventListener("click", function () {
+        form.querySelectorAll("select").forEach(function (el) {
+            el.value = "";
+        });
+        window.htmx.trigger(form, "submit");
+    });
+})();
+</script>
+{% endblock %}

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 DOCUMENTS_PAGE_SIZE = 20
 SEARCH_RESULTS_LIMIT = 50
 
-_PENDING_STATUSES = {
+PENDING_STATUSES = {
     Document.ProcessingStatus.PENDING,
     Document.ProcessingStatus.EXTRACTING,
     Document.ProcessingStatus.ANALYZING,
@@ -27,7 +27,7 @@ _PENDING_STATUSES = {
 }
 
 
-def _filtered_documents(request):
+def filtered_documents(request):
     """Apply the combinable Absender/Vorgang/Tag/Status filters (#1014) on
     top of the visibility scope -- filters narrow what's already visible,
     they never widen it.
@@ -92,7 +92,7 @@ def document_list(request):
         results = _search_hits(request, query)
         result_partial = "documents/partials/_search_results.html"
     else:
-        results = _filtered_documents(request)
+        results = filtered_documents(request)
         result_partial = "documents/partials/_document_list.html"
 
     paginator = Paginator(results, DOCUMENTS_PAGE_SIZE)
@@ -105,7 +105,7 @@ def document_list(request):
     # Document -- polling only applies to the plain list, so this is only
     # ever computed for that branch.
     has_pending = not query and any(
-        document.processing_status in _PENDING_STATUSES for document in page_obj
+        document.processing_status in PENDING_STATUSES for document in page_obj
     )
 
     context = {
@@ -114,6 +114,10 @@ def document_list(request):
         "result_partial": result_partial,
         "search_query": query,
         "has_pending": has_pending,
+        "list_url": request.path,
+        "show_search": True,
+        "show_correspondent": True,
+        "show_vorgang_filter": True,
         "correspondents": Correspondent.objects.all(),
         "vorgaenge": Vorgang.objects.all(),
         "tags": Tag.objects.all(),

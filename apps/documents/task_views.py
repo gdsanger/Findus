@@ -56,7 +56,7 @@ def _filtered_tasks(request):
     """Apply the combinable Status/Frist filters on top of the visibility
 
     scope, same "filters narrow, never widen" principle as
-    `apps.documents.views._filtered_documents`.
+    `apps.documents.views.filtered_documents`.
     """
     tasks = Task.objects.visible_to(request.user).prefetch_related("documents")
 
