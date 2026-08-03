@@ -647,36 +647,14 @@ body {
     flex: 1 1 10rem;
 }
 
-/* Stammdaten (#1021) ------------------------------------------------------*/
-.findus-tabs {
-    display: flex;
-    gap: var(--findus-space-2);
-    margin-bottom: var(--findus-space-5);
-    border-bottom: 1px solid var(--findus-border);
-}
-
-.findus-tab {
-    padding: var(--findus-space-2) var(--findus-space-3);
-    color: var(--findus-text-muted);
-    text-decoration: none;
-    border-bottom: 2px solid transparent;
-}
-
-.findus-tab:hover {
-    color: inherit;
-}
-
-.findus-tab.active {
-    color: inherit;
-    font-weight: 600;
-    border-bottom-color: var(--findus-accent);
-}
-
-.findus-stammdaten-form {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: var(--findus-space-3);
+/* Tags (#1051) -------------------------------------------------------------*/
+.findus-tag-swatch {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    border: 1px solid var(--findus-border);
+    vertical-align: middle;
 }
 
 /* Aufgaben (#1033) --------------------------------------------------------*/

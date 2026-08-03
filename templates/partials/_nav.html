@@ -47,19 +47,18 @@
         Kontakte
         </a>
 
-        <a 
+        <a
             href="{% url 'documents:vorgang_list' %}"
             class="findus-nav-link{% if 'vorgang' in request.resolver_match.url_name %} active{% endif %}"
         >
             Vorgänge
         </a>
-    </li>
-    <li>
+
         <a
-            href="{% url 'documents:stammdaten_home' %}"
-            class="findus-nav-link{% if 'stammdaten' in request.resolver_match.url_name %} active{% endif %}"
+            href="{% url 'documents:tag_list' %}"
+            class="findus-nav-link{% if 'tag' in request.resolver_match.url_name %} active{% endif %}"
         >
-            Stammdaten
+            Tags
         </a>
     </li>
 </ul>

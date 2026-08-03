@@ -43,6 +43,7 @@
         </select>
     </div>
     {% endif %}
+    {% if show_tag_filter|default:True %}
     <div class="findus-filter-field">
         <label class="form-label" for="filter-tag">Tag</label>
         <select id="filter-tag" name="tag" class="form-select form-select-sm">
@@ -52,6 +53,7 @@
             {% endfor %}
         </select>
     </div>
+    {% endif %}
     <div class="findus-filter-field">
         <label class="form-label" for="filter-status">Status</label>
         <select id="filter-status" name="status" class="form-select form-select-sm">

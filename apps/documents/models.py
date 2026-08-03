@@ -1,11 +1,16 @@
 import mimetypes
 
 from django.conf import settings
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
 from pgvector.django import HnswIndex, VectorField
 
 from apps.accounts.models import Department
+
+_HEX_COLOR_VALIDATOR = RegexValidator(
+    regex=r"^#[0-9a-fA-F]{6}$", message="Farbe muss ein Hex-Code sein, z. B. #a1b2c3."
+)
 
 
 class TimeStampedModel(models.Model):
@@ -86,6 +91,7 @@ class Tag(TimeStampedModel):
 
     name = models.CharField(max_length=100)
     dimension = models.CharField(max_length=100, blank=True)
+    color = models.CharField(max_length=7, blank=True, validators=[_HEX_COLOR_VALIDATOR])
 
     class Meta:
         ordering = ["dimension", "name"]
