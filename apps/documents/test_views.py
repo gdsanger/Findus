@@ -120,6 +120,19 @@ class DocumentListViewTests(TestCase):
         self.assertContains(response, "Rechnung Acme")
         self.assertNotContains(response, "findus-sidebar")
 
+    def test_full_page_response_includes_filter_persistence_script(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus:documents:filters")
+        self.assertContains(response, 'id="filter-reset"')
+
+    def test_htmx_request_does_not_duplicate_persistence_script(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"), HTTP_HX_REQUEST="true")
+
+        self.assertNotContains(response, "findus:documents:filters")
+
     def test_filter_by_correspondent(self):
         self.client.force_login(self.user_a)
         response = self.client.get(
