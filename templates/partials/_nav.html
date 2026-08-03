@@ -1,6 +1,6 @@
 {% load static %}
 <a href="{% url 'documents:home' %}" class="findus-brand">
-    <span>Findus</span>
+    <img src="{% static 'images/findus-logo.png' %}" alt="Findus" class="findus-brand-logo">
 </a>
 <form method="get" action="{% url 'documents:home' %}" class="findus-nav-search" role="search">
     <input

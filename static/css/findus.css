@@ -186,9 +186,8 @@ body {
 }
 
 .findus-topbar-title {
-    font-size: var(--findus-font-size-base);
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    height: 1.75rem;
+    width: auto;
 }
 
 /* Shared nav content (desktop sidebar + mobile off-canvas) -------------- */
@@ -230,6 +229,11 @@ body {
 
 .findus-brand:hover {
     color: var(--findus-text);
+}
+
+.findus-brand-logo {
+    height: 2rem;
+    width: auto;
 }
 
 .findus-nav-list {
