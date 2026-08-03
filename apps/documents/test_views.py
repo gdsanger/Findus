@@ -649,6 +649,18 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.assertEqual(response["Content-Type"], "image/png")
         self.assertIn("inline", response["Content-Disposition"])
 
+    def test_original_preview_allows_same_origin_framing(self):
+        """This is the route the Slide-Over's `<iframe>` actually points at
+        (see `_detail_original_preview.html`), so it -- not
+        `original_download` -- must relax the global XFrameOptionsMiddleware
+        DENY to SAMEORIGIN, or the browser refuses to display the PDF in the
+        iframe (bug report for #1042).
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_preview", args=[self.doc.id]))
+
+        self.assertEqual(response["X-Frame-Options"], "SAMEORIGIN")
+
     def test_original_preview_404_for_non_previewable_mime_type(self):
         self.doc.metadata = {"mime_type": "application/zip", "original_filename": "anhang.zip"}
         self.doc.save(update_fields=["metadata"])
