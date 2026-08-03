@@ -89,6 +89,9 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # After AuthenticationMiddleware so `request.user` is resolved when the
+    # request id is attached to the Sentry user context.
+    "config.middleware.RequestIDMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
@@ -421,14 +424,88 @@ FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS = float(
     env("FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS", "60")
 )
 
+# --------------------------------------------------------------------------
+# Logging: console (for container stdout) + one dated file per day under
+# ./logs, retained 7 days. See config.logging_utils for the handler and the
+# request-id filter. The level is env-driven (DEBUG/INFO/WARNING/ERROR ...);
+# handlers are pinned to DEBUG so raising DJANGO_LOG_LEVEL is the only knob.
+# --------------------------------------------------------------------------
+LOG_DIR = BASE_DIR / "logs"
+# Ensure ./logs exists before dictConfig opens the file handler; no crash if
+# it is already there.
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+LOG_LEVEL = env("DJANGO_LOG_LEVEL", "INFO")
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {
+            "()": "config.logging_utils.RequestIDFilter",
+        },
+    },
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
     "handlers": {
-        "console": {"class": "logging.StreamHandler"},
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "filters": ["request_id"],
+        },
+        "file": {
+            "class": "config.logging_utils.DailyRotatingFileHandler",
+            "log_dir": str(LOG_DIR),
+            "prefix": "app",
+            "backup_count": 7,
+            "level": "DEBUG",
+            "formatter": "standard",
+            "filters": ["request_id"],
+        },
     },
     "root": {
-        "handlers": ["console"],
-        "level": env("DJANGO_LOG_LEVEL", "INFO"),
+        "handlers": ["console", "file"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        # Django's own logs and every app logger (getLogger("apps....")) share
+        # both handlers; propagate=False keeps them off the root a second time.
+        "django": {
+            "handlers": ["console", "file"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "apps": {
+            "handlers": ["console", "file"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
     },
 }
+
+# --------------------------------------------------------------------------
+# Sentry: error monitoring for unhandled exceptions and Django errors. Active
+# only when SENTRY_DSN is set -- with no DSN, sentry_sdk.init is never called
+# and the app runs untouched. The DjangoIntegration reports exceptions in
+# addition to Django's normal handling, so errors still propagate as usual
+# (no try/except swallows them).
+# --------------------------------------------------------------------------
+SENTRY_DSN = env("SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        environment=env("SENTRY_ENVIRONMENT", env("DJANGO_ENV", "dev")),
+        release=env("SENTRY_RELEASE") or None,
+        # Performance/PII are opt-in and off by default: error monitoring is
+        # the requirement, and PII stays off unless an operator enables it.
+        traces_sample_rate=float(env("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+        send_default_pii=env_bool("SENTRY_SEND_DEFAULT_PII", False),
+    )

@@ -42,3 +42,7 @@ langdetect==1.0.9
 
 # Production server
 gunicorn==23.0.0
+
+# Error monitoring (config.settings.base): DjangoIntegration reports unhandled
+# exceptions/Django errors when SENTRY_DSN is set, otherwise never initialised.
+sentry-sdk==2.66.1
