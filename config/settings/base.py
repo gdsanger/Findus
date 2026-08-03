@@ -200,7 +200,7 @@ Q_CLUSTER = {
 # --------------------------------------------------------------------------
 STORAGES = {
     "default": {
-        "BACKEND": "storages.backends.s3.S3Storage",
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
