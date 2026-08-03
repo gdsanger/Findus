@@ -1,0 +1,15 @@
+{% for field in form %}
+<div class="findus-filter-field">
+    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+    {{ field }}
+    {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
+</div>
+{% endfor %}
+<div class="findus-filter-field">
+    <label class="form-label" for="task-documents">Dokumente</label>
+    <select id="task-documents" name="documents" class="form-select form-select-sm" multiple size="6">
+        {% for document in all_documents %}
+        <option value="{{ document.id }}" {% if document.id in selected_document_ids %}selected{% endif %}>{{ document.title }}</option>
+        {% endfor %}
+    </select>
+</div>

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Aufgaben – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Aufgaben" %}
+
+<section class="findus-section findus-detail-actions">
+    <a href="{% url 'documents:task_create' %}" class="btn btn-sm btn-primary">+ Neue Aufgabe</a>
+</section>
+
+<section class="findus-section">
+    <form method="get" class="findus-filter-bar">
+        <div class="findus-filter-field">
+            <label class="form-label" for="filter-status">Status</label>
+            <select id="filter-status" name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">Alle</option>
+                {% for value, label in status_choices %}
+                <option value="{{ value }}" {% if selected.status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="findus-filter-field">
+            <label class="form-label" for="filter-due">Frist</label>
+            <select id="filter-due" name="due" class="form-select form-select-sm" onchange="this.form.submit()">
+                {% for value, label in due_choices %}
+                <option value="{{ value }}" {% if selected.due == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Titel</th>
+                    <th>Art</th>
+                    <th>Status</th>
+                    <th>Fällig</th>
+                    <th>Dokumente</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in page_obj %}
+                <tr>
+                    <td><a href="{% url 'documents:task_detail' task.pk %}">{{ task.title }}</a></td>
+                    <td>{{ task.get_kind_display }}</td>
+                    <td>
+                        <span class="badge {% if task.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                            {{ task.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ task.due_date|date:"d.m.Y"|default:"—" }}</td>
+                    <td>{{ task.documents.count }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-muted">
+                    {% if selected.status or selected.due %}
+                    Keine Aufgaben für die gewählten Filter.
+                    {% else %}
+                    Keine Aufgaben vorhanden.
+                    {% endif %}
+                </td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if page_obj.paginator.num_pages > 1 %}
+    <nav aria-label="Seiten" class="findus-pagination">
+        <ul class="pagination pagination-sm mb-0">
+            <li class="page-item {% if not page_obj.has_previous %}disabled{% endif %}">
+                <a class="page-link" {% if page_obj.has_previous %}href="?status={{ selected.status }}&due={{ selected.due }}&page={{ page_obj.previous_page_number }}"{% endif %}>Zurück</a>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link">Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}</span>
+            </li>
+            <li class="page-item {% if not page_obj.has_next %}disabled{% endif %}">
+                <a class="page-link" {% if page_obj.has_next %}href="?status={{ selected.status }}&due={{ selected.due }}&page={{ page_obj.next_page_number }}"{% endif %}>Weiter</a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</section>
+{% endblock %}
