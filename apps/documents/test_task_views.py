@@ -16,7 +16,7 @@ class TaskListViewTests(TestCase):
     """Covers the task list (#1023): nav entry lands here, visibility
 
     scoping matches `Task.visible_to`, and the Status/Frist filters narrow
-    without ever widening it (same principle as `_filtered_documents`).
+    without ever widening it (same principle as `filtered_documents`).
     """
 
     def setUp(self):

@@ -1,11 +1,13 @@
 from django.urls import path
 
-from . import stammdaten, task_template_views, task_views, views
+from . import correspondent_views, stammdaten, task_template_views, task_views, views
 
 app_name = "documents"
 
 urlpatterns = [
     path("", views.document_list, name="home"),
+    path("correspondents/", correspondent_views.correspondent_list, name="correspondent_list"),
+    path("correspondents/<int:pk>/", correspondent_views.correspondent_detail, name="correspondent_detail"),
     path("documents/upload/", views.document_upload, name="upload"),
     path("documents/<int:pk>/", views.document_detail, name="detail"),
     path("documents/<int:pk>/tasks/create/", views.document_task_create, name="document_task_create"),

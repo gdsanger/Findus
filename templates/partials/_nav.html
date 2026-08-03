@@ -41,6 +41,14 @@
     </li>
     <li>
         <a
+            href="{% url 'documents:correspondent_list' %}"
+            class="findus-nav-link{% if 'correspondent' in request.resolver_match.url_name %} active{% endif %}"
+        >
+            Kontakte
+        </a>
+    </li>
+    <li>
+        <a
             href="{% url 'documents:stammdaten_home' %}"
             class="findus-nav-link{% if 'stammdaten' in request.resolver_match.url_name %} active{% endif %}"
         >
