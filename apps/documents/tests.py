@@ -4,7 +4,12 @@ from django.test import TestCase
 from apps.accounts.models import Department
 
 from .models import ChecklistItem, Correspondent, Document, Task
-from .services import find_or_create_correspondent_by_email
+from .services import (
+    find_correspondent,
+    find_or_create_correspondent,
+    find_or_create_correspondent_by_email,
+    match_correspondent_by_ids,
+)
 
 User = get_user_model()
 
@@ -166,3 +171,72 @@ class FindOrCreateCorrespondentByEmailTests(TestCase):
 
     def test_blank_email_returns_none(self):
         self.assertIsNone(find_or_create_correspondent_by_email("", "Someone"))
+
+
+class MatchCorrespondentByIdsTests(TestCase):
+    """USt-IdNr/IBAN/Steuernummer-Matching (#1030) -- the identity keys
+
+    that survive OCR name variance and are what prevents the KI-Analyse
+    from ever duplicating an `is_self` correspondent.
+    """
+
+    def test_matches_by_vat_id_case_insensitively(self):
+        existing = Correspondent.objects.create(name="Perculasoft e.K.", vat_id="DE123456789")
+
+        match = match_correspondent_by_ids(vat_id="de123456789")
+
+        self.assertEqual(match, existing)
+
+    def test_vat_id_takes_precedence_over_iban(self):
+        by_vat = Correspondent.objects.create(name="A", vat_id="DE111111111", iban="DE0")
+        Correspondent.objects.create(name="B", iban="DE9999")
+
+        match = match_correspondent_by_ids(vat_id="DE111111111", iban="DE9999")
+
+        self.assertEqual(match, by_vat)
+
+    def test_matches_by_iban_ignoring_spaces_and_case(self):
+        existing = Correspondent.objects.create(name="Christian Angermeier", iban="DE02120300000000202051")
+
+        match = match_correspondent_by_ids(iban="de02 1203 0000 0000 2020 51")
+
+        self.assertEqual(match, existing)
+
+    def test_no_ids_given_returns_none(self):
+        Correspondent.objects.create(name="Irrelevant", vat_id="DE1")
+
+        self.assertIsNone(match_correspondent_by_ids())
+
+
+class FindCorrespondentTests(TestCase):
+    """Read-only lookup (#1030) used for the KI-Analyse's recipient side --
+
+    must never create a `Correspondent` even on a full miss.
+    """
+
+    def test_returns_existing_match_by_name(self):
+        existing = Correspondent.objects.create(name="Christian Angermeier", is_self=True)
+
+        match = find_correspondent(name="Christian Angermeier")
+
+        self.assertEqual(match, existing)
+
+    def test_unmatched_recipient_returns_none_and_creates_nothing(self):
+        match = find_correspondent(name="Unbekannte Person")
+
+        self.assertIsNone(match)
+        self.assertEqual(Correspondent.objects.count(), 0)
+
+
+class FindOrCreateCorrespondentIdsTests(TestCase):
+    def test_prefers_vat_id_match_over_creating_a_new_correspondent(self):
+        existing = Correspondent.objects.create(
+            name="Perculasoft eK", is_self=True, vat_id="DE123456789"
+        )
+
+        # Slightly different spelling than the stored name -- exactly the
+        # OCR-variance case the dedup rule guards against.
+        match = find_or_create_correspondent(name="Perculasoft e.K.", vat_id="DE123456789")
+
+        self.assertEqual(match, existing)
+        self.assertEqual(Correspondent.objects.count(), 1)
