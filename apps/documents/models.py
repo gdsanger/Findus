@@ -38,7 +38,7 @@ class Correspondent(TimeStampedModel):
 
     name = models.CharField(max_length=255, unique=True)
     email = models.EmailField(blank=True)
-    address = models.TextField(blank=True)
+    address = models.TextField(blank=True, default="")
     is_self = models.BooleanField(default=False, db_index=True)
     vat_id = models.CharField(max_length=32, blank=True)
     tax_number = models.CharField(max_length=32, blank=True)
