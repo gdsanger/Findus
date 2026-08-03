@@ -5,7 +5,7 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.http import FileResponse, Http404
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.ingest.service import ingest_file
@@ -259,6 +259,25 @@ def document_original_download(request, pk):
         as_attachment=False,
         filename=filename,
     )
+
+
+@login_required
+@require_POST
+def document_delete(request, pk):
+    """Delete a document (#1022) from the list or the detail page, guarded
+
+    by the same `visible_to` scope (department/owner) as every other
+    document view -- confirmation happens client-side before the POST is
+    ever sent. Chunks, tag/Vorgang suggestions, DocumentLinks and the Task
+    m2m rows all cascade via FK `on_delete=CASCADE`/m2m cleanup; only the
+    object-storage original needs an explicit delete, since Django never
+    removes FileField contents on its own.
+    """
+    document = _visible_document(request.user, pk)
+    if document.original_file:
+        document.original_file.delete(save=False)
+    document.delete()
+    return redirect("documents:home")
 
 
 def _meta_edit_context(document):
