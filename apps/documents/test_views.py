@@ -518,9 +518,11 @@ _LOCAL_STORAGES = {
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
 class DocumentDetailOriginalDownloadTests(TestCase):
-    """Covers requirement #5 (#1016) and its auth-gated streaming (#1024):
-    the original file is opened/downloaded through
-    `documents:original_download`, never through the storage backend's own
+    """Covers requirement #5 (#1016), its auth-gated streaming (#1024), and
+
+    the inline Slide-Over preview + always-available download (#1036) --
+    original access always goes through `documents:original_download` /
+    `documents:original_preview`, never through the storage backend's own
     (public) URL. Uses local `FileSystemStorage` instead of the real S3/
     MinIO backend (see `test_extraction.py`), since only the storage
     backend choice is under test here, not object storage itself.
@@ -540,7 +542,9 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.user_b.departments.add(self.dept_b)
 
         self.doc = Document.objects.create(
-            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            metadata={"mime_type": "application/pdf", "original_filename": "rechnung.pdf"},
         )
         self.doc.departments.add(self.dept_a)
         self.doc.original_file.save("rechnung.pdf", io.BytesIO(b"%PDF-1.4 test"), save=True)
@@ -550,25 +554,50 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         download_url = reverse("documents:original_download", args=[self.doc.id])
-        self.assertContains(response, "Original öffnen/herunterladen")
+        self.assertContains(response, "Original herunterladen")
         self.assertContains(response, download_url)
         self.assertNotContains(response, self.doc.original_file.url)
 
-    def test_no_download_link_without_original_file(self):
+    def test_preview_trigger_is_shown_for_previewable_document(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        panel_url = reverse("documents:original_preview_panel", args=[self.doc.id])
+        self.assertContains(response, "Original öffnen/herunterladen")
+        self.assertContains(response, panel_url)
+
+    def test_preview_hint_shown_instead_of_trigger_for_non_previewable_document(self):
+        self.doc.metadata = {"mime_type": "application/zip", "original_filename": "anhang.zip"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Vorschau nicht verfügbar")
+        self.assertNotContains(response, "Original öffnen/herunterladen")
+        # Download must still be offered, unaffected by the missing preview.
+        self.assertContains(response, "Original herunterladen")
+        self.assertContains(response, reverse("documents:original_download", args=[self.doc.id]))
+
+    def test_no_actions_shown_without_original_file(self):
         self.doc.original_file.delete(save=True)
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         self.assertNotContains(response, "Original öffnen/herunterladen")
+        self.assertNotContains(response, "Original herunterladen")
 
-    def test_original_download_streams_file_content(self):
+    def test_original_download_streams_file_content_as_attachment(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4 test")
         self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertIn("rechnung.pdf", response["Content-Disposition"])
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
 
     def test_original_download_allows_same_origin_framing(self):
         """The inline PDF preview (#1036) embeds this route in the slide-over
@@ -596,6 +625,77 @@ class DocumentDetailOriginalDownloadTests(TestCase):
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_original_preview_streams_inline_for_pdf(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_preview", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4 test")
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("inline", response["Content-Disposition"])
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+
+    def test_original_preview_streams_inline_for_image(self):
+        self.doc.metadata = {"mime_type": "image/png", "original_filename": "scan.png"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_preview", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/png")
+        self.assertIn("inline", response["Content-Disposition"])
+
+    def test_original_preview_404_for_non_previewable_mime_type(self):
+        self.doc.metadata = {"mime_type": "application/zip", "original_filename": "anhang.zip"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_preview", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_original_preview_is_scoped_by_visibility(self):
+        self.client.force_login(self.user_b)
+        response = self.client.get(reverse("documents:original_preview", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_original_preview_panel_renders_iframe_for_pdf(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:original_preview_panel", args=[self.doc.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<iframe")
+        self.assertContains(
+            response, reverse("documents:original_preview", args=[self.doc.id])
+        )
+
+    def test_original_preview_panel_renders_img_for_image(self):
+        self.doc.metadata = {"mime_type": "image/jpeg", "original_filename": "scan.jpg"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:original_preview_panel", args=[self.doc.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<img")
+
+    def test_original_preview_panel_404_for_non_previewable_mime_type(self):
+        self.doc.metadata = {"mime_type": "application/zip", "original_filename": "anhang.zip"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:original_preview_panel", args=[self.doc.id])
+        )
 
         self.assertEqual(response.status_code, 404)
 

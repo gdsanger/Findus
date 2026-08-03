@@ -1,0 +1,28 @@
+<div
+    class="offcanvas offcanvas-end findus-preview-offcanvas"
+    tabindex="-1"
+    id="findus-original-preview"
+    aria-labelledby="findus-original-preview-label"
+>
+    <div class="offcanvas-header">
+        <h2 class="offcanvas-title h5" id="findus-original-preview-label">
+            {{ document.original_filename|default:document.title }}
+        </h2>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Schließen"></button>
+    </div>
+    <div class="offcanvas-body findus-preview-body">
+        {% if document.mime_type == "application/pdf" %}
+        <iframe
+            class="findus-preview-frame"
+            src="{% url 'documents:original_preview' document.pk %}"
+            title="Original: {{ document.original_filename }}"
+        ></iframe>
+        {% else %}
+        <img
+            class="findus-preview-image"
+            src="{% url 'documents:original_preview' document.pk %}"
+            alt="Original: {{ document.original_filename }}"
+        >
+        {% endif %}
+    </div>
+</div>

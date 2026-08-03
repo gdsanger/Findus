@@ -1,3 +1,5 @@
+import mimetypes
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -217,11 +219,51 @@ class Document(TimeStampedModel):
 
     objects = DocumentQuerySet.as_manager()
 
+    # Inline-fähig heißt: der Browser kann es nativ rendern, ohne
+    # Konverter (#1036) -- PDF und alle Bildformate; alles andere (docx,
+    # xlsx, zip, eml, …) bleibt Download-only.
+    INLINE_PREVIEW_MIME_TYPES = {"application/pdf"}
+
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
         return self.title
+
+    @property
+    def original_filename(self):
+        """The filename as ingested (#1007), not the storage path -- `original_file.name`
+
+        is prefixed with the `upload_to` date path and isn't fit for a
+        `Content-Disposition` filename.
+        """
+        if not self.original_file:
+            return ""
+        return self.metadata.get("original_filename") or self.original_file.name.rsplit(
+            "/", 1
+        )[-1]
+
+    @property
+    def mime_type(self):
+        """The mime type recorded at ingest (#1007); falls back to a
+
+        filename guess for documents ingested before that field existed.
+        """
+        return (
+            self.metadata.get("mime_type")
+            or mimetypes.guess_type(self.original_filename)[0]
+            or "application/octet-stream"
+        )
+
+    @property
+    def is_inline_previewable(self):
+        """Whitelist check (#1036) for the detail page's Slide-Over --
+
+        only PDF/image get an inline preview; everything else only offers
+        the Download button.
+        """
+        mime = self.mime_type
+        return mime in self.INLINE_PREVIEW_MIME_TYPES or mime.startswith("image/")
 
 
 class SuggestionStatus(models.TextChoices):
@@ -453,6 +495,92 @@ class ChecklistItem(TimeStampedModel):
 
     class Meta:
         ordering = ["task_id", "order"]
+
+    def __str__(self):
+        return self.text
+
+
+class TaskTemplateQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """Same two-level visibility model as `Task.visible_to` (#1037)
+
+        -- a template is only useful to the people who could also see the
+        task it would create.
+        """
+        if user.is_superuser:
+            return self
+        return self.filter(
+            models.Q(
+                visibility=TaskTemplate.Visibility.DEPARTMENT,
+                departments__in=user.departments.all(),
+            )
+            | models.Q(
+                visibility=TaskTemplate.Visibility.PRIVATE,
+                owner=user,
+            )
+        ).distinct()
+
+
+class TaskTemplate(TimeStampedModel):
+    """A reusable blueprint for recurring `Task`s (e.g. "Umsatzsteuer-
+
+    Voranmeldung", "Monatsabschluss"), #1037. Deliberately separate from
+    `Task.kind`: `kind` stays a plain category, the template is its own
+    concept holding a checklist and a relative due date -- turning `kind`
+    itself into a template would overload a field that other code already
+    reads as "just the category". No auto-scheduling here on purpose
+    (later issue); creating a `Task` from a template is a manual, one-off
+    action (`create_task_from_template`).
+    """
+
+    class Visibility(models.TextChoices):
+        DEPARTMENT = "department", "Abteilung"
+        PRIVATE = "private", "Privat"
+
+    name = models.CharField(max_length=255)
+    default_kind = models.CharField(
+        max_length=20, choices=Task.Kind.choices, blank=True
+    )
+    default_title = models.CharField(max_length=255, blank=True)
+    default_description = models.TextField(blank=True)
+    default_due_offset_days = models.PositiveIntegerField(null=True, blank=True)
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_task_templates",
+    )
+    departments = models.ManyToManyField(
+        Department, blank=True, related_name="task_templates"
+    )
+    visibility = models.CharField(
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.DEPARTMENT,
+    )
+
+    objects = TaskTemplateQuerySet.as_manager()
+
+    def __str__(self):
+        return self.name
+
+
+class TaskTemplateItem(models.Model):
+    """A checklist line as it will be copied onto tasks created from the
+
+    template -- the blueprint counterpart of `ChecklistItem`.
+    """
+
+    template = models.ForeignKey(
+        TaskTemplate, on_delete=models.CASCADE, related_name="items"
+    )
+    text = models.CharField(max_length=255)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["template_id", "order"]
 
     def __str__(self):
         return self.text
