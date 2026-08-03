@@ -9,6 +9,7 @@ urlpatterns = [
     path("documents/upload/", views.document_upload, name="upload"),
     path("documents/<int:pk>/", views.document_detail, name="detail"),
     path("documents/<int:pk>/original/", views.document_original_download, name="original_download"),
+    path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path("documents/<int:pk>/meta/edit/", views.document_meta_edit, name="meta_edit"),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
     path(

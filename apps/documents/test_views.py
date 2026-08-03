@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -177,6 +178,18 @@ class DocumentListViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.context["page_obj"].object_list), 6)
+
+    def test_list_row_links_to_detail(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, reverse("documents:detail", args=[self.own_doc.id]))
+
+    def test_list_row_has_delete_action(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, reverse("documents:delete", args=[self.own_doc.id]))
 
 
 class DocumentSearchViewTests(TestCase):
@@ -534,6 +547,117 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
 
         self.assertEqual(response.status_code, 404)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class DocumentDeleteViewTests(TestCase):
+    """Covers requirement #5 (#1022): a document can be deleted from the
+
+    list and the detail page, gated by the same `visible_to` scope
+    (department/owner) as every other document view, and taking its
+    `Chunk`s, Task links and object-storage original with it -- no orphans
+    left behind.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+        self.doc.original_file.save("rechnung.pdf", io.BytesIO(b"%PDF-1.4 test"), save=True)
+        self.chunk = Chunk.objects.create(
+            document=self.doc,
+            position=0,
+            content="Rechnung Inhalt",
+            embedding=_one_hot(0),
+            embedding_model="stub",
+            embedding_model_version="1",
+        )
+        self.task = Task.objects.create(title="Rechnung bezahlen", kind=Task.Kind.PAY)
+        self.task.documents.add(self.doc)
+
+    def test_delete_removes_document(self):
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertFalse(Document.objects.filter(pk=self.doc.id).exists())
+
+    def test_delete_removes_chunks(self):
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertFalse(Chunk.objects.filter(pk=self.chunk.id).exists())
+
+    def test_delete_removes_original_file_from_storage(self):
+        file_path = self.doc.original_file.path
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertFalse(default_storage.exists(file_path))
+
+    def test_delete_removes_task_link_but_keeps_task(self):
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.task.refresh_from_db()
+        self.assertTrue(Task.objects.filter(pk=self.task.id).exists())
+        self.assertEqual(self.task.documents.count(), 0)
+
+    def test_delete_redirects_to_list(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertRedirects(response, reverse("documents:home"))
+
+    def test_delete_requires_get_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 405)
+        self.assertTrue(Document.objects.filter(pk=self.doc.id).exists())
+
+    def test_delete_is_scoped_by_visibility(self):
+        """A user outside the document's department must not be able to
+
+        delete it, even by POSTing the URL directly -- same `visible_to`
+        gate that already scopes every read/write document view.
+        """
+        self.client.force_login(self.user_b)
+        response = self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Document.objects.filter(pk=self.doc.id).exists())
+
+    def test_delete_requires_login(self):
+        response = self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Document.objects.filter(pk=self.doc.id).exists())
+
+    def test_list_delete_button_shown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, reverse("documents:delete", args=[self.doc.id]))
+
+    def test_detail_delete_button_shown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, reverse("documents:delete", args=[self.doc.id]))
 
 
 class DocumentMetaEditTests(TestCase):

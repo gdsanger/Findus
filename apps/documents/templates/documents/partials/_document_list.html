@@ -15,12 +15,13 @@
                 <th>Absender</th>
                 <th>Status</th>
                 <th>Datum</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
             {% for document in page_obj %}
             <tr>
-                <td>{{ document.title }}</td>
+                <td><a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a></td>
                 <td>{{ document.correspondent.name|default:"—" }}</td>
                 <td>
                     <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
@@ -28,6 +29,17 @@
                     </span>
                 </td>
                 <td>{{ document.created_at|date:"d.m.Y" }}</td>
+                <td class="text-end">
+                    <form
+                        method="post"
+                        action="{% url 'documents:delete' document.pk %}"
+                        class="d-inline"
+                        onsubmit="return confirm('Dokument „{{ document.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+                    </form>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
