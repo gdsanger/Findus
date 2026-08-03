@@ -212,13 +212,164 @@ class CorrespondentDetailViewTests(TestCase):
         self.assertContains(response, "Rechnung Acme")
         self.assertNotContains(response, "findus-sidebar")
 
-    def test_edit_action_links_to_stammdaten_edit(self):
+    def test_hub_offers_inline_edit_form_and_delete_action(self):
+        """The Kontakt-Hub (#1050) edits/deletes directly, no more detour
+        through the shared Stammdaten page (#1021).
+        """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:correspondent_detail", args=[self.correspondent.pk]))
 
-        self.assertContains(
+        self.assertContains(response, reverse("documents:correspondent_detail", args=[self.correspondent.pk]))
+        self.assertContains(response, reverse("documents:correspondent_delete", args=[self.correspondent.pk]))
+        self.assertNotContains(
             response, reverse("documents:stammdaten_edit", args=["correspondents", self.correspondent.pk])
         )
+
+
+class CorrespondentCreateViewTests(TestCase):
+    """Covers "Neu anlegen" on the Kontakte-Index (#1050)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.get(reverse("documents:correspondent_create"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_create_correspondent_redirects_to_its_hub(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:correspondent_create"),
+            {"name": "Acme GmbH", "email": "info@acme.example"},
+        )
+
+        correspondent = Correspondent.objects.get(name="Acme GmbH")
+        self.assertRedirects(response, reverse("documents:correspondent_detail", args=[correspondent.pk]))
+        self.assertEqual(correspondent.email, "info@acme.example")
+
+    def test_create_correspondent_with_is_self_and_matching_fields(self):
+        self.client.force_login(self.user)
+        self.client.post(
+            reverse("documents:correspondent_create"),
+            {
+                "name": "Eigene Firma GmbH",
+                "email": "info@example.com",
+                "address": "Musterstraße 1, 12345 Berlin",
+                "is_self": "on",
+                "vat_id": "DE123456789",
+                "tax_number": "12/345/67890",
+                "iban": "DE02100100109307118603",
+            },
+        )
+
+        correspondent = Correspondent.objects.get(name="Eigene Firma GmbH")
+        self.assertTrue(correspondent.is_self)
+        self.assertEqual(correspondent.address, "Musterstraße 1, 12345 Berlin")
+        self.assertEqual(correspondent.vat_id, "DE123456789")
+        self.assertEqual(correspondent.tax_number, "12/345/67890")
+        self.assertEqual(correspondent.iban, "DE02100100109307118603")
+
+    def test_create_with_duplicate_name_shows_error_and_does_not_create(self):
+        Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("documents:correspondent_create"), {"name": "Acme GmbH"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Correspondent.objects.count(), 1)
+
+    def test_form_uses_kontakt_label(self):
+        """UI-only rename (#1031) must still hold on the new create page."""
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:correspondent_create"))
+
+        self.assertContains(response, "Neuer Kontakt")
+        self.assertNotContains(response, "Absender")
+
+
+class CorrespondentEditViewTests(TestCase):
+    """Covers editing Kontaktdaten directly on the hub (#1050), replacing
+    the old Stammdaten edit page (#1021).
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.correspondent = Correspondent.objects.create(name="Acme GmbH")
+
+    def test_edit_updates_fields_including_is_self_and_address(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:correspondent_detail", args=[self.correspondent.pk]),
+            {
+                "name": "Acme GmbH",
+                "email": "info@acme.example",
+                "address": "Hauptstraße 2, 10115 Berlin",
+                "is_self": "on",
+                "vat_id": "DE123456789",
+                "tax_number": "",
+                "iban": "DE02100100109307118603",
+            },
+        )
+
+        self.assertRedirects(
+            response, reverse("documents:correspondent_detail", args=[self.correspondent.pk])
+        )
+        self.correspondent.refresh_from_db()
+        self.assertTrue(self.correspondent.is_self)
+        self.assertEqual(self.correspondent.address, "Hauptstraße 2, 10115 Berlin")
+        self.assertEqual(self.correspondent.vat_id, "DE123456789")
+        self.assertEqual(self.correspondent.iban, "DE02100100109307118603")
+
+    def test_invalid_edit_reshows_form_with_errors(self):
+        other = Correspondent.objects.create(name="Nebenkosten AG")
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:correspondent_detail", args=[self.correspondent.pk]),
+            {"name": other.name},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.correspondent.refresh_from_db()
+        self.assertEqual(self.correspondent.name, "Acme GmbH")
+
+
+class CorrespondentDeleteViewTests(TestCase):
+    """Covers deleting a Kontakt from its hub (#1050): only the assignment
+    on affected Documents is dropped, never the Documents themselves.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.correspondent = Correspondent.objects.create(name="Acme GmbH")
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.post(reverse("documents:correspondent_delete", args=[self.correspondent.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_delete_requires_post(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:correspondent_delete", args=[self.correspondent.pk]))
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_delete_removes_correspondent_and_redirects_to_list(self):
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("documents:correspondent_delete", args=[self.correspondent.pk]))
+
+        self.assertRedirects(response, reverse("documents:correspondent_list"))
+        self.assertFalse(Correspondent.objects.filter(pk=self.correspondent.pk).exists())
+
+    def test_delete_in_use_nulls_document_reference_instead_of_deleting_document(self):
+        doc = Document.objects.create(title="Rechnung", correspondent=self.correspondent)
+
+        self.client.force_login(self.user)
+        self.client.post(reverse("documents:correspondent_delete", args=[self.correspondent.pk]))
+
+        doc.refresh_from_db()
+        self.assertIsNone(doc.correspondent)
 
 
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-correspondent-upload-media-")

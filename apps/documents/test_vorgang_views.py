@@ -192,13 +192,150 @@ class VorgangDetailViewTests(TestCase):
 
         self.assertContains(response, reverse("documents:task_create"))
 
-    def test_edit_action_links_to_stammdaten_edit(self):
+    def test_hub_offers_inline_edit_form_and_delete_action(self):
+        """The Vorgang-Hub (#1050) edits/deletes directly, no more detour
+        through the shared Stammdaten page (#1021).
+        """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
 
-        self.assertContains(
+        self.assertContains(response, reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+        self.assertContains(response, reverse("documents:vorgang_delete", args=[self.vorgang.pk]))
+        self.assertNotContains(
             response, reverse("documents:stammdaten_edit", args=["vorgaenge", self.vorgang.pk])
         )
+
+
+class VorgangCreateViewTests(TestCase):
+    """Covers "Neu anlegen" on the Vorgänge-Index (#1050)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.get(reverse("documents:vorgang_create"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_create_vorgang_redirects_to_its_hub(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:vorgang_create"), {"name": "Umzug 2026", "status": Vorgang.Status.OPEN}
+        )
+
+        vorgang = Vorgang.objects.get(name="Umzug 2026")
+        self.assertRedirects(response, reverse("documents:vorgang_detail", args=[vorgang.pk]))
+
+    def test_create_vorgang_with_description_status_and_department(self):
+        dept = Department.objects.create(name="Finanzen")
+
+        self.client.force_login(self.user)
+        self.client.post(
+            reverse("documents:vorgang_create"),
+            {
+                "name": "Umzug 2026",
+                "description": "Umzug ins neue Büro",
+                "status": Vorgang.Status.IN_PROGRESS,
+                "department": dept.pk,
+            },
+        )
+
+        vorgang = Vorgang.objects.get(name="Umzug 2026")
+        self.assertEqual(vorgang.description, "Umzug ins neue Büro")
+        self.assertEqual(vorgang.status, Vorgang.Status.IN_PROGRESS)
+        self.assertEqual(vorgang.department, dept)
+
+    def test_create_with_duplicate_name_shows_error_and_does_not_create(self):
+        Vorgang.objects.create(name="Umzug 2026")
+
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("documents:vorgang_create"), {"name": "Umzug 2026"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Vorgang.objects.count(), 1)
+
+
+class VorgangEditViewTests(TestCase):
+    """Covers editing Vorgangsdaten directly on the hub (#1050), replacing
+    the old Stammdaten edit page (#1021).
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.vorgang = Vorgang.objects.create(name="Umzug 2026")
+
+    def test_edit_updates_name_description_status_and_department(self):
+        dept = Department.objects.create(name="Finanzen")
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:vorgang_detail", args=[self.vorgang.pk]),
+            {
+                "name": "Umzug 2027",
+                "description": "Verschoben",
+                "status": Vorgang.Status.CLOSED,
+                "department": dept.pk,
+            },
+        )
+
+        self.assertRedirects(response, reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+        self.vorgang.refresh_from_db()
+        self.assertEqual(self.vorgang.name, "Umzug 2027")
+        self.assertEqual(self.vorgang.description, "Verschoben")
+        self.assertEqual(self.vorgang.status, Vorgang.Status.CLOSED)
+        self.assertEqual(self.vorgang.department, dept)
+
+    def test_invalid_edit_reshows_form_with_errors(self):
+        other = Vorgang.objects.create(name="Sonstiges")
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:vorgang_detail", args=[self.vorgang.pk]),
+            {"name": other.name, "status": Vorgang.Status.OPEN},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.vorgang.refresh_from_db()
+        self.assertEqual(self.vorgang.name, "Umzug 2026")
+
+
+class VorgangDeleteViewTests(TestCase):
+    """Covers deleting a Vorgang from its hub (#1050): only the assignment
+    on affected Documents is dropped, never the Documents themselves.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.vorgang = Vorgang.objects.create(name="Umzug 2026")
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.post(reverse("documents:vorgang_delete", args=[self.vorgang.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_delete_requires_post(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:vorgang_delete", args=[self.vorgang.pk]))
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_delete_removes_vorgang_and_redirects_to_list(self):
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("documents:vorgang_delete", args=[self.vorgang.pk]))
+
+        self.assertRedirects(response, reverse("documents:vorgang_list"))
+        self.assertFalse(Vorgang.objects.filter(pk=self.vorgang.pk).exists())
+
+    def test_delete_in_use_removes_only_the_assignment_not_the_document(self):
+        doc = Document.objects.create(title="Rechnung")
+        doc.vorgaenge.add(self.vorgang)
+
+        self.client.force_login(self.user)
+        self.client.post(reverse("documents:vorgang_delete", args=[self.vorgang.pk]))
+
+        doc.refresh_from_db()
+        self.assertTrue(Document.objects.filter(pk=doc.pk).exists())
+        self.assertEqual(doc.vorgaenge.count(), 0)
 
 
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-vorgang-upload-media-")

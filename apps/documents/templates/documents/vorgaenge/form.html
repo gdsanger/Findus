@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Neuer Vorgang – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Neuer Vorgang" %}
+
+<section class="findus-section">
+    <form method="post" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/partials/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Anlegen</button>
+            <a href="{% url 'documents:vorgang_list' %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

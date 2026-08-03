@@ -6,7 +6,7 @@
 <section class="findus-section">
     <form method="post" class="findus-card findus-stammdaten-form">
         {% csrf_token %}
-        {% include "documents/stammdaten/_form_fields.html" %}
+        {% include "documents/partials/_form_fields.html" %}
         <div class="findus-detail-meta-edit-actions">
             <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
             <a href="{% url 'documents:stammdaten_list' kind %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>

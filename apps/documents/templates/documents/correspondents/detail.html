@@ -7,17 +7,31 @@
     {% if correspondent.is_self %}
     <span class="badge text-bg-info">Das bin ich</span>
     {% endif %}
-    <a href="{% url 'documents:stammdaten_edit' 'correspondents' correspondent.pk %}" class="btn btn-sm btn-outline-secondary">
-        Kontaktdaten bearbeiten
-    </a>
+    <form
+        method="post"
+        action="{% url 'documents:correspondent_delete' correspondent.pk %}"
+        class="d-inline"
+        onsubmit="return confirm('Kontakt „{{ correspondent.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+    >
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Kontaktdaten</h2>
+    <form method="post" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/partials/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+        </div>
+    </form>
 </section>
 
 <section class="findus-section">
     <div class="findus-card">
         <dl class="findus-detail-meta-list">
-            <div><dt>E-Mail</dt><dd>{{ correspondent.email|default:"—" }}</dd></div>
-            <div><dt>USt-IdNr.</dt><dd>{{ correspondent.vat_id|default:"—" }}</dd></div>
-            <div><dt>IBAN</dt><dd>{{ correspondent.iban|default:"—" }}</dd></div>
             <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
             <div><dt>Eingang/Ausgang</dt><dd>{{ eingang_count }} / {{ ausgang_count }}</dd></div>
             <div><dt>Offene Aufgaben</dt><dd>{{ open_tasks_count }}</dd></div>

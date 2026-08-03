@@ -4,9 +4,26 @@
 {% include "partials/_content_header.html" with page_title=vorgang.name %}
 
 <section class="findus-section findus-detail-actions">
-    <a href="{% url 'documents:stammdaten_edit' 'vorgaenge' vorgang.pk %}" class="btn btn-sm btn-outline-secondary">
-        Name bearbeiten
-    </a>
+    <form
+        method="post"
+        action="{% url 'documents:vorgang_delete' vorgang.pk %}"
+        class="d-inline"
+        onsubmit="return confirm('Vorgang „{{ vorgang.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+    >
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Vorgangsdaten</h2>
+    <form method="post" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/partials/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+        </div>
+    </form>
 </section>
 
 <section class="findus-section">

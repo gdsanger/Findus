@@ -3,6 +3,10 @@
 {% block content %}
 {% include "partials/_content_header.html" with page_title="Vorgänge" %}
 
+<section class="findus-section findus-detail-actions">
+    <a href="{% url 'documents:vorgang_create' %}" class="btn btn-sm btn-primary">+ Neuer Vorgang</a>
+</section>
+
 <section class="findus-section">
     <form method="get" class="findus-filter-bar">
         <div class="findus-filter-field findus-search-field">

@@ -9,9 +9,10 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Q
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from .forms import VorgangForm
 from .models import Document, Tag, Task, Vorgang
 from .views import (
     DOCUMENTS_PAGE_SIZE,
@@ -57,12 +58,46 @@ def vorgang_list(request):
 
 
 @login_required
-def vorgang_detail(request, pk):
-    """Kontext-Header + the reused, Vorgang-scoped document list (still
-    further filterable by Tag/Status/Richtung) plus the tasks linked to
-    this Vorgang's documents (Document:Task n:n).
+def vorgang_create(request):
+    if request.method == "POST":
+        form = VorgangForm(request.POST)
+        if form.is_valid():
+            vorgang = form.save()
+            return redirect("documents:vorgang_detail", pk=vorgang.pk)
+    else:
+        form = VorgangForm()
+
+    return render(request, "documents/vorgaenge/form.html", {"form": form})
+
+
+@login_required
+@require_POST
+def vorgang_delete(request, pk):
+    """Deletes only the Vorgang, never its Documents (#1050): removing the
+    row just drops the rows in the `Document.vorgaenge` M2M through table.
     """
     vorgang = get_object_or_404(Vorgang, pk=pk)
+    vorgang.delete()
+    return redirect("documents:vorgang_list")
+
+
+@login_required
+def vorgang_detail(request, pk):
+    """Kontext-Header (editierbare Vorgangsdaten, #1050) + the reused,
+    Vorgang-scoped document list (still further filterable by
+    Tag/Status/Richtung) plus the tasks linked to this Vorgang's documents
+    (Document:Task n:n).
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+
+    if request.method == "POST":
+        form = VorgangForm(request.POST, instance=vorgang)
+        if form.is_valid():
+            form.save()
+            return redirect("documents:vorgang_detail", pk=vorgang.pk)
+    else:
+        form = VorgangForm(instance=vorgang)
+
     visible_documents = Document.objects.visible_to(request.user)
 
     documents = filtered_documents(request).filter(vorgaenge=vorgang).distinct()
@@ -85,6 +120,7 @@ def vorgang_detail(request, pk):
 
     context = {
         "vorgang": vorgang,
+        "form": form,
         "document_count": visible_documents.filter(vorgaenge=vorgang).distinct().count(),
         "open_tasks_count": tasks.filter(status=Task.Status.OPEN).count(),
         "tasks": tasks,

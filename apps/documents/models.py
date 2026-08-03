@@ -33,6 +33,7 @@ class Correspondent(TimeStampedModel):
 
     name = models.CharField(max_length=255, unique=True)
     email = models.EmailField(blank=True)
+    address = models.TextField(blank=True)
     is_self = models.BooleanField(default=False, db_index=True)
     vat_id = models.CharField(max_length=32, blank=True)
     tax_number = models.CharField(max_length=32, blank=True)
@@ -46,9 +47,26 @@ class Correspondent(TimeStampedModel):
 
 
 class Vorgang(TimeStampedModel):
-    """Aktenvorgang/Angelegenheit -- fachlich kein "Projekt"."""
+    """Aktenvorgang/Angelegenheit -- fachlich kein "Projekt".
+
+    `department` ist eine einzelne, fachliche Zuordnung (welche Abteilung
+    diesen Vorgang fuehrt) -- anders als das `departments`-M2M auf
+    Document/Task, das eine Sichtbarkeits-*Scope* ist (mehrere Abteilungen
+    duerfen mitlesen). Hier geht es nicht um Sichtbarkeit: Vorgang hat
+    weiterhin kein `visibility`-Feld und wird nicht nach Abteilung gefiltert.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Offen"
+        IN_PROGRESS = "in_progress", "In Bearbeitung"
+        CLOSED = "closed", "Abgeschlossen"
 
     name = models.CharField(max_length=255, unique=True)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    department = models.ForeignKey(
+        Department, on_delete=models.SET_NULL, null=True, blank=True, related_name="vorgaenge"
+    )
 
     class Meta:
         ordering = ["name"]
