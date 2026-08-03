@@ -103,6 +103,11 @@
                 {% endfor %}
             </select>
         </div>
+        <div class="findus-filter-field findus-filter-actions">
+            <button type="button" id="filter-reset" class="btn btn-sm btn-outline-secondary">
+                Filter zurücksetzen
+            </button>
+        </div>
         <span id="document-list-indicator" class="htmx-indicator findus-filter-loading">Lädt …</span>
     </form>
 
@@ -143,6 +148,147 @@
     dropzone.addEventListener("htmx:afterRequest", function () {
         input.value = "";
     });
+})();
+</script>
+<script>
+// Persist the document-list filters across navigation.
+// URL query is the source of truth; localStorage is the fallback so the
+// filters survive leaving and returning to the Home page.
+(function () {
+    var STORAGE_KEY = "findus:documents:filters";
+    var FIELD_NAMES = ["q", "correspondent", "vorgang", "tag", "status", "direction"];
+
+    var form = document.querySelector(".findus-filter-bar");
+    var region = document.getElementById("document-list-region");
+    if (!form || !region) {
+        return;
+    }
+
+    function field(name) {
+        return form.querySelector("[name='" + name + "']");
+    }
+
+    function readForm() {
+        var state = {};
+        FIELD_NAMES.forEach(function (name) {
+            var el = field(name);
+            state[name] = el ? el.value : "";
+        });
+        return state;
+    }
+
+    function isEmpty(state) {
+        return FIELD_NAMES.every(function (name) {
+            return !state[name];
+        });
+    }
+
+    function save(state) {
+        try {
+            if (isEmpty(state)) {
+                window.localStorage.removeItem(STORAGE_KEY);
+            } else {
+                window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            }
+        } catch (err) {
+            /* localStorage unavailable (private mode/disabled) — ignore */
+        }
+    }
+
+    function load() {
+        try {
+            var raw = window.localStorage.getItem(STORAGE_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function clearStorage() {
+        try {
+            window.localStorage.removeItem(STORAGE_KEY);
+        } catch (err) {
+            /* ignore */
+        }
+    }
+
+    function urlHasFilters() {
+        var params = new URLSearchParams(window.location.search);
+        return FIELD_NAMES.some(function (name) {
+            return params.has(name);
+        });
+    }
+
+    function apply(state) {
+        FIELD_NAMES.forEach(function (name) {
+            var el = field(name);
+            if (el && typeof state[name] === "string") {
+                el.value = state[name];
+            }
+        });
+    }
+
+    function buildUrl(state) {
+        var params = new URLSearchParams();
+        FIELD_NAMES.forEach(function (name) {
+            if (state[name]) {
+                params.set(name, state[name]);
+            }
+        });
+        var query = params.toString();
+        return window.location.pathname + (query ? "?" + query : "");
+    }
+
+    function swapList(url) {
+        if (window.htmx) {
+            window.htmx.ajax("GET", url, {
+                target: "#document-list-region",
+                swap: "innerHTML",
+            });
+        } else {
+            window.location.replace(url);
+        }
+    }
+
+    // Requirement 1: persist on every filter change (change + Enter/submit).
+    form.addEventListener("change", function () {
+        save(readForm());
+    });
+    form.addEventListener("submit", function () {
+        save(readForm());
+    });
+
+    // Requirement 4: reset clears the fields, the stored state and the URL.
+    var resetBtn = document.getElementById("filter-reset");
+    if (resetBtn) {
+        resetBtn.addEventListener("click", function () {
+            var empty = {};
+            FIELD_NAMES.forEach(function (name) {
+                empty[name] = "";
+            });
+            apply(empty);
+            clearStorage();
+            var url = window.location.pathname;
+            window.history.pushState({}, "", url);
+            swapList(url);
+        });
+    }
+
+    // Requirements 2 & 3: on load, URL params win; otherwise restore from
+    // localStorage, mirror the filters into the URL and refresh the list.
+    if (urlHasFilters()) {
+        save(readForm());
+    } else {
+        var stored = load();
+        if (stored && !isEmpty(stored)) {
+            apply(stored);
+            var restored = buildUrl(stored);
+            // Replace (not push) so the Back button leaves Home rather than
+            // re-triggering the restore on an empty-query entry.
+            window.history.replaceState(window.history.state, "", restored);
+            swapList(restored);
+        }
+    }
 })();
 </script>
 {% endblock %}
