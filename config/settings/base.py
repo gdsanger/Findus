@@ -53,7 +53,12 @@ def env_ingest_folders(name, default=""):
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", "insecure-dev-key-change-me")
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,findus.angerlabs.de")
+CSRF_TRUSTED_ORIGINS = [
+    "https://findus.angerlabs.de",
+    "http://localhost:8011",
+    "http://127.0.0.1"
+]
 
 # --------------------------------------------------------------------------
 # Applications
@@ -79,6 +84,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -158,6 +164,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "mediafiles"
