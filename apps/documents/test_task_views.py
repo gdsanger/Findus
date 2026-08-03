@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from apps.accounts.models import Department
 
-from .models import ChecklistItem, Document, Task
+from .models import ChecklistItem, Document, Task, TaskTemplate, TaskTemplateItem
 
 User = get_user_model()
 
@@ -122,6 +122,108 @@ class TaskCreateViewTests(TestCase):
         task = Task.objects.get(title="Privat prüfen")
         self.assertEqual(task.visibility, Task.Visibility.PRIVATE)
         self.assertEqual(task.owner, user)
+
+    def test_pending_checklist_texts_become_checklist_items_in_order(self):
+        """Covers "aus Vorlage anlegen" (#1038): the checklist edited in the
+
+        create form (whether typed by hand or prefilled from a template)
+        arrives as repeated `checklist_text` fields and is only turned into
+        real `ChecklistItem`s once the task itself is saved.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:task_create"),
+            {
+                "title": "Rechnung zahlen",
+                "kind": Task.Kind.PAY,
+                "status": Task.Status.OPEN,
+                "due_date": "",
+                "description": "",
+                "checklist_text": ["Belege sammeln", "Formular ausfüllen"],
+            },
+        )
+
+        task = Task.objects.get(title="Rechnung zahlen")
+        self.assertRedirects(response, reverse("documents:task_detail", args=[task.pk]))
+        items = list(task.checklist_items.all())
+        self.assertEqual([item.text for item in items], ["Belege sammeln", "Formular ausfüllen"])
+        self.assertEqual([item.order for item in items], [0, 1])
+
+    def test_blank_pending_checklist_texts_are_skipped(self):
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:task_create"),
+            {
+                "title": "Rechnung zahlen",
+                "kind": Task.Kind.PAY,
+                "status": Task.Status.OPEN,
+                "due_date": "",
+                "description": "",
+                "checklist_text": ["Belege sammeln", "  ", ""],
+            },
+        )
+
+        task = Task.objects.get(title="Rechnung zahlen")
+        self.assertEqual(task.checklist_items.count(), 1)
+
+
+class TaskTemplatePrefillViewTests(TestCase):
+    """Covers the HTMX endpoint behind the "aus Vorlage anlegen" select
+
+    (#1038): it snapshots the template's defaults into the still-unsaved
+    form/checklist, never binding live to the template.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.template = TaskTemplate.objects.create(
+            name="Umsatzsteuer-Voranmeldung",
+            default_kind=Task.Kind.SUBMIT,
+            default_title="USt-VA einreichen",
+            default_description="Fristgerecht einreichen",
+            default_due_offset_days=10,
+        )
+        self.template.departments.add(self.dept_a)
+        TaskTemplateItem.objects.create(template=self.template, text="Belege sammeln", order=0)
+        TaskTemplateItem.objects.create(template=self.template, text="Formular ausfüllen", order=1)
+
+    def test_prefills_fields_and_checklist_from_template(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:task_template_prefill"), {"template": self.template.pk}
+        )
+
+        self.assertContains(response, "USt-VA einreichen")
+        self.assertContains(response, "Fristgerecht einreichen")
+        self.assertContains(response, "Belege sammeln")
+        self.assertContains(response, "Formular ausfüllen")
+        expected_due_date = (timezone.localdate() + datetime.timedelta(days=10)).strftime("%d.%m.%Y")
+        self.assertContains(response, expected_due_date)
+
+    def test_invisible_template_is_ignored(self):
+        self.client.force_login(self.user_b)
+        response = self.client.get(
+            reverse("documents:task_template_prefill"), {"template": self.template.pk}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "USt-VA einreichen")
+        self.assertNotContains(response, "Belege sammeln")
+
+    def test_blank_template_selection_renders_empty_form(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:task_template_prefill"), {"template": ""})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "USt-VA einreichen")
 
 
 class TaskDetailViewTests(TestCase):
