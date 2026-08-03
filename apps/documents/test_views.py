@@ -495,6 +495,17 @@ class DocumentMetaEditTests(TestCase):
         self.assertContains(response, "selected")
         self.assertContains(response, self.vorgang.name)
 
+    def test_edit_form_shows_correspondent_options_and_current_selection(self):
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+        self.doc.correspondent = correspondent
+        self.doc.save(update_fields=["correspondent"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertContains(response, "Acme GmbH")
+        self.assertContains(response, f'value="{correspondent.id}" selected')
+
     def test_edit_form_outside_visibility_returns_404(self):
         self.client.force_login(self.user_b)
         response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
@@ -514,6 +525,39 @@ class DocumentMetaEditTests(TestCase):
         self.assertEqual(list(self.doc.tags.all()), [self.tag])
         self.assertContains(response, self.vorgang.name)
 
+    def test_post_updates_correspondent(self):
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"correspondent": correspondent.id}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.correspondent, correspondent)
+        self.assertContains(response, "Acme GmbH")
+
+    def test_post_with_non_numeric_correspondent_clears_instead_of_500(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"correspondent": "not-a-number"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertIsNone(self.doc.correspondent)
+
+    def test_post_can_clear_correspondent(self):
+        self.doc.correspondent = Correspondent.objects.create(name="Acme GmbH")
+        self.doc.save(update_fields=["correspondent"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:meta", args=[self.doc.id]), {})
+
+        self.doc.refresh_from_db()
+        self.assertIsNone(self.doc.correspondent)
+
     def test_post_can_clear_assignments(self):
         self.doc.vorgaenge.add(self.vorgang)
 
@@ -532,6 +576,242 @@ class DocumentMetaEditTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.doc.refresh_from_db()
         self.assertEqual(list(self.doc.vorgaenge.all()), [])
+
+
+class DocumentMetaQuickCreateTests(TestCase):
+    """Covers inline creation of a new Absender/Vorgang/Tag straight from the
+    Zuordnung edit form (#1021) -- no context switch to the Stammdaten pages.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_quick_create_correspondent_creates_and_assigns(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
+            {"name": "Neue Firma GmbH"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.correspondent.name, "Neue Firma GmbH")
+        self.assertContains(response, "Neue Firma GmbH")
+
+    def test_quick_create_vorgang_creates_and_assigns(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
+            {"name": "Umzug 2026"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        vorgang = Vorgang.objects.get(name="Umzug 2026")
+        self.assertIn(vorgang, self.doc.vorgaenge.all())
+
+    def test_quick_create_tag_creates_and_assigns_with_dimension(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
+            {"name": "Dringend", "dimension": "Priorität"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tag = Tag.objects.get(name="Dringend", dimension="Priorität")
+        self.assertIn(tag, self.doc.tags.all())
+
+    def test_quick_create_reuses_existing_by_name(self):
+        existing = Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
+            {"name": "Acme GmbH"},
+        )
+
+        self.assertEqual(Correspondent.objects.count(), 1)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.correspondent, existing)
+
+    def test_quick_create_blank_name_is_a_no_op(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]), {"name": ""}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Vorgang.objects.count(), 0)
+
+    def test_quick_create_truncates_overlong_name_instead_of_500(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
+            {"name": "x" * 300},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        vorgang = Vorgang.objects.get()
+        self.assertEqual(len(vorgang.name), 255)
+
+    def test_quick_create_unknown_kind_returns_404(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "bogus"]), {"name": "x"}
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_quick_create_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
+            {"name": "Umzug 2026"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(Vorgang.objects.count(), 0)
+
+
+class StammdatenCrudTests(TestCase):
+    """Covers CRUD in the user UI for the shared Absender/Vorgang/Tag
+    vocabulary (#1021) -- previously only editable through the Django admin.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="alice", password="x")
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_home_redirects_to_a_kind(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:stammdaten_home"))
+
+        self.assertEqual(response.status_code, 302)
+
+    def test_unknown_kind_returns_404(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:stammdaten_list", args=["bogus"]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_correspondent_list_shows_existing_entries(self):
+        Correspondent.objects.create(name="Acme GmbH", email="info@acme.example")
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
+
+        self.assertContains(response, "Acme GmbH")
+        self.assertContains(response, "info@acme.example")
+
+    def test_create_correspondent(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_list", args=["correspondents"]),
+            {"name": "Acme GmbH", "email": "info@acme.example"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Correspondent.objects.get().name, "Acme GmbH")
+
+    def test_create_vorgang(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_list", args=["vorgaenge"]), {"name": "Umzug 2026"}
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Vorgang.objects.get().name, "Umzug 2026")
+
+    def test_create_tag_with_dimension(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_list", args=["tags"]),
+            {"name": "Dringend", "dimension": "Priorität"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        tag = Tag.objects.get()
+        self.assertEqual(tag.name, "Dringend")
+        self.assertEqual(tag.dimension, "Priorität")
+
+    def test_create_with_duplicate_name_shows_error_and_does_not_create(self):
+        Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_list", args=["correspondents"]), {"name": "Acme GmbH"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Correspondent.objects.count(), 1)
+
+    def test_edit_form_shows_current_values(self):
+        vorgang = Vorgang.objects.create(name="Umzug 2026")
+
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("documents:stammdaten_edit", args=["vorgaenge", vorgang.id])
+        )
+
+        self.assertContains(response, "Umzug 2026")
+
+    def test_edit_updates_entry(self):
+        vorgang = Vorgang.objects.create(name="Umzug 2026")
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_edit", args=["vorgaenge", vorgang.id]),
+            {"name": "Umzug 2027"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        vorgang.refresh_from_db()
+        self.assertEqual(vorgang.name, "Umzug 2027")
+
+    def test_delete_removes_entry(self):
+        tag = Tag.objects.create(name="Dringend")
+
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("documents:stammdaten_delete", args=["tags", tag.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Tag.objects.filter(pk=tag.id).exists())
+
+    def test_delete_correspondent_in_use_nulls_document_reference_instead_of_blocking(self):
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+        doc = Document.objects.create(title="Rechnung", correspondent=correspondent)
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("documents:stammdaten_delete", args=["correspondents", correspondent.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        doc.refresh_from_db()
+        self.assertIsNone(doc.correspondent)
+
+    def test_delete_requires_post(self):
+        tag = Tag.objects.create(name="Dringend")
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:stammdaten_delete", args=["tags", tag.id]))
+
+        self.assertEqual(response.status_code, 405)
 
 
 class DocumentSuggestionActionTests(TestCase):

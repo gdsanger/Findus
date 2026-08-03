@@ -3,6 +3,7 @@ import logging
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.http import Http404
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
@@ -238,33 +239,91 @@ def document_detail(request, pk):
     return render(request, "documents/detail.html", context)
 
 
-@login_required
-def document_meta_edit(request, pk):
-    """Render the editable Vorgang/Tag assignment form (#1016, HTMX
-    nice-to-have) -- swapped into `#document-meta` in place of the
-    read-only view.
-    """
-    document = _visible_document(request.user, pk)
-    context = {
+def _meta_edit_context(document):
+    return {
         "document": document,
+        "all_correspondents": Correspondent.objects.all(),
         "all_vorgaenge": Vorgang.objects.all(),
         "all_tags": Tag.objects.all(),
+        "selected_correspondent_id": document.correspondent_id,
         "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
         "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
     }
-    return render(request, "documents/partials/_detail_meta_edit.html", context)
+
+
+@login_required
+def document_meta_edit(request, pk):
+    """Render the editable Absender/Vorgang/Tag assignment form (#1016,
+    #1021) -- swapped into `#document-meta` in place of the read-only view.
+    """
+    document = _visible_document(request.user, pk)
+    return render(request, "documents/partials/_detail_meta_edit.html", _meta_edit_context(document))
 
 
 @login_required
 def document_meta(request, pk):
     """Display partial for `#document-meta` -- also the save target: a POST
-    here sets Vorgänge/Tags, then re-renders the same read-only view.
+    here sets Absender/Vorgänge/Tags, then re-renders the same read-only
+    view.
     """
     document = _visible_document(request.user, pk)
     if request.method == "POST":
+        correspondent_id = request.POST.get("correspondent", "").strip()
+        document.correspondent = (
+            get_object_or_404(Correspondent, pk=correspondent_id)
+            if correspondent_id.isdigit()
+            else None
+        )
+        document.save(update_fields=["correspondent", "updated_at"])
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))
     return render(request, "documents/partials/_detail_meta.html", {"document": document})
+
+
+_QUICK_CREATE_KINDS = {"correspondent", "vorgang", "tag"}
+
+
+def _truncated(model, field_name, value):
+    """Clamp free-typed quick-create input to the target field's
+    `max_length` -- unlike the Stammdaten forms (ModelForm, full validation),
+    this endpoint has no form to reject an overlong value with, and Postgres
+    would otherwise raise a hard `DataError` on save.
+    """
+    max_length = model._meta.get_field(field_name).max_length
+    return value[:max_length]
+
+
+@login_required
+@require_POST
+def document_meta_quick_create(request, pk, kind):
+    """Create+assign a new Absender/Vorgang/Tag straight from the Zuordnung
+    edit form (#1021), without a context switch to the Stammdaten pages --
+    same match/create-then-assign principle as the KI-suggestion accept
+    views, just for a value the user typed themselves instead of one the KI
+    proposed.
+    """
+    if kind not in _QUICK_CREATE_KINDS:
+        raise Http404(f"Unbekannte Zuordnungsart: {kind}")
+
+    document = _visible_document(request.user, pk)
+    name = request.POST.get("name", "").strip()
+    if name:
+        if kind == "correspondent":
+            name = _truncated(Correspondent, "name", name)
+            correspondent, _created = Correspondent.objects.get_or_create(name=name)
+            document.correspondent = correspondent
+            document.save(update_fields=["correspondent", "updated_at"])
+        elif kind == "vorgang":
+            name = _truncated(Vorgang, "name", name)
+            vorgang, _created = Vorgang.objects.get_or_create(name=name)
+            document.vorgaenge.add(vorgang)
+        elif kind == "tag":
+            dimension = _truncated(Tag, "dimension", request.POST.get("dimension", "").strip())
+            name = _truncated(Tag, "name", name)
+            tag, _created = Tag.objects.get_or_create(name=name, dimension=dimension)
+            document.tags.add(tag)
+
+    return render(request, "documents/partials/_detail_meta_edit.html", _meta_edit_context(document))
 
 
 def _render_meta(request, document):

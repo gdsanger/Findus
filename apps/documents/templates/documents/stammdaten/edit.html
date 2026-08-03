@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} bearbeiten – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=label|add:" bearbeiten" %}
+
+<section class="findus-section">
+    <form method="post" class="findus-card findus-stammdaten-form">
+        {% csrf_token %}
+        {% include "documents/stammdaten/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+            <a href="{% url 'documents:stammdaten_list' kind %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>
+        </div>
+    </form>
+</section>
+{% endblock %}
