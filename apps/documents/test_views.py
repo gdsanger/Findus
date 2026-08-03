@@ -364,6 +364,45 @@ class DocumentDetailViewTests(TestCase):
         self.assertContains(response, "OCR")
         self.assertContains(response, "Deutsch")
 
+    def test_summary_and_key_facts_are_shown_as_primary_view(self):
+        """Covers #1024: once a KI-Analyse (#1020) has produced a summary,
+        it -- plus the Key-Facts panel -- is the primary view, not the raw
+        markdown/text.
+        """
+        self.doc.markdown = "# Rechnung Acme\n\nBetrag: **123 EUR**"
+        self.doc.summary = "Rechnung von Acme über 123 EUR, fällig am 01.02.2026."
+        self.doc.key_facts = {
+            "document_type": "Rechnung",
+            "document_date": "2026-01-15",
+            "amount": "123",
+            "currency": "EUR",
+            "due_date": "2026-02-01",
+        }
+        self.doc.save(update_fields=["markdown", "summary", "key_facts"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Rechnung von Acme über 123 EUR, fällig am 01.02.2026.")
+        self.assertContains(response, "KI-extrahiert")
+        self.assertContains(response, "Rechnung")
+        self.assertContains(response, "2026-01-15")
+        self.assertContains(response, "123 EUR")
+        self.assertContains(response, "2026-02-01")
+        self.assertContains(response, "KI-generiert")
+        self.assertContains(response, "Volltext anzeigen")
+
+    def test_fallback_to_raw_text_when_no_summary_yet(self):
+        """No KI-Analyse (#1020) has run yet -- the raw extraction result
+        is shown directly, clearly marked as such, instead of an empty
+        summary section.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Noch keine KI-Zusammenfassung vorhanden")
+        self.assertContains(response, "Betrag: 123 EUR")
+
     def test_linked_task_is_shown(self):
         task = Task.objects.create(title="Rechnung bezahlen", kind=Task.Kind.PAY)
         task.departments.add(self.dept_a)
@@ -426,10 +465,12 @@ _LOCAL_STORAGES = {
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
 class DocumentDetailOriginalDownloadTests(TestCase):
-    """Covers requirement #5: the original file is downloadable/openable
-    from the detail page. Uses local `FileSystemStorage` instead of the
-    real S3/MinIO backend (see `test_extraction.py`), since only the
-    storage backend choice is under test here, not object storage itself.
+    """Covers requirement #5 (#1016) and its auth-gated streaming (#1024):
+    the original file is opened/downloaded through
+    `documents:original_download`, never through the storage backend's own
+    (public) URL. Uses local `FileSystemStorage` instead of the real S3/
+    MinIO backend (see `test_extraction.py`), since only the storage
+    backend choice is under test here, not object storage itself.
     """
 
     @classmethod
@@ -439,8 +480,11 @@ class DocumentDetailOriginalDownloadTests(TestCase):
 
     def setUp(self):
         self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
         self.user_a = User.objects.create_user(username="alice", password="x")
         self.user_a.departments.add(self.dept_a)
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
 
         self.doc = Document.objects.create(
             title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
@@ -452,8 +496,10 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertContains(response, "Original herunterladen")
-        self.assertContains(response, self.doc.original_file.url)
+        download_url = reverse("documents:original_download", args=[self.doc.id])
+        self.assertContains(response, "Original öffnen/herunterladen")
+        self.assertContains(response, download_url)
+        self.assertNotContains(response, self.doc.original_file.url)
 
     def test_no_download_link_without_original_file(self):
         self.doc.original_file.delete(save=True)
@@ -461,7 +507,33 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertNotContains(response, "Original herunterladen")
+        self.assertNotContains(response, "Original öffnen/herunterladen")
+
+    def test_original_download_streams_file_content(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4 test")
+        self.assertEqual(response["Content-Type"], "application/pdf")
+
+    def test_original_download_is_scoped_by_visibility(self):
+        """A user outside the document's department must not reach the
+        original through the streaming endpoint either -- the whole point
+        of #1024 is that the ACL applies here, not just on the detail page.
+        """
+        self.client.force_login(self.user_b)
+        response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_original_download_404_without_original_file(self):
+        self.doc.original_file.delete(save=True)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:original_download", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
 
 
 class DocumentMetaEditTests(TestCase):

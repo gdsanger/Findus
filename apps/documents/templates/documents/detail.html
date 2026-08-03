@@ -6,8 +6,8 @@
 
 {% if document.original_file %}
 <section class="findus-section findus-detail-actions">
-    <a class="btn btn-sm btn-outline-secondary" href="{{ document.original_file.url }}" target="_blank" rel="noopener">
-        Original herunterladen
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:original_download' document.pk %}" target="_blank" rel="noopener">
+        Original öffnen/herunterladen
     </a>
 </section>
 {% endif %}
@@ -19,14 +19,63 @@
 </section>
 
 <section class="findus-section">
-    <h2 class="findus-section-title">Inhalt</h2>
-    <div class="findus-card findus-detail-content">
-        {% if document.markdown %}
-        <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
-        {% elif document.text_content %}
-        <pre class="findus-detail-text">{{ document.text_content }}</pre>
+    <h2 class="findus-section-title">Zusammenfassung</h2>
+    <div class="findus-card findus-detail-summary-primary">
+        {% if document.summary %}
+        <p class="findus-ai-disclaimer text-muted small">
+            KI-generiert – maßgeblich bleibt das Original.
+        </p>
+        <p class="findus-detail-summary-text">{{ document.summary }}</p>
+
+        <div class="findus-detail-keyfacts">
+            <h3 class="findus-section-subtitle">
+                Kern-Infos <span class="badge text-bg-info">KI-extrahiert</span>
+            </h3>
+            <dl class="findus-detail-meta-list">
+                <div>
+                    <dt>Absender</dt>
+                    <dd>
+                        {% if document.correspondent %}{{ document.correspondent.name }}{% elif document.key_facts.sender_name %}{{ document.key_facts.sender_name }}{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div><dt>Datum</dt><dd>{{ document.key_facts.document_date|default:"—" }}</dd></div>
+                <div><dt>Typ</dt><dd>{{ document.key_facts.document_type|default:"—" }}</dd></div>
+                <div>
+                    <dt>Betrag/Frist</dt>
+                    <dd>
+                        {% if document.key_facts.amount %}{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}{% else %}—{% endif %}
+                        {% if document.key_facts.due_date %} · fällig {{ document.key_facts.due_date }}{% endif %}
+                    </dd>
+                </div>
+                <div><dt>Sprache</dt><dd>{{ document.metadata.language|language_label }}</dd></div>
+            </dl>
+        </div>
+
+        <details class="findus-detail-raw">
+            <summary>Volltext anzeigen (Rohtext/Markdown)</summary>
+            <div class="findus-card findus-detail-content">
+                {% if document.markdown %}
+                <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
+                {% elif document.text_content %}
+                <pre class="findus-detail-text">{{ document.text_content }}</pre>
+                {% else %}
+                <p class="text-muted">Kein Text vorhanden.</p>
+                {% endif %}
+            </div>
+        </details>
         {% else %}
-        <p class="text-muted">Kein Text vorhanden.</p>
+        <p class="text-muted">
+            Noch keine KI-Zusammenfassung vorhanden. Es wird der Rohtext aus der Extraktion angezeigt.
+        </p>
+        <div class="findus-card findus-detail-content">
+            {% if document.markdown %}
+            <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
+            {% elif document.text_content %}
+            <pre class="findus-detail-text">{{ document.text_content }}</pre>
+            {% else %}
+            <p class="text-muted">Kein Text vorhanden.</p>
+            {% endif %}
+        </div>
         {% endif %}
     </div>
 </section>

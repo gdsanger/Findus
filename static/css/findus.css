@@ -521,6 +521,27 @@ body {
     margin-bottom: var(--findus-space-4);
 }
 
+.findus-detail-summary-text {
+    font-size: 1.05rem;
+}
+
+.findus-detail-keyfacts {
+    margin-top: var(--findus-space-4);
+}
+
+.findus-detail-raw {
+    margin-top: var(--findus-space-4);
+}
+
+.findus-detail-raw summary {
+    cursor: pointer;
+    color: var(--findus-text-muted);
+}
+
+.findus-detail-raw .findus-detail-content {
+    margin-top: var(--findus-space-3);
+}
+
 .findus-detail-meta-header {
     display: flex;
     justify-content: flex-end;
