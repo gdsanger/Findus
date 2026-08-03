@@ -221,6 +221,7 @@ body {
 .findus-brand {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: var(--findus-space-2);
     margin-bottom: var(--findus-space-4);
     color: var(--findus-text);
