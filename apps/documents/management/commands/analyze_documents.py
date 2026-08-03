@@ -6,6 +6,23 @@ from apps.documents.analysis import analyze_document
 from apps.documents.models import Document
 
 
+def _analyze_and_finalize(document_id: int) -> Document:
+    """Run `analyze_document()` and -- unlike the ingest pipeline, which
+
+    hands `processing_status` off to `process_document()` right
+    afterwards (#1010) -- also move it to a terminal state: this command
+    IS the last pipeline stage for a standalone re-analysis, so nothing
+    else will ever get the document out of `analyzing` otherwise (#1029).
+    """
+    document = analyze_document(document_id)
+    if "analysis_error" in document.metadata:
+        document.processing_status = Document.ProcessingStatus.FAILED
+    else:
+        document.processing_status = Document.ProcessingStatus.READY
+    document.save(update_fields=["processing_status", "updated_at"])
+    return document
+
+
 class Command(BaseCommand):
     help = (
         "Fuehrt die KI-Analyse (#1020) nachtraeglich auf bereits vorhandene "
@@ -93,7 +110,7 @@ class Command(BaseCommand):
             from django_q.tasks import async_task
 
             for document_id in ids:
-                async_task(analyze_document, document_id)
+                async_task(_analyze_and_finalize, document_id)
             self.stdout.write(f"{len(ids)} Dokument(e) zur KI-Analyse eingereiht.")
             return
 
@@ -101,7 +118,7 @@ class Command(BaseCommand):
         failed_count = 0
         for document_id in ids:
             try:
-                document = analyze_document(document_id)
+                document = _analyze_and_finalize(document_id)
             except Exception as exc:
                 failed_count += 1
                 self.stderr.write(f"Document {document_id}: fehlgeschlagen ({exc}).")
