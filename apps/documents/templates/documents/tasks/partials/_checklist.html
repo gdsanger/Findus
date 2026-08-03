@@ -1,0 +1,47 @@
+<div class="findus-card">
+    <ul class="list-group list-group-flush mb-2">
+        {% for item in checklist_items %}
+        <li class="list-group-item d-flex align-items-center gap-2 bg-transparent">
+            <form
+                method="post"
+                action="{% url 'documents:checklist_item_toggle' task.pk item.pk %}"
+                hx-post="{% url 'documents:checklist_item_toggle' task.pk item.pk %}"
+                hx-target="#task-checklist"
+                hx-swap="innerHTML"
+            >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="Erledigt umschalten">
+                    {% if item.is_done %}✓{% else %}○{% endif %}
+                </button>
+            </form>
+            <span class="flex-grow-1 {% if item.is_done %}text-decoration-line-through text-muted{% endif %}">
+                {{ item.text }}
+            </span>
+            <form
+                method="post"
+                action="{% url 'documents:checklist_item_delete' task.pk item.pk %}"
+                hx-post="{% url 'documents:checklist_item_delete' task.pk item.pk %}"
+                hx-target="#task-checklist"
+                hx-swap="innerHTML"
+            >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger">Entfernen</button>
+            </form>
+        </li>
+        {% empty %}
+        <li class="list-group-item bg-transparent text-muted">Keine Einträge.</li>
+        {% endfor %}
+    </ul>
+    <form
+        class="d-flex gap-2"
+        method="post"
+        action="{% url 'documents:checklist_item_add' task.pk %}"
+        hx-post="{% url 'documents:checklist_item_add' task.pk %}"
+        hx-target="#task-checklist"
+        hx-swap="innerHTML"
+    >
+        {% csrf_token %}
+        <input type="text" name="text" class="form-control form-control-sm" placeholder="Neuer Schritt …">
+        <button type="submit" class="btn btn-sm btn-outline-secondary text-nowrap">+ Hinzufügen</button>
+    </form>
+</div>

@@ -91,36 +91,9 @@
 
 <section class="findus-section">
     <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
-    {% if tasks %}
-    <div class="findus-card table-responsive p-0">
-        <table class="table table-hover align-middle mb-0">
-            <thead>
-                <tr>
-                    <th>Titel</th>
-                    <th>Art</th>
-                    <th>Status</th>
-                    <th>Fällig</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for task in tasks %}
-                <tr>
-                    <td>{{ task.title }}</td>
-                    <td>{{ task.get_kind_display }}</td>
-                    <td>
-                        <span class="badge {% if task.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">
-                            {{ task.get_status_display }}
-                        </span>
-                    </td>
-                    <td>{{ task.due_date|date:"d.m.Y"|default:"—" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div id="document-tasks">
+        {% include "documents/partials/_detail_tasks.html" %}
     </div>
-    {% else %}
-    <p class="text-muted">Keine verknüpften Aufgaben.</p>
-    {% endif %}
 </section>
 
 <section class="findus-section">
