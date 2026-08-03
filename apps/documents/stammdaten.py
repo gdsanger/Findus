@@ -20,8 +20,8 @@ STAMMDATEN_KINDS = {
     "correspondents": {
         "model": Correspondent,
         "form": CorrespondentForm,
-        "label": "Absender",
-        "label_plural": "Absender",
+        "label": "Kontakt",
+        "label_plural": "Kontakte",
         "list_headers": ("Name", "E-Mail", "Das bin ich"),
         "list_fields": ("name", "email", "is_self"),
     },
