@@ -2,7 +2,7 @@
 {% if page_obj %}
 <div
     {% if has_pending %}
-    hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.number }}"
+    hx-get="{{ list_url }}?{{ query_without_page }}&page={{ page_obj.number }}"
     hx-trigger="every 4s"
     hx-swap="outerHTML"
     hx-target="this"
@@ -61,7 +61,7 @@
                 class="page-link"
                 {% if page_obj.has_previous %}
                 href="?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
-                hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                hx-get="{{ list_url }}?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
                 hx-target="#document-list-region"
                 hx-swap="innerHTML"
                 hx-push-url="true"
@@ -76,7 +76,7 @@
                 class="page-link"
                 {% if page_obj.has_next %}
                 href="?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
-                hx-get="{% url 'documents:home' %}?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                hx-get="{{ list_url }}?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
                 hx-target="#document-list-region"
                 hx-swap="innerHTML"
                 hx-push-url="true"
