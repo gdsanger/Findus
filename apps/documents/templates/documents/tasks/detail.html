@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ task.title }} – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=task.title %}
+
+<section class="findus-section">
+    <form method="post" class="findus-card findus-stammdaten-form">
+        {% csrf_token %}
+        {% include "documents/tasks/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+            <a href="{% url 'documents:task_list' %}" class="btn btn-sm btn-outline-secondary">Zurück zur Liste</a>
+        </div>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Checkliste</h2>
+    <div id="task-checklist">
+        {% include "documents/tasks/partials/_checklist.html" %}
+    </div>
+</section>
+{% endblock %}

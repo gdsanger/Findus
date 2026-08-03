@@ -1,0 +1,48 @@
+{% if tasks %}
+<div class="findus-card table-responsive p-0">
+    <table class="table table-hover align-middle mb-0">
+        <thead>
+            <tr>
+                <th>Titel</th>
+                <th>Art</th>
+                <th>Status</th>
+                <th>Fällig</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for task in tasks %}
+            <tr>
+                <td><a href="{% url 'documents:task_detail' task.pk %}">{{ task.title }}</a></td>
+                <td>{{ task.get_kind_display }}</td>
+                <td>
+                    <span class="badge {% if task.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                        {{ task.get_status_display }}
+                    </span>
+                </td>
+                <td>{{ task.due_date|date:"d.m.Y"|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">Keine verknüpften Aufgaben.</p>
+{% endif %}
+
+<div class="findus-quick-create" id="quick-create-task">
+    <input type="text" name="title" class="form-control form-control-sm" placeholder="Titel der neuen Aufgabe …">
+    <select name="kind" class="form-select form-select-sm">
+        {% for value, label in task_kind_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+    </select>
+    <input type="date" name="due_date" class="form-control form-control-sm">
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        hx-post="{% url 'documents:document_task_create' document.pk %}"
+        hx-include="#quick-create-task"
+        hx-target="#document-tasks"
+        hx-swap="innerHTML"
+    >+ Aufgabe anlegen</button>
+</div>
