@@ -25,6 +25,17 @@ answered correctly. `generate_json` repairs/retries before giving up,
 so `analysis_error` now only fires on a genuine provider failure or a
 reply that isn't recoverable JSON at all -- still costing at most one
 extra `generate()` call, only in that failure case.
+
+Dokumentrichtung (#1030): the same `generate()` call also extracts the
+*recipient*, not just the sender/Aussteller -- both are matched against
+`Correspondent` (preferring USt-IdNr/IBAN over name, see
+`apps.documents.services.match_correspondent_by_ids`) to derive
+`Document.direction` from `Correspondent.is_self`. Recipient is looked
+up read-only (`find_correspondent`) rather than auto-created like the
+sender: a document's recipient is usually "me", and creating a fresh
+`Correspondent` for every recipient description would pollute the
+`is_self` identities that must already exist for direction detection to
+work at all.
 """
 
 from __future__ import annotations
@@ -36,14 +47,20 @@ from django.conf import settings
 
 from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
 
-from .models import Document, SuggestionStatus, Tag, TagSuggestion, Vorgang, VorgangSuggestion
-from .services import find_or_create_correspondent
+from .models import Correspondent, Document, SuggestionStatus, Tag, TagSuggestion, Vorgang, VorgangSuggestion
+from .services import find_correspondent, find_or_create_correspondent
 
 logger = logging.getLogger(__name__)
 
 _KEY_FACT_FIELDS = (
     "sender_name",
     "sender_email",
+    "sender_vat_id",
+    "sender_iban",
+    "recipient_name",
+    "recipient_email",
+    "recipient_vat_id",
+    "recipient_iban",
     "document_date",
     "document_type",
     "amount",
@@ -58,9 +75,13 @@ _SYSTEM_PROMPT = (
     '- "title": kurzer, aussagekraeftiger Titel.\n'
     '- "summary": 2-4 Saetze lesbare Zusammenfassung auf Deutsch.\n'
     '- "key_facts": Objekt mit "sender_name", "sender_email", '
-    '"document_date" (YYYY-MM-DD), "document_type" (z. B. Rechnung, '
-    'Vertrag, Mahnung), "amount", "currency", "due_date" (YYYY-MM-DD) -- '
-    "jeweils der erkannte Wert als String, sonst null.\n"
+    '"sender_vat_id" (USt-IdNr des Ausstellers/Absenders), "sender_iban", '
+    '"recipient_name", "recipient_email", "recipient_vat_id" '
+    "(USt-IdNr des Empfaengers -- bei einer Rechnung der Rechnungsempfaenger, "
+    'nicht der Rechnungssteller), "recipient_iban", "document_date" '
+    '(YYYY-MM-DD), "document_type" (z. B. Rechnung, Vertrag, Mahnung), '
+    '"amount", "currency", "due_date" (YYYY-MM-DD) -- jeweils der erkannte '
+    "Wert als String, sonst null.\n"
     '- "tag_suggestions": Liste von Objekten "name", "dimension", '
     '"confidence" (0-1) -- bevorzugt bestehende Tags/Dimensionen '
     "wiederverwenden, nicht wahllos neue erfinden.\n"
@@ -157,6 +178,27 @@ def _replace_vorgang_suggestions(document: Document, items: list) -> None:
     VorgangSuggestion.objects.bulk_create(suggestions)
 
 
+def _derive_direction(
+    sender: Optional[Correspondent], recipient: Optional[Correspondent]
+) -> str:
+    """Eingang/Ausgang/Intern aus den `is_self`-Flags von Aussteller und
+
+    Empfaenger (#1030) -- Empfaenger ist "ich" -> Eingang (ich muss
+    zahlen/reagieren), Aussteller ist "ich" -> Ausgang, beide -> Intern.
+    Ist keiner der beiden `is_self`, bleibt es bei "unbekannt".
+    """
+
+    sender_is_self = bool(sender and sender.is_self)
+    recipient_is_self = bool(recipient and recipient.is_self)
+    if sender_is_self and recipient_is_self:
+        return Document.Direction.INTERN
+    if recipient_is_self:
+        return Document.Direction.EINGANG
+    if sender_is_self:
+        return Document.Direction.AUSGANG
+    return Document.Direction.UNBEKANNT
+
+
 def _apply_analysis(document: Document, parsed: dict, *, model: str, version: str) -> None:
     title = str(parsed.get("title") or "").strip()
     summary = str(parsed.get("summary") or "").strip()
@@ -185,13 +227,30 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
         update_fields.append("title")
 
     if document.correspondent_id is None:
-        correspondent = find_or_create_correspondent(
+        sender = find_or_create_correspondent(
             name=key_facts_in.get("sender_name") or "",
             email=key_facts_in.get("sender_email") or "",
+            vat_id=key_facts_in.get("sender_vat_id") or "",
+            iban=key_facts_in.get("sender_iban") or "",
         )
-        if correspondent is not None:
-            document.correspondent = correspondent
+        if sender is not None:
+            document.correspondent = sender
             update_fields.append("correspondent")
+    else:
+        sender = document.correspondent
+
+    recipient = find_correspondent(
+        name=key_facts_in.get("recipient_name") or "",
+        email=key_facts_in.get("recipient_email") or "",
+        vat_id=key_facts_in.get("recipient_vat_id") or "",
+        iban=key_facts_in.get("recipient_iban") or "",
+    )
+
+    if document.direction == Document.Direction.UNBEKANNT:
+        direction = _derive_direction(sender, recipient)
+        if direction != Document.Direction.UNBEKANNT:
+            document.direction = direction
+            update_fields.append("direction")
 
     document.save(update_fields=update_fields)
 
