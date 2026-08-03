@@ -1,9 +1,10 @@
 import logging
+import mimetypes
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.http import Http404
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
@@ -237,6 +238,27 @@ def document_detail(request, pk):
         ),
     }
     return render(request, "documents/detail.html", context)
+
+
+@login_required
+def document_original_download(request, pk):
+    """Stream the original file through the same `visible_to` scoping as the
+    detail page (#1024) -- the storage backend's own URL is a public S3/
+    MinIO link that bypasses ACL entirely, so the original must never be
+    linked directly, only served through this auth-gated view.
+    """
+    document = _visible_document(request.user, pk)
+    if not document.original_file:
+        raise Http404("Kein Original vorhanden.")
+
+    filename = document.original_file.name.rsplit("/", 1)[-1]
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return FileResponse(
+        document.original_file.open("rb"),
+        content_type=content_type,
+        as_attachment=False,
+        filename=filename,
+    )
 
 
 def _meta_edit_context(document):

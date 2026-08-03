@@ -50,33 +50,6 @@
         </div>
     </dl>
 
-    {% if document.summary %}
-    <div class="findus-detail-summary">
-        <h3 class="findus-section-subtitle">Zusammenfassung</h3>
-        <p>{{ document.summary }}</p>
-    </div>
-    {% endif %}
-
-    {% if document.key_facts %}
-    <div class="findus-detail-keyfacts">
-        <h3 class="findus-section-subtitle">Kennwerte (KI-erkannt)</h3>
-        <dl class="findus-detail-meta-list">
-            {% if document.key_facts.document_type %}
-            <div><dt>Typ</dt><dd>{{ document.key_facts.document_type }}</dd></div>
-            {% endif %}
-            {% if document.key_facts.document_date %}
-            <div><dt>Dokumentdatum</dt><dd>{{ document.key_facts.document_date }}</dd></div>
-            {% endif %}
-            {% if document.key_facts.amount %}
-            <div><dt>Betrag</dt><dd>{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}</dd></div>
-            {% endif %}
-            {% if document.key_facts.due_date %}
-            <div><dt>Frist</dt><dd>{{ document.key_facts.due_date }}</dd></div>
-            {% endif %}
-        </dl>
-    </div>
-    {% endif %}
-
     {% with pending_tags=document.tag_suggestions.pending pending_vorgaenge=document.vorgang_suggestions.pending %}
     {% if pending_tags or pending_vorgaenge %}
     <div class="findus-detail-suggestions">
