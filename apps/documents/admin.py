@@ -9,6 +9,8 @@ from .models import (
     Tag,
     TagSuggestion,
     Task,
+    TaskTemplate,
+    TaskTemplateItem,
     Vorgang,
     VorgangSuggestion,
 )
@@ -142,3 +144,24 @@ class TaskAdmin(admin.ModelAdmin):
     filter_horizontal = ("departments",)
     readonly_fields = ("done_at",)
     inlines = [ChecklistItemInline]
+
+
+class TaskTemplateItemInline(admin.TabularInline):
+    """Sortable checklist blueprint (#1037) -- `order` drives the position
+
+    used when copied onto a task's `ChecklistItem`s.
+    """
+
+    model = TaskTemplateItem
+    fields = ("text", "order")
+    extra = 0
+
+
+@admin.register(TaskTemplate)
+class TaskTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "default_kind", "default_due_offset_days", "visibility")
+    list_filter = ("default_kind", "visibility")
+    search_fields = ("name", "default_title", "default_description")
+    autocomplete_fields = ("owner",)
+    filter_horizontal = ("departments",)
+    inlines = [TaskTemplateItemInline]

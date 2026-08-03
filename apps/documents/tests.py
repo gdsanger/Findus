@@ -1,10 +1,14 @@
+import datetime
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.accounts.models import Department
 
-from .models import ChecklistItem, Correspondent, Document, Task
+from .models import ChecklistItem, Correspondent, Document, Task, TaskTemplate, TaskTemplateItem
 from .services import (
+    create_task_from_template,
     find_correspondent,
     find_or_create_correspondent,
     find_or_create_correspondent_by_email,
@@ -135,6 +139,151 @@ class TaskTests(TestCase):
             list(task.checklist_items.values_list("text", flat=True)),
             ["Betrag prüfen", "Belege sammeln"],
         )
+
+
+class TaskTemplateVisibleToTests(TestCase):
+    """Covers `TaskTemplate.visible_to`, which mirrors `Task.visible_to`
+
+    (#1037) -- a template shouldn't be discoverable by anyone who couldn't
+    also see the task it would create.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.dept_template = TaskTemplate.objects.create(
+            name="Monatsabschluss", visibility=TaskTemplate.Visibility.DEPARTMENT
+        )
+        self.dept_template.departments.add(self.dept_a)
+
+        self.private_template = TaskTemplate.objects.create(
+            name="Persönliche Steuererklärung",
+            visibility=TaskTemplate.Visibility.PRIVATE,
+            owner=self.user_a,
+        )
+
+    def test_department_member_sees_department_template(self):
+        self.assertIn(self.dept_template, TaskTemplate.objects.visible_to(self.user_a))
+
+    def test_other_department_does_not_see_department_template(self):
+        self.assertNotIn(self.dept_template, TaskTemplate.objects.visible_to(self.user_b))
+
+    def test_owner_sees_private_template(self):
+        self.assertIn(self.private_template, TaskTemplate.objects.visible_to(self.user_a))
+
+    def test_non_owner_does_not_see_private_template(self):
+        self.assertNotIn(self.private_template, TaskTemplate.objects.visible_to(self.user_b))
+
+
+class TaskTemplateItemTests(TestCase):
+    def test_items_are_ordered(self):
+        template = TaskTemplate.objects.create(name="Umsatzsteuer-Voranmeldung")
+        TaskTemplateItem.objects.create(template=template, text="Belege sammeln", order=1)
+        TaskTemplateItem.objects.create(template=template, text="Formular ausfüllen", order=0)
+
+        self.assertEqual(
+            list(template.items.values_list("text", flat=True)),
+            ["Formular ausfüllen", "Belege sammeln"],
+        )
+
+
+class CreateTaskFromTemplateTests(TestCase):
+    """Covers `create_task_from_template` (#1037): the sole way a
+
+    `TaskTemplate` turns into a real `Task` -- deliberately manual, no
+    auto-scheduling.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Buchhaltung")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+
+        self.template = TaskTemplate.objects.create(
+            name="Umsatzsteuer-Voranmeldung",
+            default_kind=Task.Kind.SUBMIT,
+            default_description="Monatliche UStVA einreichen",
+            default_due_offset_days=10,
+        )
+        TaskTemplateItem.objects.create(template=self.template, text="Belege sammeln", order=0)
+        TaskTemplateItem.objects.create(template=self.template, text="Formular ausfüllen", order=1)
+
+    def test_copies_defaults_onto_the_task(self):
+        task = create_task_from_template(self.template, self.user)
+
+        self.assertEqual(task.title, self.template.name)
+        self.assertEqual(task.kind, Task.Kind.SUBMIT)
+        self.assertEqual(task.description, "Monatliche UStVA einreichen")
+        self.assertEqual(task.owner, self.user)
+
+    def test_due_date_is_today_plus_offset(self):
+        task = create_task_from_template(self.template, self.user)
+
+        self.assertEqual(
+            task.due_date, timezone.localdate() + datetime.timedelta(days=10)
+        )
+
+    def test_no_offset_means_no_due_date(self):
+        self.template.default_due_offset_days = None
+        self.template.save()
+
+        task = create_task_from_template(self.template, self.user)
+
+        self.assertIsNone(task.due_date)
+
+    def test_copies_checklist_items_in_order(self):
+        task = create_task_from_template(self.template, self.user)
+
+        self.assertEqual(
+            list(task.checklist_items.values_list("text", flat=True)),
+            ["Belege sammeln", "Formular ausfüllen"],
+        )
+
+    def test_title_override_wins_over_template_defaults(self):
+        task = create_task_from_template(
+            self.template, self.user, overrides={"title": "UStVA Juli"}
+        )
+
+        self.assertEqual(task.title, "UStVA Juli")
+
+    def test_default_title_wins_over_name_when_set(self):
+        self.template.default_title = "UStVA fällig"
+        self.template.save()
+
+        task = create_task_from_template(self.template, self.user)
+
+        self.assertEqual(task.title, "UStVA fällig")
+
+    def test_changing_the_template_afterwards_does_not_touch_existing_tasks(self):
+        task = create_task_from_template(self.template, self.user)
+
+        self.template.default_description = "Geändert"
+        self.template.items.create(text="Zusätzlicher Schritt", order=2)
+        self.template.save()
+
+        task.refresh_from_db()
+        self.assertEqual(task.description, "Monatliche UStVA einreichen")
+        self.assertEqual(task.checklist_items.count(), 2)
+
+    def test_visibility_follows_the_creating_user_departments(self):
+        task = create_task_from_template(self.template, self.user)
+
+        self.assertEqual(task.visibility, Task.Visibility.DEPARTMENT)
+        self.assertIn(self.dept, task.departments.all())
+
+    def test_visibility_is_private_for_a_user_without_departments(self):
+        lone_user = User.objects.create_user(username="carla", password="x")
+
+        task = create_task_from_template(self.template, lone_user)
+
+        self.assertEqual(task.visibility, Task.Visibility.PRIVATE)
 
 
 class FindOrCreateCorrespondentByEmailTests(TestCase):
