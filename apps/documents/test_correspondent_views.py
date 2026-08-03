@@ -213,17 +213,15 @@ class CorrespondentDetailViewTests(TestCase):
         self.assertNotContains(response, "findus-sidebar")
 
     def test_hub_offers_inline_edit_form_and_delete_action(self):
-        """The Kontakt-Hub (#1050) edits/deletes directly, no more detour
-        through the shared Stammdaten page (#1021).
+        """The Kontakt-Hub (#1050) edits/deletes directly -- the shared
+        Stammdaten page (#1021) it used to detour through is gone entirely
+        (#1051).
         """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:correspondent_detail", args=[self.correspondent.pk]))
 
         self.assertContains(response, reverse("documents:correspondent_detail", args=[self.correspondent.pk]))
         self.assertContains(response, reverse("documents:correspondent_delete", args=[self.correspondent.pk]))
-        self.assertNotContains(
-            response, reverse("documents:stammdaten_edit", args=["correspondents", self.correspondent.pk])
-        )
 
 
 class CorrespondentCreateViewTests(TestCase):

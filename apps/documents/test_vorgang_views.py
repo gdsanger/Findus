@@ -193,17 +193,15 @@ class VorgangDetailViewTests(TestCase):
         self.assertContains(response, reverse("documents:task_create"))
 
     def test_hub_offers_inline_edit_form_and_delete_action(self):
-        """The Vorgang-Hub (#1050) edits/deletes directly, no more detour
-        through the shared Stammdaten page (#1021).
+        """The Vorgang-Hub (#1050) edits/deletes directly -- the shared
+        Stammdaten page (#1021) it used to detour through is gone entirely
+        (#1051).
         """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
 
         self.assertContains(response, reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
         self.assertContains(response, reverse("documents:vorgang_delete", args=[self.vorgang.pk]))
-        self.assertNotContains(
-            response, reverse("documents:stammdaten_edit", args=["vorgaenge", self.vorgang.pk])
-        )
 
 
 class VorgangCreateViewTests(TestCase):

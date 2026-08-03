@@ -45,8 +45,13 @@ class VorgangForm(forms.ModelForm):
 class TagForm(forms.ModelForm):
     class Meta:
         model = Tag
-        fields = ["name", "dimension"]
-        widgets = {"name": _TEXT_WIDGET, "dimension": _TEXT_WIDGET}
+        fields = ["name", "dimension", "color"]
+        labels = {"dimension": "Dimension", "color": "Farbe"}
+        widgets = {
+            "name": _TEXT_WIDGET,
+            "dimension": _TEXT_WIDGET,
+            "color": forms.TextInput(attrs={"class": "form-control form-control-sm", "type": "color"}),
+        }
 
 
 class TaskForm(forms.ModelForm):

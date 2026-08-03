@@ -1,6 +1,13 @@
 from django.urls import path
 
-from . import correspondent_views, stammdaten, task_template_views, task_views, views, vorgang_views
+from . import (
+    correspondent_views,
+    tag_views,
+    task_template_views,
+    task_views,
+    views,
+    vorgang_views,
+)
 
 app_name = "documents"
 
@@ -24,6 +31,10 @@ urlpatterns = [
     path("vorgaenge/<int:pk>/", vorgang_views.vorgang_detail, name="vorgang_detail"),
     path("vorgaenge/<int:pk>/delete/", vorgang_views.vorgang_delete, name="vorgang_delete"),
     path("vorgaenge/<int:pk>/upload/", vorgang_views.vorgang_document_upload, name="vorgang_upload"),
+    path("tags/", tag_views.tag_list, name="tag_list"),
+    path("tags/create/", tag_views.tag_create, name="tag_create"),
+    path("tags/<int:pk>/", tag_views.tag_detail, name="tag_detail"),
+    path("tags/<int:pk>/delete/", tag_views.tag_delete, name="tag_delete"),
     path("documents/upload/", views.document_upload, name="upload"),
     path("documents/<int:pk>/", views.document_detail, name="detail"),
     path("documents/<int:pk>/tasks/create/", views.document_task_create, name="document_task_create"),
@@ -62,10 +73,6 @@ urlpatterns = [
         views.document_vorgang_suggestion_reject,
         name="vorgang_suggestion_reject",
     ),
-    path("stammdaten/", stammdaten.stammdaten_home, name="stammdaten_home"),
-    path("stammdaten/<str:kind>/", stammdaten.stammdaten_list, name="stammdaten_list"),
-    path("stammdaten/<str:kind>/<int:pk>/edit/", stammdaten.stammdaten_edit, name="stammdaten_edit"),
-    path("stammdaten/<str:kind>/<int:pk>/delete/", stammdaten.stammdaten_delete, name="stammdaten_delete"),
     path("tasks/", task_views.task_list, name="task_list"),
     path("tasks/create/", task_views.task_create, name="task_create"),
     path("tasks/template-prefill/", task_views.task_template_prefill, name="task_template_prefill"),

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ tag.name }} – Tag – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=tag.name %}
+
+<section class="findus-section findus-detail-actions">
+    {% if tag.dimension %}
+    <span class="badge text-bg-secondary">{{ tag.dimension }}</span>
+    {% endif %}
+    {% if tag.color %}
+    <span class="findus-tag-swatch" style="background-color: {{ tag.color }};"></span>
+    {% endif %}
+    <form
+        method="post"
+        action="{% url 'documents:tag_delete' tag.pk %}"
+        class="d-inline"
+        onsubmit="return confirm('Tag „{{ tag.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+    >
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Tagdaten</h2>
+    <form method="post" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/partials/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+        </div>
+    </form>
+</section>
+
+<section class="findus-section">
+    <div class="findus-card">
+        <dl class="findus-detail-meta-list">
+            <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
+        </dl>
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Dokumente</h2>
+    {% include "documents/partials/_filter_bar.html" %}
+
+    <div id="document-list-region">
+        {% include "documents/partials/_document_list.html" %}
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Lightweight reset for this page's Kontakt/Status/Richtung/Vorgang
+// filters -- no localStorage persistence needed here (unlike Home's filter
+// bar), the Tag scope itself never changes.
+(function () {
+    var form = document.querySelector(".findus-filter-bar");
+    var resetBtn = document.getElementById("filter-reset");
+    if (!form || !resetBtn) {
+        return;
+    }
+    resetBtn.addEventListener("click", function () {
+        form.querySelectorAll("select").forEach(function (el) {
+            el.value = "";
+        });
+        window.htmx.trigger(form, "submit");
+    });
+})();
+</script>
+{% endblock %}
