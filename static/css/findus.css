@@ -735,3 +735,27 @@ body {
     display: flex;
     gap: var(--findus-space-1);
 }
+
+.findus-task-checklist-pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-3);
+}
+
+.findus-task-checklist-pending-row {
+    display: flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+}
+
+/* Aufgaben-Vorlagen (#1038) ------------------------------------------------*/
+.findus-nav-sublist {
+    list-style: none;
+    margin: 0;
+    padding-left: var(--findus-space-4);
+}
+
+.findus-nav-link-sub {
+    font-size: var(--findus-font-size-sm);
+}

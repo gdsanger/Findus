@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Correspondent, Tag, Task, Vorgang
+from .models import Correspondent, Tag, Task, TaskTemplate, Vorgang
 
 _TEXT_WIDGET = forms.TextInput(attrs={"class": "form-control form-control-sm"})
 _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
@@ -62,5 +62,42 @@ class TaskForm(forms.ModelForm):
             ),
             "description": forms.Textarea(
                 attrs={"class": "form-control form-control-sm", "rows": 4}
+            ),
+        }
+
+
+class TaskTemplateForm(forms.ModelForm):
+    """Covers the blueprint fields of `TaskTemplate` (#1038) -- `owner`/
+
+    `departments`/`visibility` are scoped by the view from the creating
+    user, same split as `TaskForm`. The nested `TaskTemplateItem` checklist
+    is managed inline on the detail page, not through this form.
+    """
+
+    class Meta:
+        model = TaskTemplate
+        fields = [
+            "name",
+            "default_kind",
+            "default_title",
+            "default_description",
+            "default_due_offset_days",
+        ]
+        labels = {
+            "name": "Name",
+            "default_kind": "Art (Standard)",
+            "default_title": "Titel (Standard)",
+            "default_description": "Beschreibung (Standard)",
+            "default_due_offset_days": "Frist (Tage nach Anlage)",
+        }
+        widgets = {
+            "name": _TEXT_WIDGET,
+            "default_kind": _SELECT_WIDGET,
+            "default_title": _TEXT_WIDGET,
+            "default_description": forms.Textarea(
+                attrs={"class": "form-control form-control-sm", "rows": 3}
+            ),
+            "default_due_offset_days": forms.NumberInput(
+                attrs={"class": "form-control form-control-sm", "min": 0}
             ),
         }

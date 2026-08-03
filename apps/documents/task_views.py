@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .forms import TaskForm
-from .models import ChecklistItem, Document, Task
+from .models import ChecklistItem, Document, Task, TaskTemplate
 
 TASKS_PAGE_SIZE = 20
 
@@ -94,19 +94,59 @@ def task_list(request):
     return render(request, "documents/tasks/list.html", context)
 
 
-def _task_form_context(request, form, task=None):
+def _task_form_context(request, form, task=None, pending_checklist_texts=None, selected_template_id=None):
     document_id = request.GET.get("document", "").strip()
     selected_document_ids = (
         set(task.documents.values_list("id", flat=True))
         if task is not None
         else ({int(document_id)} if document_id.isdigit() else set())
     )
-    return {
+    context = {
         "task": task,
         "form": form,
         "all_documents": Document.objects.visible_to(request.user),
         "selected_document_ids": selected_document_ids,
     }
+    if task is None:
+        # Only a "Neue Aufgabe" form can start "aus Vorlage" (#1038) -- an
+        # existing task already has its own real checklist further down the
+        # detail page, so it has nothing to prefill.
+        context["task_templates"] = TaskTemplate.objects.visible_to(request.user)
+        context["pending_checklist_texts"] = pending_checklist_texts or []
+        context["selected_template_id"] = selected_template_id
+    return context
+
+
+def _parse_template_id(raw):
+    raw = (raw or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def _template_form_initial(template):
+    """Snapshot the template's defaults into `TaskForm` initial values --
+
+    the form stays a plain unbound `TaskForm`, so every value is freely
+    editable before saving (#1038, no live binding to the template).
+    """
+    if template is None:
+        return {}
+    initial = {"title": template.default_title or template.name}
+    if template.default_kind:
+        initial["kind"] = template.default_kind
+    if template.default_description:
+        initial["description"] = template.default_description
+    if template.default_due_offset_days is not None:
+        initial["due_date"] = timezone.localdate() + datetime.timedelta(
+            days=template.default_due_offset_days
+        )
+    return initial
+
+
+def _create_checklist_items_from_texts(task, texts):
+    for order, text in enumerate(texts):
+        text = text.strip()
+        if text:
+            ChecklistItem.objects.create(task=task, text=text, order=order)
 
 
 @login_required
@@ -121,11 +161,38 @@ def task_create(request):
             task.save()
             task.departments.set(departments)
             task.documents.set(request.POST.getlist("documents"))
+            _create_checklist_items_from_texts(task, request.POST.getlist("checklist_text"))
             return redirect("documents:task_detail", pk=task.pk)
+        context = _task_form_context(
+            request,
+            form,
+            pending_checklist_texts=request.POST.getlist("checklist_text"),
+            selected_template_id=_parse_template_id(request.POST.get("template")),
+        )
     else:
         form = TaskForm()
+        context = _task_form_context(request, form)
 
-    return render(request, "documents/tasks/form.html", _task_form_context(request, form))
+    return render(request, "documents/tasks/form.html", context)
+
+
+@login_required
+def task_template_prefill(request):
+    """HTMX endpoint behind the "aus Vorlage anlegen" select (#1038) --
+
+    re-renders the editable Angaben/Checkliste section of the create form
+    with the chosen template's defaults, without touching the still-unsaved
+    document selection sitting outside this fragment.
+    """
+    template_id = _parse_template_id(request.GET.get("template"))
+    template = None
+    if template_id is not None:
+        template = TaskTemplate.objects.visible_to(request.user).filter(pk=template_id).first()
+
+    form = TaskForm(initial=_template_form_initial(template))
+    pending_checklist_texts = [item.text for item in template.items.all()] if template else []
+    context = {"task": None, "form": form, "pending_checklist_texts": pending_checklist_texts}
+    return render(request, "documents/tasks/partials/_form_dynamic_fields.html", context)
 
 
 @login_required

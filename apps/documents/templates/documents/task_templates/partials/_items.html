@@ -1,0 +1,73 @@
+<div class="findus-card">
+    <ul class="list-group list-group-flush mb-2">
+        {% for item in items %}
+        <li class="list-group-item d-flex align-items-center gap-2 bg-transparent">
+            <form
+                class="flex-grow-1"
+                method="post"
+                action="{% url 'documents:task_template_item_update' template.pk item.pk %}"
+                hx-post="{% url 'documents:task_template_item_update' template.pk item.pk %}"
+                hx-target="#task-template-items"
+                hx-swap="innerHTML"
+            >
+                {% csrf_token %}
+                <input
+                    type="text"
+                    name="text"
+                    value="{{ item.text }}"
+                    aria-label="Text bearbeiten"
+                    class="form-control form-control-sm"
+                >
+            </form>
+
+            <div class="findus-checklist-order-actions">
+                <form
+                    method="post"
+                    action="{% url 'documents:task_template_item_move' template.pk item.pk 'up' %}"
+                    hx-post="{% url 'documents:task_template_item_move' template.pk item.pk 'up' %}"
+                    hx-target="#task-template-items"
+                    hx-swap="innerHTML"
+                >
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="Nach oben verschieben" {% if forloop.first %}disabled{% endif %}>↑</button>
+                </form>
+                <form
+                    method="post"
+                    action="{% url 'documents:task_template_item_move' template.pk item.pk 'down' %}"
+                    hx-post="{% url 'documents:task_template_item_move' template.pk item.pk 'down' %}"
+                    hx-target="#task-template-items"
+                    hx-swap="innerHTML"
+                >
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="Nach unten verschieben" {% if forloop.last %}disabled{% endif %}>↓</button>
+                </form>
+            </div>
+
+            <form
+                method="post"
+                action="{% url 'documents:task_template_item_delete' template.pk item.pk %}"
+                hx-post="{% url 'documents:task_template_item_delete' template.pk item.pk %}"
+                hx-target="#task-template-items"
+                hx-swap="innerHTML"
+            >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger">Entfernen</button>
+            </form>
+        </li>
+        {% empty %}
+        <li class="list-group-item bg-transparent text-muted">Keine Einträge.</li>
+        {% endfor %}
+    </ul>
+    <form
+        class="d-flex gap-2"
+        method="post"
+        action="{% url 'documents:task_template_item_add' template.pk %}"
+        hx-post="{% url 'documents:task_template_item_add' template.pk %}"
+        hx-target="#task-template-items"
+        hx-swap="innerHTML"
+    >
+        {% csrf_token %}
+        <input type="text" name="text" class="form-control form-control-sm" placeholder="Neuer Schritt …">
+        <button type="submit" class="btn btn-sm btn-outline-secondary text-nowrap">+ Hinzufügen</button>
+    </form>
+</div>

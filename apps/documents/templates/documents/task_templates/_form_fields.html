@@ -1,0 +1,29 @@
+<div class="findus-task-form-section">
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
+        {{ form.name }}
+        {% if form.name.errors %}<div class="text-danger small">{{ form.name.errors|striptags }}</div>{% endif %}
+    </div>
+    <div class="findus-task-form-row">
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.default_kind.id_for_label }}">{{ form.default_kind.label }}</label>
+            {{ form.default_kind }}
+            {% if form.default_kind.errors %}<div class="text-danger small">{{ form.default_kind.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.default_title.id_for_label }}">{{ form.default_title.label }}</label>
+            {{ form.default_title }}
+            {% if form.default_title.errors %}<div class="text-danger small">{{ form.default_title.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.default_due_offset_days.id_for_label }}">{{ form.default_due_offset_days.label }}</label>
+            {{ form.default_due_offset_days }}
+            {% if form.default_due_offset_days.errors %}<div class="text-danger small">{{ form.default_due_offset_days.errors|striptags }}</div>{% endif %}
+        </div>
+    </div>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.default_description.id_for_label }}">{{ form.default_description.label }}</label>
+        {{ form.default_description }}
+        {% if form.default_description.errors %}<div class="text-danger small">{{ form.default_description.errors|striptags }}</div>{% endif %}
+    </div>
+</div>

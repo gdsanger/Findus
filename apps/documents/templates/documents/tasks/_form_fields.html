@@ -1,32 +1,28 @@
+{% if task is None %}
 <div class="findus-task-form-section">
-    <h3 class="findus-section-subtitle">Angaben</h3>
+    <h3 class="findus-section-subtitle">Vorlage</h3>
     <div class="findus-task-form-group">
-        <label class="form-label" for="{{ form.title.id_for_label }}">{{ form.title.label }}</label>
-        {{ form.title }}
-        {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors|striptags }}</div>{% endif %}
+        <label class="form-label" for="task-template-select">Aus Vorlage anlegen</label>
+        <select
+            id="task-template-select"
+            name="template"
+            class="form-select form-select-sm"
+            hx-get="{% url 'documents:task_template_prefill' %}"
+            hx-target="#task-form-dynamic"
+            hx-swap="innerHTML"
+            hx-include="this"
+        >
+            <option value="">– Keine Vorlage –</option>
+            {% for template in task_templates %}
+            <option value="{{ template.id }}" {% if template.id == selected_template_id %}selected{% endif %}>{{ template.name }}</option>
+            {% endfor %}
+        </select>
     </div>
-    <div class="findus-task-form-row">
-        <div class="findus-task-form-group">
-            <label class="form-label" for="{{ form.kind.id_for_label }}">{{ form.kind.label }}</label>
-            {{ form.kind }}
-            {% if form.kind.errors %}<div class="text-danger small">{{ form.kind.errors|striptags }}</div>{% endif %}
-        </div>
-        <div class="findus-task-form-group">
-            <label class="form-label" for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>
-            {{ form.status }}
-            {% if form.status.errors %}<div class="text-danger small">{{ form.status.errors|striptags }}</div>{% endif %}
-        </div>
-        <div class="findus-task-form-group">
-            <label class="form-label" for="{{ form.due_date.id_for_label }}">{{ form.due_date.label }}</label>
-            {{ form.due_date }}
-            {% if form.due_date.errors %}<div class="text-danger small">{{ form.due_date.errors|striptags }}</div>{% endif %}
-        </div>
-    </div>
-    <div class="findus-task-form-group">
-        <label class="form-label" for="{{ form.description.id_for_label }}">{{ form.description.label }}</label>
-        {{ form.description }}
-        {% if form.description.errors %}<div class="text-danger small">{{ form.description.errors|striptags }}</div>{% endif %}
-    </div>
+</div>
+{% endif %}
+
+<div id="task-form-dynamic">
+    {% include "documents/tasks/partials/_form_dynamic_fields.html" %}
 </div>
 
 <div class="findus-task-form-section">

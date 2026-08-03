@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import stammdaten, task_views, views
+from . import stammdaten, task_template_views, task_views, views
 
 app_name = "documents"
 
@@ -50,6 +50,7 @@ urlpatterns = [
     path("stammdaten/<str:kind>/<int:pk>/delete/", stammdaten.stammdaten_delete, name="stammdaten_delete"),
     path("tasks/", task_views.task_list, name="task_list"),
     path("tasks/create/", task_views.task_create, name="task_create"),
+    path("tasks/template-prefill/", task_views.task_template_prefill, name="task_template_prefill"),
     path("tasks/<int:pk>/", task_views.task_detail, name="task_detail"),
     path("tasks/<int:pk>/toggle/", task_views.task_toggle_status, name="task_toggle_status"),
     path(
@@ -76,5 +77,33 @@ urlpatterns = [
         "tasks/<int:pk>/checklist/<int:item_id>/delete/",
         task_views.checklist_item_delete,
         name="checklist_item_delete",
+    ),
+    path("task-templates/", task_template_views.task_template_list, name="task_template_list"),
+    path("task-templates/create/", task_template_views.task_template_create, name="task_template_create"),
+    path("task-templates/<int:pk>/", task_template_views.task_template_detail, name="task_template_detail"),
+    path(
+        "task-templates/<int:pk>/delete/",
+        task_template_views.task_template_delete,
+        name="task_template_delete",
+    ),
+    path(
+        "task-templates/<int:pk>/items/add/",
+        task_template_views.task_template_item_add,
+        name="task_template_item_add",
+    ),
+    path(
+        "task-templates/<int:pk>/items/<int:item_id>/update/",
+        task_template_views.task_template_item_update,
+        name="task_template_item_update",
+    ),
+    path(
+        "task-templates/<int:pk>/items/<int:item_id>/move/<str:direction>/",
+        task_template_views.task_template_item_move,
+        name="task_template_item_move",
+    ),
+    path(
+        "task-templates/<int:pk>/items/<int:item_id>/delete/",
+        task_template_views.task_template_item_delete,
+        name="task_template_item_delete",
     ),
 ]

@@ -28,6 +28,16 @@
         >
             Aufgaben
         </a>
+        <ul class="findus-nav-sublist">
+            <li>
+                <a
+                    href="{% url 'documents:task_template_list' %}"
+                    class="findus-nav-link findus-nav-link-sub{% if 'task_template' in request.resolver_match.url_name %} active{% endif %}"
+                >
+                    Vorlagen
+                </a>
+            </li>
+        </ul>
     </li>
     <li>
         <a

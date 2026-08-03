@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ template.name }} – Aufgaben-Vorlage – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=template.name %}
+
+<section class="findus-section findus-detail-actions">
+    <a href="{% url 'documents:task_template_list' %}" class="btn btn-sm btn-outline-secondary">Zurück zur Liste</a>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Bearbeiten</h2>
+    <form method="post" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/task_templates/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+        </div>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Checklisten-Vorlage</h2>
+    <div id="task-template-items">
+        {% include "documents/task_templates/partials/_items.html" %}
+    </div>
+</section>
+{% endblock %}

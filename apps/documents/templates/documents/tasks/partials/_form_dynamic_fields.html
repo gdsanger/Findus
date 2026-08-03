@@ -1,0 +1,51 @@
+<div class="findus-task-form-section">
+    <h3 class="findus-section-subtitle">Angaben</h3>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.title.id_for_label }}">{{ form.title.label }}</label>
+        {{ form.title }}
+        {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors|striptags }}</div>{% endif %}
+    </div>
+    <div class="findus-task-form-row">
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.kind.id_for_label }}">{{ form.kind.label }}</label>
+            {{ form.kind }}
+            {% if form.kind.errors %}<div class="text-danger small">{{ form.kind.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>
+            {{ form.status }}
+            {% if form.status.errors %}<div class="text-danger small">{{ form.status.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.due_date.id_for_label }}">{{ form.due_date.label }}</label>
+            {{ form.due_date }}
+            {% if form.due_date.errors %}<div class="text-danger small">{{ form.due_date.errors|striptags }}</div>{% endif %}
+        </div>
+    </div>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.description.id_for_label }}">{{ form.description.label }}</label>
+        {{ form.description }}
+        {% if form.description.errors %}<div class="text-danger small">{{ form.description.errors|striptags }}</div>{% endif %}
+    </div>
+</div>
+
+{% if task is None %}
+<div class="findus-task-form-section" data-checklist-pending>
+    <h3 class="findus-section-subtitle">Checkliste</h3>
+    <template id="task-checklist-pending-row-template">
+        <div class="findus-task-checklist-pending-row" data-checklist-pending-row>
+            <input type="text" name="checklist_text" class="form-control form-control-sm" placeholder="Checklisten-Schritt …">
+            <button type="button" class="btn btn-sm btn-outline-danger" data-checklist-pending-remove>Entfernen</button>
+        </div>
+    </template>
+    <div class="findus-task-checklist-pending-list" data-checklist-pending-list>
+        {% for text in pending_checklist_texts %}
+        <div class="findus-task-checklist-pending-row" data-checklist-pending-row>
+            <input type="text" name="checklist_text" value="{{ text }}" class="form-control form-control-sm">
+            <button type="button" class="btn btn-sm btn-outline-danger" data-checklist-pending-remove>Entfernen</button>
+        </div>
+        {% endfor %}
+    </div>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-checklist-pending-add>+ Schritt hinzufügen</button>
+</div>
+{% endif %}
