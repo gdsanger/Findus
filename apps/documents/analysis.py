@@ -15,18 +15,26 @@ a precondition for it, so `analyze_document()` never raises -- a
 provider outage or a malformed response is recorded in
 `Document.metadata["analysis_error"]` and the pipeline moves on to
 embedding regardless (see `apps.documents.tasks.analyze_document_task`).
+
+JSON parsing goes through `apps.ai.providers.generate_json` (bug fix,
+#1028): LLMs occasionally return near-valid JSON (missing/trailing
+comma, prose or code-fences around the payload), and strict
+`json.loads` on that used to leave `summary`/`key_facts` empty with an
+`analysis_error` even though the model had, for all practical purposes,
+answered correctly. `generate_json` repairs/retries before giving up,
+so `analysis_error` now only fires on a genuine provider failure or a
+reply that isn't recoverable JSON at all -- still costing at most one
+extra `generate()` call, only in that failure case.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Optional
 
 from django.conf import settings
 
-from apps.ai.providers import GenerationProvider, Message, get_generation_provider
+from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
 
 from .models import Document, SuggestionStatus, Tag, TagSuggestion, Vorgang, VorgangSuggestion
 from .services import find_or_create_correspondent
@@ -82,15 +90,6 @@ def _build_messages(document: Document) -> list[Message]:
         Message(role="system", content=_SYSTEM_PROMPT),
         Message(role="user", content=_context_message(document)),
     ]
-
-
-def _parse_response(text: str) -> dict:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    payload = match.group(0) if match else text
-    parsed = json.loads(payload)
-    if not isinstance(parsed, dict):
-        raise ValueError("KI-Analyse: Antwort ist kein JSON-Objekt")
-    return parsed
 
 
 def _clamp_confidence(value: object) -> float:
@@ -221,11 +220,18 @@ def analyze_document(
 
     try:
         provider = generation_provider or get_generation_provider()
-        result = provider.generate(_build_messages(document))
-        parsed = _parse_response(result.text)
-        _apply_analysis(document, parsed, model=result.model, version=result.version)
+        result = generate_json(provider, _build_messages(document))
+        _apply_analysis(document, result.data, model=result.model, version=result.version)
     except Exception as exc:
-        logger.exception("KI-Analyse fehlgeschlagen fuer Document %s", document_id)
+        raw_text = getattr(exc, "raw_text", None)
+        if raw_text is not None:
+            logger.exception(
+                "KI-Analyse fehlgeschlagen fuer Document %s, roher Modell-Output (gekuerzt): %s",
+                document_id,
+                raw_text,
+            )
+        else:
+            logger.exception("KI-Analyse fehlgeschlagen fuer Document %s", document_id)
         document.metadata = {**document.metadata, "analysis_error": str(exc)}
         document.save(update_fields=["metadata", "updated_at"])
 

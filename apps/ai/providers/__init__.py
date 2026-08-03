@@ -46,6 +46,7 @@ from .base import (
     VisionProvider,
     VisionResult,
 )
+from .json_generation import JSONGenerationError, JSONGenerationResult, generate_json
 from .registry import (
     get_embedding_provider,
     get_generation_provider,
@@ -61,12 +62,15 @@ __all__ = [
     "GenerationProvider",
     "GenerationResult",
     "ImageInput",
+    "JSONGenerationError",
+    "JSONGenerationResult",
     "Message",
     "ProviderError",
     "Usage",
     "UsageHook",
     "VisionProvider",
     "VisionResult",
+    "generate_json",
     "get_embedding_provider",
     "get_generation_provider",
     "get_vision_provider",
