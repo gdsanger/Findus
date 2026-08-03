@@ -10,6 +10,7 @@ from django.views.decorators.http import require_POST
 
 from apps.ingest.service import ingest_file
 
+from .forms import TaskForm
 from .models import Correspondent, Document, SuggestionStatus, Tag, Task, Vorgang
 from .retrieval import DocumentRetrievalService
 from .task_views import task_departments_and_visibility
@@ -232,13 +233,14 @@ def _visible_document(user, pk):
     )
 
 
-def _document_tasks_context(user, document):
+def _document_tasks_context(user, document, quick_create_form=None):
     return {
         "document": document,
         "tasks": Task.objects.visible_to(user)
         .filter(documents=document)
         .prefetch_related("checklist_items"),
         "task_kind_choices": Task.Kind.choices,
+        "quick_create_form": quick_create_form,
     }
 
 
@@ -267,27 +269,31 @@ def document_task_create(request, pk):
     same quick-create-without-context-switch principle as
     `document_meta_quick_create`, just producing a `Task` linked to this
     document instead of assigning an existing Absender/Vorgang/Tag.
+
+    Validated through the same `TaskForm` as the full `/tasks/create/` flow
+    (#1045) -- building the `Task` straight from raw POST data let an
+    unparsable `due_date` reach `DateField.to_python` unvalidated at
+    `.save()` time and raise an uncaught `ValidationError` (500), instead of
+    a clean inline error next to the quick-create fields.
     """
     document = _visible_document(request.user, pk)
-    title = request.POST.get("title", "").strip()
-    if title:
-        kind = request.POST.get("kind", "").strip() or Task.Kind.OTHER
-        due_date = request.POST.get("due_date", "").strip() or None
+    data = request.POST.copy()
+    data.setdefault("status", Task.Status.OPEN)
+    form = TaskForm(data)
+    if form.is_valid():
+        task = form.save(commit=False)
+        task.owner = request.user
         departments, visibility = task_departments_and_visibility(request.user)
-        task = Task.objects.create(
-            title=title,
-            kind=kind,
-            due_date=due_date,
-            owner=request.user,
-            visibility=visibility,
-        )
+        task.visibility = visibility
+        task.save()
         task.departments.set(departments)
         task.documents.add(document)
+        form = None
 
     return render(
         request,
         "documents/partials/_detail_tasks.html",
-        _document_tasks_context(request.user, document),
+        _document_tasks_context(request.user, document, quick_create_form=form),
     )
 
 

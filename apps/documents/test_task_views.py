@@ -450,9 +450,45 @@ class DocumentTaskCreateViewTests(TestCase):
 
     def test_blank_title_creates_nothing(self):
         self.client.force_login(self.user_a)
-        self.client.post(
+        response = self.client.post(
             reverse("documents:document_task_create", args=[self.document.pk]),
             {"title": "", "kind": Task.Kind.PAY, "due_date": ""},
         )
 
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(Task.objects.count(), 0)
+        self.assertContains(response, "Titel")
+
+    def test_unparsable_due_date_shows_inline_error_instead_of_crashing(self):
+        """An unparsable `due_date` used to reach `DateField.to_python`
+
+        unvalidated through a raw `Task.objects.create()` and raise an
+        uncaught `ValidationError` (500) -- it must now surface as a clean
+        form error on the still-intact "Verknüpfte Aufgaben" block.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:document_task_create", args=[self.document.pk]),
+            {"title": "Rechnung zahlen", "kind": Task.Kind.PAY, "due_date": "not-a-date"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Task.objects.count(), 0)
+        self.assertContains(response, "quick-create-task")
+        self.assertContains(response, "Rechnung zahlen")
+
+    def test_german_formatted_due_date_is_accepted(self):
+        """`de-de` is the project locale (`LANGUAGE_CODE`), so `TaskForm`
+
+        parses `10.08.2026` the same way the full `/tasks/create/` form
+        does -- a raw `Task.objects.create(due_date="10.08.2026")` would
+        have rejected this as an invalid `DateField` value.
+        """
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:document_task_create", args=[self.document.pk]),
+            {"title": "Rechnung zahlen", "kind": Task.Kind.PAY, "due_date": "10.08.2026"},
+        )
+
+        task = Task.objects.get(title="Rechnung zahlen")
+        self.assertEqual(task.due_date, datetime.date(2026, 8, 10))
