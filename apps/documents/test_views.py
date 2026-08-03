@@ -652,6 +652,112 @@ class DocumentActionStatusViewTests(TestCase):
         self.assertEqual(self.doc.action_status, Document.ActionStatus.NONE)
 
 
+class DocumentAnalysisActionsViewTests(TestCase):
+    """Covers the #1063 detail-page controls: "Analyse erneut ausfuehren"
+
+    (re-runs just the KI-Analyse) and "Neu verarbeiten" (re-runs the whole
+    extraction -> analysis -> embedding pipeline), both queued on the
+    Django-Q worker rather than run inline, and both gated by the same
+    `visible_to` scope as every other document action.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.FAILED,
+            processing_error="Kaputtes PDF",
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_rerun_post_sets_analyzing_and_queues_worker_task(self):
+        from apps.documents.analysis import analyze_and_finalize
+
+        self.client.force_login(self.user_a)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            mock_async_task.return_value = "task-1"
+            response = self.client.post(reverse("documents:analysis_rerun", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.processing_status, Document.ProcessingStatus.ANALYZING)
+        mock_async_task.assert_called_once_with(analyze_and_finalize, self.doc.id)
+        self.assertContains(response, "Analyse läuft")
+
+    def test_rerun_get_is_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:analysis_rerun", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_rerun_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            response = self.client.post(reverse("documents:analysis_rerun", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+        mock_async_task.assert_not_called()
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.processing_status, Document.ProcessingStatus.FAILED)
+
+    def test_reprocess_post_resets_status_and_queues_pipeline_task(self):
+        from apps.documents.tasks import extract_document_task
+
+        self.client.force_login(self.user_a)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            mock_async_task.return_value = "task-1"
+            response = self.client.post(reverse("documents:reprocess", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.processing_status, Document.ProcessingStatus.PENDING)
+        self.assertEqual(self.doc.processing_error, "")
+        mock_async_task.assert_called_once_with(extract_document_task, self.doc.id)
+
+    def test_reprocess_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            response = self.client.post(reverse("documents:reprocess", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+        mock_async_task.assert_not_called()
+
+    def test_status_partial_shows_actions_when_terminal(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Analyse erneut ausführen")
+        self.assertContains(response, "Neu verarbeiten")
+        self.assertEqual(response["HX-Refresh"], "true")
+
+    def test_status_partial_polls_while_pending(self):
+        self.doc.processing_status = Document.ProcessingStatus.ANALYZING
+        self.doc.save(update_fields=["processing_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-trigger="every 3s"')
+        self.assertNotIn("HX-Refresh", response)
+
+    def test_status_endpoint_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-detail-media-")
 _LOCAL_STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},

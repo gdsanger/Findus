@@ -1,0 +1,49 @@
+<div
+    id="document-analysis-status"
+    class="findus-analysis-status"
+    {% if document.processing_status in pending_statuses %}
+    hx-get="{% url 'documents:analysis_status' document.pk %}"
+    hx-trigger="every 3s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    {% endif %}
+>
+    {% if document.processing_status in pending_statuses %}
+    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+    <span class="text-muted small">{{ document.get_processing_status_display }} …</span>
+    {% else %}
+    <form
+        method="post"
+        action="{% url 'documents:analysis_rerun' document.pk %}"
+        class="d-inline"
+        hx-post="{% url 'documents:analysis_rerun' document.pk %}"
+        hx-target="#document-analysis-status"
+        hx-swap="outerHTML"
+    >
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-secondary">Analyse erneut ausführen</button>
+    </form>
+    <form
+        method="post"
+        action="{% url 'documents:reprocess' document.pk %}"
+        class="d-inline"
+        hx-post="{% url 'documents:reprocess' document.pk %}"
+        hx-target="#document-analysis-status"
+        hx-swap="outerHTML"
+        onsubmit="return confirm('Dokument komplett neu verarbeiten (Extraktion, Analyse, Embedding)?');"
+    >
+        {% csrf_token %}
+        <button
+            type="submit"
+            class="btn btn-sm {% if document.processing_status == 'failed' %}btn-warning{% else %}btn-outline-secondary{% endif %}"
+        >
+            Neu verarbeiten
+        </button>
+    </form>
+    {% if document.processing_status == 'failed' %}
+    <span class="text-danger small">
+        Verarbeitung fehlgeschlagen{% if document.processing_error %}: {{ document.processing_error }}{% endif %}
+    </span>
+    {% endif %}
+    {% endif %}
+</div>

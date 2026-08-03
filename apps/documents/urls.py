@@ -51,6 +51,21 @@ urlpatterns = [
         views.document_action_status,
         name="action_status",
     ),
+    path(
+        "documents/<int:pk>/analysis/status/",
+        views.document_analysis_status,
+        name="analysis_status",
+    ),
+    path(
+        "documents/<int:pk>/analysis/rerun/",
+        views.document_analysis_rerun,
+        name="analysis_rerun",
+    ),
+    path(
+        "documents/<int:pk>/reprocess/",
+        views.document_reprocess,
+        name="reprocess",
+    ),
     path("documents/<int:pk>/meta/edit/", views.document_meta_edit, name="meta_edit"),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
     path(

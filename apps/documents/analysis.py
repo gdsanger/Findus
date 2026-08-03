@@ -420,3 +420,21 @@ def analyze_document(
         document.save(update_fields=["metadata", "updated_at"])
 
     return document
+
+
+def analyze_and_finalize(document_id: int) -> Document:
+    """Run `analyze_document()` and -- unlike the ingest pipeline, which
+
+    hands `processing_status` off to `process_document()` right
+    afterwards (#1010) -- also move it to a terminal state: this is the
+    last pipeline stage for a standalone re-analysis (management command
+    or UI "Analyse erneut ausfuehren" button), so nothing else will ever
+    get the document out of `analyzing` otherwise (#1029, #1035, #1063).
+    """
+    document = analyze_document(document_id)
+    if "analysis_error" in document.metadata:
+        document.processing_status = Document.ProcessingStatus.FAILED
+    else:
+        document.processing_status = Document.ProcessingStatus.READY
+    document.save(update_fields=["processing_status", "updated_at"])
+    return document
