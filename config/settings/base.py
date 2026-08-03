@@ -251,6 +251,14 @@ FINDUS_CHUNK_OVERLAP_TOKENS = int(env("FINDUS_CHUNK_OVERLAP_TOKENS", "50"))
 FINDUS_CHUNK_EMBEDDING_BATCH_SIZE = int(env("FINDUS_CHUNK_EMBEDDING_BATCH_SIZE", "64"))
 
 # --------------------------------------------------------------------------
+# KI-Analyse (apps.documents.analysis, #1020): ein `generate()`-Call pro
+# Dokument auf dem bereits extrahierten Text (kostenbewusst -- kein
+# zusätzlicher Vision-Call). MAX_CHARS begrenzt den Prompt bei sehr langen
+# Dokumenten, statt das komplette `text_content` unbeschränkt mitzusenden.
+# --------------------------------------------------------------------------
+FINDUS_ANALYSIS_MAX_CHARS = int(env("FINDUS_ANALYSIS_MAX_CHARS", "12000"))
+
+# --------------------------------------------------------------------------
 # Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
 # -> vision, cheapest usable stage wins. A page only escalates to the next
 # (more expensive) stage when the current one produced fewer than

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ label_plural }} – Stammdaten – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=label_plural %}
+
+<nav class="findus-tabs">
+    {% for tab_kind, tab_label in nav %}
+    <a
+        href="{% url 'documents:stammdaten_list' tab_kind %}"
+        class="findus-tab{% if tab_kind == kind %} active{% endif %}"
+    >{{ tab_label }}</a>
+    {% endfor %}
+</nav>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">{{ label }} anlegen</h2>
+    <form method="post" class="findus-card findus-stammdaten-form">
+        {% csrf_token %}
+        {% include "documents/stammdaten/_form_fields.html" %}
+        <div>
+            <button type="submit" class="btn btn-sm btn-primary">Anlegen</button>
+        </div>
+    </form>
+</section>
+
+<section class="findus-section">
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    {% for header in list_headers %}<th>{{ header }}</th>{% endfor %}
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for column in row.columns %}<td>{{ column|default:"—" }}</td>{% endfor %}
+                    <td class="text-end">
+                        <a
+                            href="{% url 'documents:stammdaten_edit' kind row.pk %}"
+                            class="btn btn-sm btn-outline-secondary"
+                        >Bearbeiten</a>
+                        <form
+                            method="post"
+                            action="{% url 'documents:stammdaten_delete' kind row.pk %}"
+                            class="d-inline"
+                            onsubmit="return confirm('{{ label }} wirklich löschen?');"
+                        >
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="{{ list_headers|length|add:1 }}" class="text-muted">Keine Einträge vorhanden.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

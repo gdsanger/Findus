@@ -21,6 +21,14 @@
             Dokumente
         </a>
     </li>
+    <li>
+        <a
+            href="{% url 'documents:stammdaten_home' %}"
+            class="findus-nav-link{% if 'stammdaten' in request.resolver_match.url_name %} active{% endif %}"
+        >
+            Stammdaten
+        </a>
+    </li>
 </ul>
 <div class="findus-nav-spacer"></div>
 {% if request.user.is_authenticated %}

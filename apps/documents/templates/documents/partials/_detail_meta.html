@@ -49,4 +49,79 @@
             </dd>
         </div>
     </dl>
+
+    {% if document.summary %}
+    <div class="findus-detail-summary">
+        <h3 class="findus-section-subtitle">Zusammenfassung</h3>
+        <p>{{ document.summary }}</p>
+    </div>
+    {% endif %}
+
+    {% if document.key_facts %}
+    <div class="findus-detail-keyfacts">
+        <h3 class="findus-section-subtitle">Kennwerte (KI-erkannt)</h3>
+        <dl class="findus-detail-meta-list">
+            {% if document.key_facts.document_type %}
+            <div><dt>Typ</dt><dd>{{ document.key_facts.document_type }}</dd></div>
+            {% endif %}
+            {% if document.key_facts.document_date %}
+            <div><dt>Dokumentdatum</dt><dd>{{ document.key_facts.document_date }}</dd></div>
+            {% endif %}
+            {% if document.key_facts.amount %}
+            <div><dt>Betrag</dt><dd>{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}</dd></div>
+            {% endif %}
+            {% if document.key_facts.due_date %}
+            <div><dt>Frist</dt><dd>{{ document.key_facts.due_date }}</dd></div>
+            {% endif %}
+        </dl>
+    </div>
+    {% endif %}
+
+    {% with pending_tags=document.tag_suggestions.pending pending_vorgaenge=document.vorgang_suggestions.pending %}
+    {% if pending_tags or pending_vorgaenge %}
+    <div class="findus-detail-suggestions">
+        <h3 class="findus-section-subtitle">KI-Vorschläge</h3>
+        {% for suggestion in pending_tags %}
+        <div class="findus-suggestion-row">
+            <span class="badge text-bg-light">
+                Tag: {{ suggestion.name }}{% if suggestion.dimension %} ({{ suggestion.dimension }}){% endif %}
+            </span>
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-success"
+                hx-post="{% url 'documents:tag_suggestion_accept' document.pk suggestion.pk %}"
+                hx-target="#document-meta"
+                hx-swap="innerHTML"
+            >Übernehmen</button>
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary"
+                hx-post="{% url 'documents:tag_suggestion_reject' document.pk suggestion.pk %}"
+                hx-target="#document-meta"
+                hx-swap="innerHTML"
+            >Verwerfen</button>
+        </div>
+        {% endfor %}
+        {% for suggestion in pending_vorgaenge %}
+        <div class="findus-suggestion-row">
+            <span class="badge text-bg-light">Vorgang: {{ suggestion.name }}</span>
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-success"
+                hx-post="{% url 'documents:vorgang_suggestion_accept' document.pk suggestion.pk %}"
+                hx-target="#document-meta"
+                hx-swap="innerHTML"
+            >Übernehmen</button>
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary"
+                hx-post="{% url 'documents:vorgang_suggestion_reject' document.pk suggestion.pk %}"
+                hx-target="#document-meta"
+                hx-swap="innerHTML"
+            >Verwerfen</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
 </div>
