@@ -118,6 +118,29 @@ class AnalyzeDocumentsCommandTests(TestCase):
         bad_doc.refresh_from_db()
         self.assertEqual(ok_doc.summary, "Kurze Zusammenfassung.")
         self.assertIn("boom", bad_doc.metadata["analysis_error"])
+        self.assertEqual(ok_doc.processing_status, Document.ProcessingStatus.READY)
+        self.assertEqual(bad_doc.processing_status, Document.ProcessingStatus.FAILED)
+
+    def test_successful_analysis_leaves_processing_status_ready(self):
+        document = Document.objects.create(
+            title="A",
+            text_content="hello world",
+            processing_status=Document.ProcessingStatus.ANALYZING,
+        )
+
+        call_command("analyze_documents", document_ids=[document.id])
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
+
+    def test_rerun_is_idempotent_and_returns_to_ready(self):
+        document = Document.objects.create(title="A", text_content="hello world")
+
+        call_command("analyze_documents", document_ids=[document.id])
+        call_command("analyze_documents", select_all=True)
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
 
     def test_no_matching_documents_reports_and_does_not_error(self):
         out = StringIO()

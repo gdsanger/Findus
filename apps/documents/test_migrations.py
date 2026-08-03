@@ -8,6 +8,9 @@ from .models import Document, Tag, TagSuggestion
 _migration = importlib.import_module(
     "apps.documents.migrations.0012_repair_dimension_prefixed_tag_names"
 )
+_stuck_analyzing_migration = importlib.import_module(
+    "apps.documents.migrations.0013_repair_stuck_analyzing_documents"
+)
 
 
 class RepairDimensionPrefixedTagNamesTests(TestCase):
@@ -71,3 +74,55 @@ class RepairDimensionPrefixedTagNamesTests(TestCase):
         suggestion.refresh_from_db()
         self.assertEqual(suggestion.name, "Eingangsrechnung")
         self.assertEqual(suggestion.dimension, "Dokumenttyp")
+
+
+class RepairStuckAnalyzingDocumentsTests(TestCase):
+    """Covers the one-off data migration for #1035 -- `analyze_documents`
+
+    (#1029) used to leave `processing_status="analyzing"` set forever,
+    both on success and on failure.
+    """
+
+    def _run(self):
+        _stuck_analyzing_migration.repair_stuck_analyzing_documents(apps, None)
+
+    def test_successful_analysis_moves_to_ready(self):
+        document = Document.objects.create(
+            title="A",
+            text_content="hello world",
+            summary="Kurze Zusammenfassung.",
+            processing_status=Document.ProcessingStatus.ANALYZING,
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
+
+    def test_failed_analysis_moves_to_failed(self):
+        document = Document.objects.create(
+            title="A",
+            text_content="hello world",
+            metadata={"analysis_error": "boom"},
+            processing_status=Document.ProcessingStatus.ANALYZING,
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.FAILED)
+
+    def test_other_statuses_are_left_untouched(self):
+        ready = Document.objects.create(
+            title="A", text_content="hello world", processing_status=Document.ProcessingStatus.READY
+        )
+        embedding = Document.objects.create(
+            title="B", text_content="hello world", processing_status=Document.ProcessingStatus.EMBEDDING
+        )
+
+        self._run()
+
+        ready.refresh_from_db()
+        embedding.refresh_from_db()
+        self.assertEqual(ready.processing_status, Document.ProcessingStatus.READY)
+        self.assertEqual(embedding.processing_status, Document.ProcessingStatus.EMBEDDING)
