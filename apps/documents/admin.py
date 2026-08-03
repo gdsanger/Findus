@@ -86,12 +86,20 @@ class DocumentAdmin(admin.ModelAdmin):
     list_display = (
         "title",
         "correspondent",
+        "direction",
         "processing_status",
         "extraction_method",
         "visibility",
         "created_at",
     )
-    list_filter = ("processing_status", "extraction_method", "visibility", "departments", "tags")
+    list_filter = (
+        "direction",
+        "processing_status",
+        "extraction_method",
+        "visibility",
+        "departments",
+        "tags",
+    )
     search_fields = ("title", "text_content")
     autocomplete_fields = ("correspondent", "owner", "vorgaenge", "tags")
     filter_horizontal = ("departments",)
@@ -101,8 +109,9 @@ class DocumentAdmin(admin.ModelAdmin):
 
 @admin.register(Correspondent)
 class CorrespondentAdmin(admin.ModelAdmin):
-    list_display = ("name", "email", "created_at")
-    search_fields = ("name", "email")
+    list_display = ("name", "email", "is_self", "vat_id", "iban", "created_at")
+    list_filter = ("is_self",)
+    search_fields = ("name", "email", "vat_id", "tax_number", "iban")
 
 
 @admin.register(Vorgang)

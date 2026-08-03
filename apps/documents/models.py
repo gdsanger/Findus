@@ -15,10 +15,26 @@ class TimeStampedModel(models.Model):
 
 
 class Correspondent(TimeStampedModel):
-    """Absender/Empfänger eines Dokuments (z. B. Firma oder Person)."""
+    """Absender/Empfänger eines Dokuments (z. B. Firma oder Person).
+
+    `is_self` markiert eine eigene Identität ("das bin ich") -- mehrere
+    erlaubt, z. B. eine Firma und eine Privatperson. Die KI-Analyse
+    (#1030, apps.documents.analysis) nutzt das, um die Dokumentrichtung
+    abzuleiten: Empfänger ist `is_self` -> Eingang, Aussteller ist
+    `is_self` -> Ausgang. `vat_id`/`tax_number`/`iban` sind fuer
+    verlaessliches Matching gedacht -- ein Name allein ist nicht
+    eindeutig (OCR-Schreibweisen, Tochterfirmen etc.), waehrend eine
+    USt-IdNr/IBAN eine Identitaet robust identifiziert. Gilt fuer alle
+    Correspondents, nicht nur Self-Identitaeten, da es generell beim
+    Matching/Dedup hilft.
+    """
 
     name = models.CharField(max_length=255, unique=True)
     email = models.EmailField(blank=True)
+    is_self = models.BooleanField(default=False, db_index=True)
+    vat_id = models.CharField(max_length=32, blank=True)
+    tax_number = models.CharField(max_length=32, blank=True)
+    iban = models.CharField(max_length=34, blank=True)
 
     class Meta:
         ordering = ["name"]
@@ -123,6 +139,20 @@ class Document(TimeStampedModel):
         FOLDER = "folder", "Ordner-Überwachung"
         API = "api", "API"
 
+    class Direction(models.TextChoices):
+        """Ging das Dokument an mich (Eingang) oder kam es von mir
+        (Ausgang)? Bewusst allgemein gehalten (#1030) -- Rechnungen sind
+        der Hauptfall, aber auch Briefe/Vertraege sind "an mich/von mir".
+        Von der KI-Analyse aus dem erkannten Aussteller/Empfaenger
+        gegenueber `Correspondent.is_self` abgeleitet, bleibt aber ein
+        normales, vom Nutzer ueberschreibbares Feld.
+        """
+
+        EINGANG = "eingang", "Eingang"
+        AUSGANG = "ausgang", "Ausgang"
+        INTERN = "intern", "Intern"
+        UNBEKANNT = "unbekannt", "Unbekannt"
+
     title = models.CharField(max_length=255)
     correspondent = models.ForeignKey(
         Correspondent,
@@ -158,6 +188,12 @@ class Document(TimeStampedModel):
         max_length=20,
         choices=ProcessingStatus.choices,
         default=ProcessingStatus.PENDING,
+    )
+    direction = models.CharField(
+        max_length=20,
+        choices=Direction.choices,
+        default=Direction.UNBEKANNT,
+        db_index=True,
     )
 
     # Extraktion + Cache.

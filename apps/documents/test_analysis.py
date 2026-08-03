@@ -8,6 +8,27 @@ from apps.ai.providers.fake import FakeGenerationProvider
 from .analysis import analyze_document
 from .models import Correspondent, Document, SuggestionStatus, Tag, Vorgang
 
+_REPLY_WITH_RECIPIENT = json.dumps(
+    {
+        "title": "Rechnung Nr. 42 von Acme GmbH",
+        "summary": "Acme GmbH stellt eine Rechnung ueber 129,90 EUR, faellig am 2026-09-01.",
+        "key_facts": {
+            "sender_name": "Acme GmbH",
+            "sender_email": "buchhaltung@acme.example",
+            "sender_vat_id": "DE999999999",
+            "recipient_name": "Christian Angermeier",
+            "recipient_vat_id": "DE123456789",
+            "document_date": "2026-08-01",
+            "document_type": "Rechnung",
+            "amount": "129.90",
+            "currency": "EUR",
+            "due_date": "2026-09-01",
+        },
+        "tag_suggestions": [],
+        "vorgang_suggestions": [],
+    }
+)
+
 _VALID_REPLY = json.dumps(
     {
         "title": "Rechnung Nr. 42 von Acme GmbH",
@@ -243,3 +264,79 @@ class AnalyzeDocumentTests(TestCase):
         user_message = provider.calls[0][1]
         self.assertIn("Thema:Steuer", user_message.content)
         self.assertIn("Steuererklaerung 2026", user_message.content)
+
+
+class DocumentDirectionTests(TestCase):
+    """Eingang/Ausgang/Intern-Ableitung aus `Correspondent.is_self` (#1030)."""
+
+    def _provider(self, reply=_REPLY_WITH_RECIPIENT):
+        return FakeGenerationProvider(model="fake-generate", version="1", reply=reply)
+
+    def test_recipient_is_self_sets_eingang(self):
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, vat_id="DE123456789"
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.EINGANG)
+
+    def test_sender_is_self_sets_ausgang(self):
+        Correspondent.objects.create(name="Acme GmbH", is_self=True, vat_id="DE999999999")
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.AUSGANG)
+
+    def test_both_self_sets_intern(self):
+        Correspondent.objects.create(name="Acme GmbH", is_self=True, vat_id="DE999999999")
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, vat_id="DE123456789"
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.INTERN)
+
+    def test_recipient_match_does_not_create_a_new_correspondent(self):
+        """Dedup rule: the recipient side is a read-only lookup -- a miss
+
+        must never invent a `Correspondent`, only the sender side may.
+        """
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        analyze_document(document.id, generation_provider=self._provider())
+
+        # Only the sender ("Acme GmbH") was auto-created -- the recipient
+        # ("Christian Angermeier") found no is_self match and was not
+        # turned into a spurious foreign correspondent.
+        self.assertEqual(Correspondent.objects.count(), 1)
+        self.assertEqual(Correspondent.objects.get().name, "Acme GmbH")
+
+    def test_does_not_overwrite_a_manually_set_direction(self):
+        """Direction stays user-overridable: once decided, a re-analysis
+
+        must not clobber it back to a KI-derived value.
+        """
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, vat_id="DE123456789"
+        )
+        document = Document.objects.create(
+            title="rechnung.pdf",
+            text_content="Rechnung Inhalt",
+            direction=Document.Direction.AUSGANG,
+        )
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.AUSGANG)
+
+    def test_no_self_match_leaves_direction_unbekannt(self):
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.direction, Document.Direction.UNBEKANNT)
