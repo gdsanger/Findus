@@ -7,14 +7,22 @@ app_name = "documents"
 urlpatterns = [
     path("", views.document_list, name="home"),
     path("correspondents/", correspondent_views.correspondent_list, name="correspondent_list"),
+    path("correspondents/create/", correspondent_views.correspondent_create, name="correspondent_create"),
     path("correspondents/<int:pk>/", correspondent_views.correspondent_detail, name="correspondent_detail"),
+    path(
+        "correspondents/<int:pk>/delete/",
+        correspondent_views.correspondent_delete,
+        name="correspondent_delete",
+    ),
     path(
         "correspondents/<int:pk>/upload/",
         correspondent_views.correspondent_document_upload,
         name="correspondent_upload",
     ),
     path("vorgaenge/", vorgang_views.vorgang_list, name="vorgang_list"),
+    path("vorgaenge/create/", vorgang_views.vorgang_create, name="vorgang_create"),
     path("vorgaenge/<int:pk>/", vorgang_views.vorgang_detail, name="vorgang_detail"),
+    path("vorgaenge/<int:pk>/delete/", vorgang_views.vorgang_delete, name="vorgang_delete"),
     path("vorgaenge/<int:pk>/upload/", vorgang_views.vorgang_document_upload, name="vorgang_upload"),
     path("documents/upload/", views.document_upload, name="upload"),
     path("documents/<int:pk>/", views.document_detail, name="detail"),

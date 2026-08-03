@@ -9,9 +9,10 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Q
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from .forms import CorrespondentForm
 from .models import Correspondent, Document, Tag, Task, Vorgang
 from .views import (
     DOCUMENTS_PAGE_SIZE,
@@ -67,12 +68,46 @@ def correspondent_list(request):
 
 
 @login_required
-def correspondent_detail(request, pk):
-    """Kontext-Header (Kontaktdaten + Eingang/Ausgang-Kennzahlen) plus the
-    reused, Correspondent-scoped document list (still further filterable
-    by Tag/Status/Richtung/Vorgang).
+def correspondent_create(request):
+    if request.method == "POST":
+        form = CorrespondentForm(request.POST)
+        if form.is_valid():
+            correspondent = form.save()
+            return redirect("documents:correspondent_detail", pk=correspondent.pk)
+    else:
+        form = CorrespondentForm()
+
+    return render(request, "documents/correspondents/form.html", {"form": form})
+
+
+@login_required
+@require_POST
+def correspondent_delete(request, pk):
+    """Deletes only the Correspondent, never its Documents (#1050): the FK
+    on `Document.correspondent` is `on_delete=SET_NULL`, so this just drops
+    the assignment.
     """
     correspondent = get_object_or_404(Correspondent, pk=pk)
+    correspondent.delete()
+    return redirect("documents:correspondent_list")
+
+
+@login_required
+def correspondent_detail(request, pk):
+    """Kontext-Header (editierbare Kontaktdaten + Eingang/Ausgang-Kennzahlen,
+    #1050) plus the reused, Correspondent-scoped document list (still
+    further filterable by Tag/Status/Richtung/Vorgang).
+    """
+    correspondent = get_object_or_404(Correspondent, pk=pk)
+
+    if request.method == "POST":
+        form = CorrespondentForm(request.POST, instance=correspondent)
+        if form.is_valid():
+            form.save()
+            return redirect("documents:correspondent_detail", pk=correspondent.pk)
+    else:
+        form = CorrespondentForm(instance=correspondent)
+
     visible_documents = Document.objects.visible_to(request.user).filter(correspondent=correspondent)
 
     documents = filtered_documents(request).filter(correspondent=correspondent)
@@ -95,6 +130,7 @@ def correspondent_detail(request, pk):
 
     context = {
         "correspondent": correspondent,
+        "form": form,
         "document_count": visible_documents.count(),
         "eingang_count": visible_documents.filter(direction=Document.Direction.EINGANG).count(),
         "ausgang_count": visible_documents.filter(direction=Document.Direction.AUSGANG).count(),

@@ -118,7 +118,8 @@ class CorrespondentAdmin(admin.ModelAdmin):
 
 @admin.register(Vorgang)
 class VorgangAdmin(admin.ModelAdmin):
-    list_display = ("name", "created_at")
+    list_display = ("name", "status", "department", "created_at")
+    list_filter = ("status", "department")
     search_fields = ("name",)
 
 

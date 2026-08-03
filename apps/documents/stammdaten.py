@@ -1,11 +1,11 @@
-"""CRUD for the shared Absender/Vorgang/Tag vocabulary (#1021).
+"""CRUD for the shared Tag vocabulary (#1021).
 
-All three (`Correspondent`, `Vorgang`, `Tag`) are department-agnostic shared
-vocabulary (see Architektur.md, "Wissen teilen innerhalb der Abteilung") --
-unlike `Document`/`Task` they carry no `visibility`/`departments` fields, so
-there is nothing to scope here beyond `login_required`. The three models are
-close enough in shape (a name plus zero or one extra field) that one
-config-driven set of views covers all of them instead of tripling the code.
+`Correspondent`/`Vorgang` CRUD moved out to their own hub pages
+(`correspondent_views`/`vorgang_views`, #1050) -- Tags stay here for now,
+department-agnostic shared vocabulary (see Architektur.md, "Wissen teilen
+innerhalb der Abteilung") with nothing to scope beyond `login_required`. The
+config-driven shape is kept even for this single remaining kind since a
+follow-up issue moves Tags out too and dissolves this page entirely.
 """
 
 from django.contrib.auth.decorators import login_required
@@ -13,26 +13,10 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from .forms import CorrespondentForm, TagForm, VorgangForm
-from .models import Correspondent, Tag, Vorgang
+from .forms import TagForm
+from .models import Tag
 
 STAMMDATEN_KINDS = {
-    "correspondents": {
-        "model": Correspondent,
-        "form": CorrespondentForm,
-        "label": "Kontakt",
-        "label_plural": "Kontakte",
-        "list_headers": ("Name", "E-Mail", "Das bin ich"),
-        "list_fields": ("name", "email", "is_self"),
-    },
-    "vorgaenge": {
-        "model": Vorgang,
-        "form": VorgangForm,
-        "label": "Vorgang",
-        "label_plural": "Vorgänge",
-        "list_headers": ("Name",),
-        "list_fields": ("name",),
-    },
     "tags": {
         "model": Tag,
         "form": TagForm,

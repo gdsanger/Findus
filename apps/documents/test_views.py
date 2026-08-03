@@ -1075,15 +1075,17 @@ class DocumentMetaQuickCreateTests(TestCase):
 
 
 class StammdatenCrudTests(TestCase):
-    """Covers CRUD in the user UI for the shared Absender/Vorgang/Tag
-    vocabulary (#1021) -- previously only editable through the Django admin.
+    """Covers CRUD in the user UI for the shared Tag vocabulary (#1021) --
+    previously only editable through the Django admin. Correspondent/Vorgang
+    CRUD moved out to their own hubs (#1050, see test_correspondent_views.py
+    / test_vorgang_views.py); only Tags are left here.
     """
 
     def setUp(self):
         self.user = User.objects.create_user(username="alice", password="x")
 
     def test_anonymous_user_is_redirected_to_login(self):
-        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
+        response = self.client.get(reverse("documents:stammdaten_list", args=["tags"]))
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse("login"), response.url)
 
@@ -1099,87 +1101,12 @@ class StammdatenCrudTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_correspondent_list_shows_existing_entries(self):
-        Correspondent.objects.create(name="Acme GmbH", email="info@acme.example")
-
+    def test_correspondents_and_vorgaenge_are_no_longer_managed_here(self):
         self.client.force_login(self.user)
-        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
 
-        self.assertContains(response, "Acme GmbH")
-        self.assertContains(response, "info@acme.example")
-
-    def test_correspondent_ui_uses_kontakt_label(self):
-        """UI-only rename (#1031): the Correspondent vocabulary is labelled
-        "Kontakt"/"Kontakte" in the UI; "Absender" must no longer appear.
-        """
-        self.client.force_login(self.user)
-        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
-
-        self.assertContains(response, "Kontakt")
-        self.assertNotContains(response, "Absender")
-
-    def test_correspondent_list_shows_self_flag(self):
-        Correspondent.objects.create(name="Eigene Firma GmbH", is_self=True)
-        Correspondent.objects.create(name="Acme GmbH")
-
-        self.client.force_login(self.user)
-        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
-
-        self.assertContains(response, "Ja")
-        self.assertContains(response, "Nein")
-
-    def test_create_correspondent(self):
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_list", args=["correspondents"]),
-            {"name": "Acme GmbH", "email": "info@acme.example"},
-        )
-
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(Correspondent.objects.get().name, "Acme GmbH")
-
-    def test_create_correspondent_with_self_flag_and_matching_fields(self):
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_list", args=["correspondents"]),
-            {
-                "name": "Eigene Firma GmbH",
-                "email": "info@example.com",
-                "is_self": "on",
-                "vat_id": "DE123456789",
-                "tax_number": "12/345/67890",
-                "iban": "DE02100100109307118603",
-            },
-        )
-
-        self.assertEqual(response.status_code, 302)
-        correspondent = Correspondent.objects.get(name="Eigene Firma GmbH")
-        self.assertTrue(correspondent.is_self)
-        self.assertEqual(correspondent.vat_id, "DE123456789")
-        self.assertEqual(correspondent.tax_number, "12/345/67890")
-        self.assertEqual(correspondent.iban, "DE02100100109307118603")
-
-    def test_edit_correspondent_toggles_self_flag(self):
-        correspondent = Correspondent.objects.create(name="Acme GmbH")
-
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_edit", args=["correspondents", correspondent.id]),
-            {"name": "Acme GmbH", "is_self": "on"},
-        )
-
-        self.assertEqual(response.status_code, 302)
-        correspondent.refresh_from_db()
-        self.assertTrue(correspondent.is_self)
-
-    def test_create_vorgang(self):
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_list", args=["vorgaenge"]), {"name": "Umzug 2026"}
-        )
-
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(Vorgang.objects.get().name, "Umzug 2026")
+        for kind in ("correspondents", "vorgaenge"):
+            response = self.client.get(reverse("documents:stammdaten_list", args=[kind]))
+            self.assertEqual(response.status_code, 404)
 
     def test_create_tag_with_dimension(self):
         self.client.force_login(self.user)
@@ -1193,40 +1120,6 @@ class StammdatenCrudTests(TestCase):
         self.assertEqual(tag.name, "Dringend")
         self.assertEqual(tag.dimension, "Priorität")
 
-    def test_create_with_duplicate_name_shows_error_and_does_not_create(self):
-        Correspondent.objects.create(name="Acme GmbH")
-
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_list", args=["correspondents"]), {"name": "Acme GmbH"}
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(Correspondent.objects.count(), 1)
-
-    def test_edit_form_shows_current_values(self):
-        vorgang = Vorgang.objects.create(name="Umzug 2026")
-
-        self.client.force_login(self.user)
-        response = self.client.get(
-            reverse("documents:stammdaten_edit", args=["vorgaenge", vorgang.id])
-        )
-
-        self.assertContains(response, "Umzug 2026")
-
-    def test_edit_updates_entry(self):
-        vorgang = Vorgang.objects.create(name="Umzug 2026")
-
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_edit", args=["vorgaenge", vorgang.id]),
-            {"name": "Umzug 2027"},
-        )
-
-        self.assertEqual(response.status_code, 302)
-        vorgang.refresh_from_db()
-        self.assertEqual(vorgang.name, "Umzug 2027")
-
     def test_delete_removes_entry(self):
         tag = Tag.objects.create(name="Dringend")
 
@@ -1235,19 +1128,6 @@ class StammdatenCrudTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Tag.objects.filter(pk=tag.id).exists())
-
-    def test_delete_correspondent_in_use_nulls_document_reference_instead_of_blocking(self):
-        correspondent = Correspondent.objects.create(name="Acme GmbH")
-        doc = Document.objects.create(title="Rechnung", correspondent=correspondent)
-
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("documents:stammdaten_delete", args=["correspondents", correspondent.id])
-        )
-
-        self.assertEqual(response.status_code, 302)
-        doc.refresh_from_db()
-        self.assertIsNone(doc.correspondent)
 
     def test_delete_requires_post(self):
         tag = Tag.objects.create(name="Dringend")

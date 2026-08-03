@@ -9,11 +9,19 @@ _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
 class CorrespondentForm(forms.ModelForm):
     class Meta:
         model = Correspondent
-        fields = ["name", "email", "is_self", "vat_id", "tax_number", "iban"]
-        labels = {"is_self": "Das bin ich"}
+        fields = ["name", "email", "address", "is_self", "vat_id", "tax_number", "iban"]
+        labels = {
+            "email": "E-Mail",
+            "address": "Adresse",
+            "is_self": "Das bin ich",
+            "vat_id": "USt-IdNr.",
+            "tax_number": "Steuernummer",
+            "iban": "IBAN",
+        }
         widgets = {
             "name": _TEXT_WIDGET,
             "email": forms.EmailInput(attrs={"class": "form-control form-control-sm"}),
+            "address": forms.Textarea(attrs={"class": "form-control form-control-sm", "rows": 3}),
             "is_self": forms.CheckboxInput(attrs={"class": "form-check-input"}),
             "vat_id": _TEXT_WIDGET,
             "tax_number": _TEXT_WIDGET,
@@ -24,8 +32,14 @@ class CorrespondentForm(forms.ModelForm):
 class VorgangForm(forms.ModelForm):
     class Meta:
         model = Vorgang
-        fields = ["name"]
-        widgets = {"name": _TEXT_WIDGET}
+        fields = ["name", "description", "status", "department"]
+        labels = {"description": "Beschreibung", "status": "Status", "department": "Abteilung"}
+        widgets = {
+            "name": _TEXT_WIDGET,
+            "description": forms.Textarea(attrs={"class": "form-control form-control-sm", "rows": 3}),
+            "status": _SELECT_WIDGET,
+            "department": _SELECT_WIDGET,
+        }
 
 
 class TagForm(forms.ModelForm):
