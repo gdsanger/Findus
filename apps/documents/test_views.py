@@ -985,6 +985,16 @@ class StammdatenCrudTests(TestCase):
         self.assertContains(response, "Acme GmbH")
         self.assertContains(response, "info@acme.example")
 
+    def test_correspondent_ui_uses_kontakt_label(self):
+        """UI-only rename (#1031): the Correspondent vocabulary is labelled
+        "Kontakt"/"Kontakte" in the UI; "Absender" must no longer appear.
+        """
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:stammdaten_list", args=["correspondents"]))
+
+        self.assertContains(response, "Kontakt")
+        self.assertNotContains(response, "Absender")
+
     def test_correspondent_list_shows_self_flag(self):
         Correspondent.objects.create(name="Eigene Firma GmbH", is_self=True)
         Correspondent.objects.create(name="Acme GmbH")
