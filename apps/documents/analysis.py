@@ -61,6 +61,7 @@ from apps.ai.providers import GenerationProvider, Message, generate_json, get_ge
 
 from .models import Correspondent, Document, SuggestionStatus, Tag, TagSuggestion, Vorgang, VorgangSuggestion
 from .services import find_correspondent, find_or_create_correspondent
+from .text_sanitize import clean_json
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +297,7 @@ def _resolve_direction(
 
 
 def _apply_analysis(document: Document, parsed: dict, *, model: str, version: str) -> None:
+    parsed = clean_json(parsed)
     title = str(parsed.get("title") or "").strip()
     summary = str(parsed.get("summary") or "").strip()
     key_facts_in = parsed.get("key_facts") or {}

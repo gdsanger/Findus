@@ -97,6 +97,31 @@ class AnalyzeDocumentTests(TestCase):
         self.assertEqual(result.key_facts["ai_model_version"], "1")
         self.assertEqual(result.processing_status, Document.ProcessingStatus.ANALYZING)
 
+    def test_nul_bytes_in_model_reply_are_stripped_before_save(self):
+        """#1061: a NUL byte anywhere in the parsed reply (title, summary,
+
+        key_facts, tag/vorgang suggestions) must not reach `save()` --
+        Postgres `text` columns reject it outright (`psycopg.DataError`).
+        """
+        reply = json.dumps(
+            {
+                "title": "Rech\x00nung Nr. 42",
+                "summary": "Betrag 129,90\x00 EUR faellig am 2026-09-01.",
+                "key_facts": {"sender_name": "Acme\x00 GmbH", "document_type": "Rech\x00nung"},
+                "tag_suggestions": [{"name": "Dring\x00end", "confidence": 0.9}],
+                "vorgang_suggestions": [{"name": "Buchhaltung\x00 2026", "confidence": 0.7}],
+            }
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.title, "Rechnung Nr. 42")
+        self.assertNotIn("\x00", result.summary)
+        self.assertEqual(result.key_facts["sender_name"], "Acme GmbH")
+        self.assertEqual(document.tag_suggestions.get().name, "Dringend")
+        self.assertEqual(document.vorgang_suggestions.get().name, "Buchhaltung 2026")
+
     def test_creates_correspondent_from_sender_email(self):
         document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
 
