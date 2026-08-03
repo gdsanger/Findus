@@ -636,3 +636,60 @@ body {
     align-items: flex-end;
     gap: var(--findus-space-3);
 }
+
+/* Aufgaben (#1033) --------------------------------------------------------*/
+.findus-task-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-5);
+}
+
+.findus-task-form-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-4);
+}
+
+.findus-task-form-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--findus-space-4);
+}
+
+@media (max-width: 768px) {
+    .findus-task-form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.findus-task-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+}
+
+.findus-task-documents {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+}
+
+.findus-task-document-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-1);
+    max-height: 14rem;
+    overflow-y: auto;
+    padding: var(--findus-space-3);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-checklist-progress {
+    margin-bottom: var(--findus-space-3);
+}
+
+.findus-checklist-order-actions {
+    display: flex;
+    gap: var(--findus-space-1);
+}

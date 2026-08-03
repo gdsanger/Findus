@@ -45,6 +45,7 @@ urlpatterns = [
     path("tasks/", task_views.task_list, name="task_list"),
     path("tasks/create/", task_views.task_create, name="task_create"),
     path("tasks/<int:pk>/", task_views.task_detail, name="task_detail"),
+    path("tasks/<int:pk>/toggle/", task_views.task_toggle_status, name="task_toggle_status"),
     path(
         "tasks/<int:pk>/checklist/add/",
         task_views.checklist_item_add,
@@ -54,6 +55,16 @@ urlpatterns = [
         "tasks/<int:pk>/checklist/<int:item_id>/toggle/",
         task_views.checklist_item_toggle,
         name="checklist_item_toggle",
+    ),
+    path(
+        "tasks/<int:pk>/checklist/<int:item_id>/update/",
+        task_views.checklist_item_update,
+        name="checklist_item_update",
+    ),
+    path(
+        "tasks/<int:pk>/checklist/<int:item_id>/move/<str:direction>/",
+        task_views.checklist_item_move,
+        name="checklist_item_move",
     ),
     path(
         "tasks/<int:pk>/checklist/<int:item_id>/delete/",
