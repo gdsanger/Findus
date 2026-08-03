@@ -151,7 +151,14 @@ def _upload_departments_and_visibility(user):
     return departments, Document.Visibility.PRIVATE
 
 
-def _ingest_uploaded_file(user, departments, visibility, uploaded_file):
+def _ingest_uploaded_file(user, departments, visibility, uploaded_file, *, correspondent=None, vorgang=None):
+    """`correspondent`/`vorgang` (#1049) pre-assign a newly created Document
+    to the Kontakt/Vorgang Hub it was dropped on -- same as a folder/mail
+    connector's provenance, just from the Hub context instead of a resolved
+    sender. Only applied to a newly created Document, mirroring how
+    `ingest_file` already treats `correspondent` and `department` on a
+    duplicate hit (the existing document's assignment is left alone).
+    """
     extension = uploaded_file.name.rsplit(".", 1)[-1].lower() if "." in uploaded_file.name else ""
     allowed_extensions = {ext.lower() for ext in settings.FINDUS_INGEST_ALLOWED_EXTENSIONS}
     if allowed_extensions and extension not in allowed_extensions:
@@ -178,6 +185,7 @@ def _ingest_uploaded_file(user, departments, visibility, uploaded_file):
             owner=user,
             visibility=visibility,
             content_type=uploaded_file.content_type or "",
+            correspondent=correspondent,
         )
     except Exception:
         logger.exception("Upload: Ingest fehlgeschlagen für %s", uploaded_file.name)
@@ -193,6 +201,9 @@ def _ingest_uploaded_file(user, departments, visibility, uploaded_file):
         # still needs to be visible to all of them, so add the rest here.
         result.document.departments.add(*departments[1:])
 
+    if result.created and vorgang is not None:
+        result.document.vorgaenge.add(vorgang)
+
     if result.duplicate:
         return {
             "filename": uploaded_file.name,
@@ -200,6 +211,13 @@ def _ingest_uploaded_file(user, departments, visibility, uploaded_file):
             "message": "Bereits vorhanden (Duplikat erkannt).",
         }
     return {"filename": uploaded_file.name, "status": "ok", "document": result.document}
+
+
+def _upload_response(request, results):
+    response = render(request, "documents/partials/_upload_feedback.html", {"results": results})
+    if results:
+        response["HX-Trigger"] = "findus:documents-changed"
+    return response
 
 
 @login_required
@@ -218,10 +236,7 @@ def document_upload(request):
         for uploaded_file in uploaded_files
     ]
 
-    response = render(request, "documents/partials/_upload_feedback.html", {"results": results})
-    if results:
-        response["HX-Trigger"] = "findus:documents-changed"
-    return response
+    return _upload_response(request, results)
 
 
 def _visible_document(user, pk):

@@ -26,6 +26,11 @@
 </section>
 
 <section class="findus-section">
+    {% url 'documents:correspondent_upload' correspondent.pk as upload_url %}
+    {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url %}
+</section>
+
+<section class="findus-section">
     <h2 class="findus-section-title">Dokumente</h2>
     {% include "documents/partials/_filter_bar.html" %}
 
@@ -36,6 +41,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "documents/partials/_upload_dropzone_script.html" %}
 <script>
 // Lightweight reset for this page's Tag/Status/Richtung/Vorgang filters --
 // no localStorage persistence needed here (unlike Home's filter bar), the

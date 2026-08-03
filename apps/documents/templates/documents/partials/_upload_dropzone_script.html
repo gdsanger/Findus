@@ -1,0 +1,32 @@
+<script>
+(function () {
+    var dropzone = document.getElementById("upload-dropzone");
+    var input = document.getElementById("upload-input");
+    if (!dropzone || !input) {
+        return;
+    }
+
+    ["dragenter", "dragover"].forEach(function (eventName) {
+        dropzone.addEventListener(eventName, function (event) {
+            event.preventDefault();
+            dropzone.classList.add("findus-upload-dropzone--active");
+        });
+    });
+    ["dragleave", "drop"].forEach(function (eventName) {
+        dropzone.addEventListener(eventName, function (event) {
+            event.preventDefault();
+            dropzone.classList.remove("findus-upload-dropzone--active");
+        });
+    });
+    dropzone.addEventListener("drop", function (event) {
+        if (!event.dataTransfer || !event.dataTransfer.files.length) {
+            return;
+        }
+        input.files = event.dataTransfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    dropzone.addEventListener("htmx:afterRequest", function () {
+        input.value = "";
+    });
+})();
+</script>

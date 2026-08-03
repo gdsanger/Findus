@@ -5,13 +5,22 @@ scoped to that Correspondent -- deliberately no second document-list
 implementation.
 """
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Q
 from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_POST
 
 from .models import Correspondent, Document, Tag, Task, Vorgang
-from .views import DOCUMENTS_PAGE_SIZE, PENDING_STATUSES, filtered_documents
+from .views import (
+    DOCUMENTS_PAGE_SIZE,
+    PENDING_STATUSES,
+    _ingest_uploaded_file,
+    _upload_departments_and_visibility,
+    _upload_response,
+    filtered_documents,
+)
 
 CORRESPONDENT_SORT_FIELDS = {
     "name": "name",
@@ -107,8 +116,32 @@ def correspondent_detail(request, pk):
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
         },
+        "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
+        "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
     }
 
     if request.htmx:
         return render(request, "documents/partials/_document_list.html", context)
     return render(request, "documents/correspondents/detail.html", context)
+
+
+@login_required
+@require_POST
+def correspondent_document_upload(request, pk):
+    """Upload straight onto the Kontakt-Hub (#1049): same ingest contract as
+    the global upload (`documents:upload`), just with `correspondent`
+    pre-assigned -- the KI-Analyse (#1048) never overwrites an already-set
+    `Document.correspondent`, so this manual assignment sticks.
+    """
+    correspondent = get_object_or_404(Correspondent, pk=pk)
+    departments, visibility = _upload_departments_and_visibility(request.user)
+    uploaded_files = request.FILES.getlist("files")
+
+    results = [
+        _ingest_uploaded_file(
+            request.user, departments, visibility, uploaded_file, correspondent=correspondent
+        )
+        for uploaded_file in uploaded_files
+    ]
+
+    return _upload_response(request, results)

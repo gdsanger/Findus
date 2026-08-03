@@ -1,5 +1,10 @@
+import shutil
+import tempfile
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Department
@@ -194,3 +199,108 @@ class VorgangDetailViewTests(TestCase):
         self.assertContains(
             response, reverse("documents:stammdaten_edit", args=["vorgaenge", self.vorgang.pk])
         )
+
+
+_TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-vorgang-upload-media-")
+_LOCAL_STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class VorgangDocumentUploadViewTests(TestCase):
+    """Covers the Vorgang-Hub multi-upload with Auto-Zuweisung (#1049):
+
+    same ingest contract as the global upload (#1019), just with the
+    newly created `Document` added to this `Vorgang`'s `vorgaenge` M2M
+    right away -- the KI-Analyse (#1048) only ever *suggests* Vorgaenge
+    (`VorgangSuggestion`), it never assigns one on its own, so this manual
+    assignment can never be overwritten by it.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+        self.vorgang = Vorgang.objects.create(name="Steuererklärung 2026")
+
+    def _upload(self, files, user=None):
+        self.client.force_login(user or self.user_a)
+        with patch("apps.ingest.service._enqueue_processing", return_value="task-1"):
+            return self.client.post(
+                reverse("documents:vorgang_upload", args=[self.vorgang.pk]), {"files": files}
+            )
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.post(
+            reverse("documents:vorgang_upload", args=[self.vorgang.pk]),
+            {"files": [SimpleUploadedFile("a.pdf", b"%PDF-1.4", content_type="application/pdf")]},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_unknown_vorgang_returns_404(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:vorgang_upload", args=[999999]),
+            {"files": [SimpleUploadedFile("a.pdf", b"%PDF-1.4", content_type="application/pdf")]},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_uploaded_document_is_assigned_to_this_vorgang(self):
+        response = self._upload(
+            [SimpleUploadedFile("rechnung.pdf", b"%PDF-1.4 content", content_type="application/pdf")]
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Hochgeladen")
+        document = Document.objects.get()
+        self.assertIn(self.vorgang, document.vorgaenge.all())
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.PENDING)
+
+    def test_multiple_files_are_all_assigned_to_this_vorgang(self):
+        response = self._upload(
+            [
+                SimpleUploadedFile("a.pdf", b"content a", content_type="application/pdf"),
+                SimpleUploadedFile("b.pdf", b"content b", content_type="application/pdf"),
+            ]
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 2)
+        for document in Document.objects.all():
+            self.assertIn(self.vorgang, document.vorgaenge.all())
+
+    def test_upload_response_triggers_list_refresh(self):
+        response = self._upload(
+            [SimpleUploadedFile("rechnung.pdf", b"%PDF-1.4 content", content_type="application/pdf")]
+        )
+
+        self.assertEqual(response["HX-Trigger"], "findus:documents-changed")
+
+    def test_duplicate_document_keeps_its_existing_vorgaenge(self):
+        other_vorgang = Vorgang.objects.create(name="Sonstiges")
+        existing = Document.objects.create(
+            title="Bereits vorhanden",
+            visibility=Document.Visibility.DEPARTMENT,
+            sha256="a" * 64,
+        )
+        existing.departments.add(self.dept_a)
+        existing.vorgaenge.add(other_vorgang)
+
+        with patch("apps.ingest.service._hash_and_size", return_value=("a" * 64, 3)):
+            response = self._upload(
+                [SimpleUploadedFile("copy.pdf", b"abc", content_type="application/pdf")]
+            )
+
+        self.assertContains(response, "Duplikat")
+        existing.refresh_from_db()
+        self.assertEqual(list(existing.vorgaenge.all()), [other_vorgang])
