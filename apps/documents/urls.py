@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import correspondent_views, stammdaten, task_template_views, task_views, views
+from . import correspondent_views, stammdaten, task_template_views, task_views, views, vorgang_views
 
 app_name = "documents"
 
