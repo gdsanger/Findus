@@ -294,6 +294,31 @@ class ExtractDocumentFailureTests(TestCase):
         self.assertIn("vision boom", document.processing_error)
 
 
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class ExtractDocumentNulByteTests(TestCase):
+    """#1061: some scanners/PDF generators emit NUL bytes in the text layer,
+    which Postgres `text` columns reject outright (`psycopg.DataError`).
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def test_text_with_embedded_nul_bytes_is_saved_successfully(self):
+        text_with_nul = _GERMAN_PARAGRAPH + "\x00 nach dem Nullbyte\x00."
+        document = _make_document(
+            filename="note.txt", data=text_with_nul.encode("utf-8"), mime_type="text/plain"
+        )
+
+        result = extract_document(document.id, vision_provider=FakeVisionProvider())
+
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.EXTRACTING)
+        self.assertNotIn("\x00", result.text_content)
+        self.assertNotIn("\x00", result.markdown)
+        self.assertIn("nach dem Nullbyte", result.text_content)
+
+
 class BuildMarkdownTests(TestCase):
     def test_single_page_has_no_page_headings(self):
         markdown = build_markdown("Rechnung 123", ["Inhalt der Rechnung."])

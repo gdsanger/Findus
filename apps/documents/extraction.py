@@ -31,6 +31,7 @@ from django.conf import settings
 from apps.ai.providers import ImageInput, VisionProvider, get_vision_provider
 
 from .models import Document
+from .text_sanitize import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -287,10 +288,10 @@ def extract_document(
         )
         results, page_count = _dispatch(data, mime_type, vision_provider_factory)
 
-        text_content = "\n\n".join(r.text for r in results if r.text).strip()
+        text_content = clean_text("\n\n".join(r.text for r in results if r.text).strip())
 
         document.text_content = text_content
-        document.markdown = build_markdown(document.title, [r.text for r in results])
+        document.markdown = clean_text(build_markdown(document.title, [r.text for r in results]))
         document.extraction_method = _resolve_method(results)
         document.metadata = {
             **document.metadata,
