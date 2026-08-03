@@ -26,6 +26,14 @@
                 </div>
             </div>
             <div class="findus-filter-field">
+                <label class="form-label" for="meta-direction">Richtung</label>
+                <select id="meta-direction" name="direction" class="form-select form-select-sm">
+                    {% for value, label in direction_choices %}
+                    <option value="{{ value }}" {% if value == document.direction %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="findus-filter-field">
                 <label class="form-label" for="meta-vorgaenge">Vorgänge</label>
                 <select id="meta-vorgaenge" name="vorgaenge" class="form-select form-select-sm" multiple size="4">
                     {% for vorgang in all_vorgaenge %}

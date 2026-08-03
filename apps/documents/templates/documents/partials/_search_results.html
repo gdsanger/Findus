@@ -1,3 +1,4 @@
+{% load documents_extras %}
 {% if page_obj %}
 <div class="findus-search-results">
     {% for hit in page_obj %}
@@ -11,6 +12,9 @@
         {% endif %}
         <div class="findus-search-hit-meta">
             <span>{{ hit.document.correspondent.name|default:"—" }}</span>
+            <span class="badge {{ hit.document.direction|direction_badge_class }}">
+                {{ hit.document.get_direction_display }}
+            </span>
             {% for vorgang in hit.document.vorgaenge.all %}
             <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
             {% endfor %}

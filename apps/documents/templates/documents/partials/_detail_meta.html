@@ -17,6 +17,14 @@
             <dd>{{ document.correspondent.name|default:"—" }}</dd>
         </div>
         <div>
+            <dt>Richtung</dt>
+            <dd>
+                <span class="badge {{ document.direction|direction_badge_class }}">
+                    {{ document.get_direction_display }}
+                </span>
+            </dd>
+        </div>
+        <div>
             <dt>Status</dt>
             <dd>{{ document.get_processing_status_display }}</dd>
         </div>

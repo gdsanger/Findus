@@ -22,8 +22,8 @@ STAMMDATEN_KINDS = {
         "form": CorrespondentForm,
         "label": "Absender",
         "label_plural": "Absender",
-        "list_headers": ("Name", "E-Mail"),
-        "list_fields": ("name", "email"),
+        "list_headers": ("Name", "E-Mail", "Das bin ich"),
+        "list_fields": ("name", "email", "is_self"),
     },
     "vorgaenge": {
         "model": Vorgang,
@@ -53,6 +53,17 @@ def _stammdaten_config(kind):
         raise Http404(f"Unbekannte Stammdaten-Art: {kind}")
 
 
+def _list_column_value(obj, field_name):
+    """A bare boolean (e.g. `Correspondent.is_self`) would render as "—" via
+    the list template's `default:"—"` filter, since `False` is falsy --
+    spell it out as Ja/Nein instead.
+    """
+    value = getattr(obj, field_name)
+    if isinstance(value, bool):
+        return "Ja" if value else "Nein"
+    return value
+
+
 @login_required
 def stammdaten_home(request):
     first_kind = next(iter(STAMMDATEN_KINDS))
@@ -74,7 +85,7 @@ def stammdaten_list(request, kind):
     rows = [
         {
             "pk": obj.pk,
-            "columns": [getattr(obj, field) for field in config["list_fields"]],
+            "columns": [_list_column_value(obj, field) for field in config["list_fields"]],
         }
         for obj in config["model"].objects.all()
     ]

@@ -1,7 +1,15 @@
 {% for field in form %}
+{% if field.field.widget.input_type == "checkbox" %}
+<div class="findus-filter-field form-check">
+    {{ field }}
+    <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+    {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
+</div>
+{% else %}
 <div class="findus-filter-field">
     <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
     {{ field }}
     {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
 </div>
+{% endif %}
 {% endfor %}
