@@ -498,3 +498,89 @@ class ChecklistItem(TimeStampedModel):
 
     def __str__(self):
         return self.text
+
+
+class TaskTemplateQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """Same two-level visibility model as `Task.visible_to` (#1037)
+
+        -- a template is only useful to the people who could also see the
+        task it would create.
+        """
+        if user.is_superuser:
+            return self
+        return self.filter(
+            models.Q(
+                visibility=TaskTemplate.Visibility.DEPARTMENT,
+                departments__in=user.departments.all(),
+            )
+            | models.Q(
+                visibility=TaskTemplate.Visibility.PRIVATE,
+                owner=user,
+            )
+        ).distinct()
+
+
+class TaskTemplate(TimeStampedModel):
+    """A reusable blueprint for recurring `Task`s (e.g. "Umsatzsteuer-
+
+    Voranmeldung", "Monatsabschluss"), #1037. Deliberately separate from
+    `Task.kind`: `kind` stays a plain category, the template is its own
+    concept holding a checklist and a relative due date -- turning `kind`
+    itself into a template would overload a field that other code already
+    reads as "just the category". No auto-scheduling here on purpose
+    (later issue); creating a `Task` from a template is a manual, one-off
+    action (`create_task_from_template`).
+    """
+
+    class Visibility(models.TextChoices):
+        DEPARTMENT = "department", "Abteilung"
+        PRIVATE = "private", "Privat"
+
+    name = models.CharField(max_length=255)
+    default_kind = models.CharField(
+        max_length=20, choices=Task.Kind.choices, blank=True
+    )
+    default_title = models.CharField(max_length=255, blank=True)
+    default_description = models.TextField(blank=True)
+    default_due_offset_days = models.PositiveIntegerField(null=True, blank=True)
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_task_templates",
+    )
+    departments = models.ManyToManyField(
+        Department, blank=True, related_name="task_templates"
+    )
+    visibility = models.CharField(
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.DEPARTMENT,
+    )
+
+    objects = TaskTemplateQuerySet.as_manager()
+
+    def __str__(self):
+        return self.name
+
+
+class TaskTemplateItem(models.Model):
+    """A checklist line as it will be copied onto tasks created from the
+
+    template -- the blueprint counterpart of `ChecklistItem`.
+    """
+
+    template = models.ForeignKey(
+        TaskTemplate, on_delete=models.CASCADE, related_name="items"
+    )
+    text = models.CharField(max_length=255)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["template_id", "order"]
+
+    def __str__(self):
+        return self.text

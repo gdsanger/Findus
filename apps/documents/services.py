@@ -11,8 +11,9 @@ from __future__ import annotations
 from typing import Optional
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from .models import Correspondent
+from .models import ChecklistItem, Correspondent, Task, TaskTemplate
 
 
 def find_or_create_correspondent_by_email(
@@ -151,3 +152,47 @@ def find_or_create_correspondent(
             return Correspondent.objects.create(name=name)
     except IntegrityError:
         return Correspondent.objects.filter(name__iexact=name).first()
+
+
+def create_task_from_template(
+    template: TaskTemplate, user, overrides: Optional[dict] = None
+) -> Task:
+    """Turn a `TaskTemplate` (#1037) into a real `Task`, on demand.
+
+    Copies the template's `TaskTemplateItem`s to `ChecklistItem`s rather
+    than referencing the template -- a later edit to the template (e.g. a
+    changed checklist for next month) must not reach back and alter tasks
+    already created from it. `owner`/visibility come from `user`, the one
+    actually creating the task, not from the template -- same
+    department-less-user fallback as
+    `apps.documents.task_views.task_departments_and_visibility` (a Task
+    reveals nothing beyond its documents, so template-created tasks use
+    the identical department/private scoping).
+    """
+
+    overrides = overrides or {}
+
+    title = overrides.get("title") or template.default_title or template.name
+    due_date = None
+    if template.default_due_offset_days is not None:
+        due_date = timezone.now().date() + timezone.timedelta(
+            days=template.default_due_offset_days
+        )
+
+    departments = list(user.departments.all())
+    visibility = Task.Visibility.DEPARTMENT if departments else Task.Visibility.PRIVATE
+
+    task = Task.objects.create(
+        title=title,
+        kind=template.default_kind or Task.Kind.OTHER,
+        description=template.default_description,
+        due_date=due_date,
+        owner=user,
+        visibility=visibility,
+    )
+    task.departments.set(departments)
+
+    for item in template.items.all():
+        ChecklistItem.objects.create(task=task, text=item.text, order=item.order)
+
+    return task
