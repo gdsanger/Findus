@@ -6,12 +6,43 @@
     >
         <div class="findus-detail-meta-edit-fields">
             <div class="findus-filter-field">
+                <label class="form-label" for="meta-correspondent">Absender</label>
+                <select id="meta-correspondent" name="correspondent" class="form-select form-select-sm">
+                    <option value="">— kein Absender —</option>
+                    {% for correspondent in all_correspondents %}
+                    <option value="{{ correspondent.id }}" {% if correspondent.id == selected_correspondent_id %}selected{% endif %}>{{ correspondent.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="findus-quick-create" id="quick-create-correspondent">
+                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Neuer Absender …">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        hx-post="{% url 'documents:meta_quick_create' document.pk 'correspondent' %}"
+                        hx-include="#quick-create-correspondent"
+                        hx-target="#document-meta"
+                        hx-swap="innerHTML"
+                    >+ Anlegen</button>
+                </div>
+            </div>
+            <div class="findus-filter-field">
                 <label class="form-label" for="meta-vorgaenge">Vorgänge</label>
                 <select id="meta-vorgaenge" name="vorgaenge" class="form-select form-select-sm" multiple size="4">
                     {% for vorgang in all_vorgaenge %}
                     <option value="{{ vorgang.id }}" {% if vorgang.id in selected_vorgang_ids %}selected{% endif %}>{{ vorgang.name }}</option>
                     {% endfor %}
                 </select>
+                <div class="findus-quick-create" id="quick-create-vorgang">
+                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Neuer Vorgang …">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        hx-post="{% url 'documents:meta_quick_create' document.pk 'vorgang' %}"
+                        hx-include="#quick-create-vorgang"
+                        hx-target="#document-meta"
+                        hx-swap="innerHTML"
+                    >+ Anlegen</button>
+                </div>
             </div>
             <div class="findus-filter-field">
                 <label class="form-label" for="meta-tags">Tags</label>
@@ -20,6 +51,18 @@
                     <option value="{{ tag.id }}" {% if tag.id in selected_tag_ids %}selected{% endif %}>{{ tag }}</option>
                     {% endfor %}
                 </select>
+                <div class="findus-quick-create" id="quick-create-tag">
+                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Neues Tag …">
+                    <input type="text" name="dimension" class="form-control form-control-sm" placeholder="Dimension (optional)">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        hx-post="{% url 'documents:meta_quick_create' document.pk 'tag' %}"
+                        hx-include="#quick-create-tag"
+                        hx-target="#document-meta"
+                        hx-swap="innerHTML"
+                    >+ Anlegen</button>
+                </div>
             </div>
         </div>
         <div class="findus-detail-meta-edit-actions">
