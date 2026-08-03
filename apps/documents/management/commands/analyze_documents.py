@@ -2,25 +2,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
 from django.utils.dateparse import parse_date
 
-from apps.documents.analysis import analyze_document
+from apps.documents.analysis import analyze_and_finalize as _analyze_and_finalize
 from apps.documents.models import Document
-
-
-def _analyze_and_finalize(document_id: int) -> Document:
-    """Run `analyze_document()` and -- unlike the ingest pipeline, which
-
-    hands `processing_status` off to `process_document()` right
-    afterwards (#1010) -- also move it to a terminal state: this command
-    IS the last pipeline stage for a standalone re-analysis, so nothing
-    else will ever get the document out of `analyzing` otherwise (#1029).
-    """
-    document = analyze_document(document_id)
-    if "analysis_error" in document.metadata:
-        document.processing_status = Document.ProcessingStatus.FAILED
-    else:
-        document.processing_status = Document.ProcessingStatus.READY
-    document.save(update_fields=["processing_status", "updated_at"])
-    return document
 
 
 class Command(BaseCommand):

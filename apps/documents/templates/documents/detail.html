@@ -32,6 +32,7 @@
         {% csrf_token %}
         <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
     </form>
+    {% include "documents/partials/_detail_analysis_status.html" %}
 </section>
 
 <div id="document-original-preview"></div>

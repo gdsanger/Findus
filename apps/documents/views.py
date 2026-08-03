@@ -10,6 +10,7 @@ from django.views.decorators.http import require_POST
 
 from apps.ingest.service import ingest_file
 
+from .analysis import analyze_and_finalize
 from .forms import TaskForm
 from .models import Correspondent, Document, SuggestionStatus, Tag, Task, Vorgang
 from .retrieval import DocumentRetrievalService
@@ -273,6 +274,7 @@ def document_detail(request, pk):
 
     context = {
         **_document_tasks_context(request.user, document),
+        **_analysis_status_context(document),
         "outgoing_links": document.links_from.select_related("to_document").filter(
             to_document__in=visible_documents
         ),
@@ -456,6 +458,93 @@ def document_action_status(request, pk):
         request,
         "documents/partials/_action_status_control.html",
         {"document": document, "action_status_choices": Document.ActionStatus.choices},
+    )
+
+
+def _analysis_status_context(document):
+    return {"document": document, "pending_statuses": PENDING_STATUSES}
+
+
+@login_required
+def document_analysis_status(request, pk):
+    """Poll target for the detail page's "Analyse erneut ausfuehren"/"Neu
+    verarbeiten" controls (#1063): while `processing_status` is still
+    pending, the swapped-in partial keeps polling itself via
+    `hx-trigger="every ...s"`. Once a poll observes a terminal status, it
+    sends `HX-Refresh` instead of just re-rendering the small status
+    fragment, so the rest of the page (summary, key facts, suggestions)
+    catches up too -- reusing the full-page render rather than
+    duplicating every affected partial's logic here.
+    """
+    document = _visible_document(request.user, pk)
+    response = render(
+        request,
+        "documents/partials/_detail_analysis_status.html",
+        _analysis_status_context(document),
+    )
+    if document.processing_status not in PENDING_STATUSES:
+        response["HX-Refresh"] = "true"
+    return response
+
+
+@login_required
+@require_POST
+def document_analysis_rerun(request, pk):
+    """Re-run just the KI-Analyse (#1020) for this document from the detail
+    page, as a manual fallback for the rare case it didn't come out right
+    (the JSON-robustness fix #1028 lowers how often that happens, this is
+    the escape hatch). Queued on the Django-Q worker exactly like
+    `manage.py analyze_documents --queue` (`analyze_and_finalize` is the
+    same function, so there is no second copy of the finalize-to-a-
+    terminal-status logic to keep in sync -- see #1029/#1035).
+
+    `processing_status` flips to `analyzing` here, synchronously, rather
+    than waiting for the worker to pick the task up: that's what makes
+    the status partial's polling condition true immediately, so the UI
+    shows progress from the moment the button is clicked instead of
+    still showing the old (possibly `failed`) status for a beat.
+    """
+    document = _visible_document(request.user, pk)
+    document.processing_status = Document.ProcessingStatus.ANALYZING
+    document.save(update_fields=["processing_status", "updated_at"])
+
+    from django_q.tasks import async_task
+
+    async_task(analyze_and_finalize, document.id)
+
+    return render(
+        request,
+        "documents/partials/_detail_analysis_status.html",
+        _analysis_status_context(document),
+    )
+
+
+@login_required
+@require_POST
+def document_reprocess(request, pk):
+    """Re-run the whole pipeline (extraction -> KI-Analyse -> embedding,
+    #1009/#1020/#1010) for this document from the detail page -- most
+    useful for a `failed` document, e.g. one that tripped the NUL-byte
+    extraction bug (#1061) and can now go through cleanly. Queues the
+    same `extract_document_task` the ingest flow enqueues for a brand new
+    upload (`apps.ingest.service._enqueue_processing`), so reprocessing
+    isn't a separate pipeline implementation.
+    """
+    document = _visible_document(request.user, pk)
+    document.processing_status = Document.ProcessingStatus.PENDING
+    document.processing_error = ""
+    document.save(update_fields=["processing_status", "processing_error", "updated_at"])
+
+    from django_q.tasks import async_task
+
+    from .tasks import extract_document_task
+
+    async_task(extract_document_task, document.id)
+
+    return render(
+        request,
+        "documents/partials/_detail_analysis_status.html",
+        _analysis_status_context(document),
     )
 
 
