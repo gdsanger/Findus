@@ -1,6 +1,12 @@
 """Microsoft-Graph-Postfach-Connector: liest ungelesene Mails aus einem
-per Graph API erreichbaren Postfach und übergibt Anhänge (+ optional den
-Mailbody) an den gemeinsamen Ingest-Kontrakt (`apps.ingest.service`).
+per Graph API erreichbaren Postfach und übergibt sie an den gemeinsamen
+Ingest-Kontrakt (`apps.ingest.service`) -- ein Document je Anhang. Nur
+wenn eine Mail *keine* Anhänge hat, wird stattdessen der Mailbody zum
+Document (sonst ginge die Info verloren); hat sie Anhänge, hängt
+Betreff/Absender/Datum/Body als Kontext (`Document.metadata`) an den
+Anhang-Documents statt ein eigenes Body-Document zu erzeugen (#1062 --
+vorher gab's pro Mail ein "Geister-Dokument" aus dem Body zusätzlich zu
+den Anhängen).
 
 Nutzt den client-credentials Token-Fetch aus `apps.mail.backends.graph`
 (`GraphTokenClient`) -- dieselbe App-Registrierung wie der Mail-Versand,
@@ -140,7 +146,7 @@ def _assign_correspondent(result, correspondent) -> None:
     result.document.save(update_fields=["correspondent"])
 
 
-def _ingest_attachments(mailbox, token, message, department, correspondent, origin_metadata) -> None:
+def _ingest_attachments(mailbox, token, message, department, correspondent, metadata) -> None:
     for attachment in _fetch_attachments(mailbox, token, message["id"]):
         if attachment.get("@odata.type") != "#microsoft.graph.fileAttachment":
             continue
@@ -154,7 +160,7 @@ def _ingest_attachments(mailbox, token, message, department, correspondent, orig
             department=department,
             visibility=mailbox.visibility,
             content_type=attachment.get("contentType", ""),
-            origin_metadata=origin_metadata,
+            origin_metadata=metadata,
             on_duplicate=mailbox.on_duplicate,
             correspondent=correspondent,
         )
@@ -168,7 +174,7 @@ def _ingest_attachments(mailbox, token, message, department, correspondent, orig
         )
 
 
-def _ingest_body(mailbox, message, department, correspondent, origin_metadata) -> None:
+def _ingest_body(mailbox, message, department, correspondent, metadata) -> None:
     body = message.get("body") or {}
     content = body.get("content") or ""
     if not content:
@@ -183,7 +189,7 @@ def _ingest_body(mailbox, message, department, correspondent, origin_metadata) -
         department=department,
         visibility=mailbox.visibility,
         content_type="text/html" if extension == "html" else "text/plain",
-        origin_metadata=origin_metadata,
+        origin_metadata=metadata,
         on_duplicate=mailbox.on_duplicate,
         correspondent=correspondent,
     )
@@ -215,16 +221,20 @@ def scan_mailbox(mailbox: GraphMailbox) -> None:
             correspondent = find_or_create_correspondent_by_email(sender_email, sender_name)
             origin_metadata = {
                 "message_id": message_id,
-                "sender": sender_email,
-                "subject": message.get("subject", ""),
-                "received_at": message.get("receivedDateTime", ""),
+                "mail_from": sender_email,
+                "mail_subject": message.get("subject", ""),
+                "mail_date": message.get("receivedDateTime", ""),
             }
 
             if message.get("hasAttachments"):
-                _ingest_attachments(
-                    mailbox, token, message, department, correspondent, origin_metadata
-                )
-            if mailbox.ingest_body:
+                # Body wird nicht zum eigenen Document, sondern nur als
+                # Kontext an die Anhang-Documents gehängt (#1062).
+                body_content = (message.get("body") or {}).get("content") or ""
+                metadata = dict(origin_metadata)
+                if body_content:
+                    metadata["mail_body"] = body_content
+                _ingest_attachments(mailbox, token, message, department, correspondent, metadata)
+            elif mailbox.ingest_body:
                 _ingest_body(mailbox, message, department, correspondent, origin_metadata)
 
             _mark_as_read(mailbox, token, message_id)
