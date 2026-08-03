@@ -322,6 +322,7 @@ def document_original_download(request, pk):
 
 
 @login_required
+@xframe_options_sameorigin
 def document_original_preview(request, pk):
     """Inline variant of the same auth-gated stream (#1036), embedded by the
 
@@ -329,6 +330,12 @@ def document_original_preview(request, pk):
     same `mime_type` whitelist as `Document.is_inline_previewable` so a
     format the browser can't render natively never reaches this view --
     the template only offers the Download button for those.
+
+    This is the route the Slide-Over's iframe actually points at (see
+    `_detail_original_preview.html`), so it -- not `document_original_download`
+    -- needs `@xframe_options_sameorigin` to relax the global `DENY` from
+    `XFrameOptionsMiddleware` for PDFs. `<img>` previews are unaffected by
+    X-Frame-Options, but the decorator is harmless for them too.
     """
     document = _visible_document(request.user, pk)
     if not document.original_file or not document.is_inline_previewable:
