@@ -1,5 +1,10 @@
+import shutil
+import tempfile
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Department
@@ -214,3 +219,109 @@ class CorrespondentDetailViewTests(TestCase):
         self.assertContains(
             response, reverse("documents:stammdaten_edit", args=["correspondents", self.correspondent.pk])
         )
+
+
+_TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-correspondent-upload-media-")
+_LOCAL_STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class CorrespondentDocumentUploadViewTests(TestCase):
+    """Covers the Kontakt-Hub multi-upload with Auto-Zuweisung (#1049):
+
+    same ingest contract as the global upload (#1019), just with
+    `correspondent` pre-assigned on the newly created `Document` -- the
+    manual assignment the user makes by dropping a file here takes
+    precedence over the KI-Analyse (#1048), which never overwrites an
+    already-set `Document.correspondent`.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+        self.correspondent = Correspondent.objects.create(name="Acme GmbH")
+
+    def _upload(self, files, user=None):
+        self.client.force_login(user or self.user_a)
+        with patch("apps.ingest.service._enqueue_processing", return_value="task-1"):
+            return self.client.post(
+                reverse("documents:correspondent_upload", args=[self.correspondent.pk]), {"files": files}
+            )
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.post(
+            reverse("documents:correspondent_upload", args=[self.correspondent.pk]),
+            {"files": [SimpleUploadedFile("a.pdf", b"%PDF-1.4", content_type="application/pdf")]},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_unknown_correspondent_returns_404(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:correspondent_upload", args=[999999]),
+            {"files": [SimpleUploadedFile("a.pdf", b"%PDF-1.4", content_type="application/pdf")]},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_uploaded_document_is_assigned_to_this_correspondent(self):
+        response = self._upload(
+            [SimpleUploadedFile("rechnung.pdf", b"%PDF-1.4 content", content_type="application/pdf")]
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Hochgeladen")
+        document = Document.objects.get()
+        self.assertEqual(document.correspondent, self.correspondent)
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.PENDING)
+
+    def test_multiple_files_are_all_assigned_to_this_correspondent(self):
+        response = self._upload(
+            [
+                SimpleUploadedFile("a.pdf", b"content a", content_type="application/pdf"),
+                SimpleUploadedFile("b.pdf", b"content b", content_type="application/pdf"),
+            ]
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 2)
+        for document in Document.objects.all():
+            self.assertEqual(document.correspondent, self.correspondent)
+
+    def test_upload_response_triggers_list_refresh(self):
+        response = self._upload(
+            [SimpleUploadedFile("rechnung.pdf", b"%PDF-1.4 content", content_type="application/pdf")]
+        )
+
+        self.assertEqual(response["HX-Trigger"], "findus:documents-changed")
+
+    def test_duplicate_document_keeps_its_existing_correspondent(self):
+        other_correspondent = Correspondent.objects.create(name="Sonstiges")
+        existing = Document.objects.create(
+            title="Bereits vorhanden",
+            visibility=Document.Visibility.DEPARTMENT,
+            correspondent=other_correspondent,
+            sha256="a" * 64,
+        )
+        existing.departments.add(self.dept_a)
+        with patch(
+            "apps.ingest.service._hash_and_size", return_value=("a" * 64, 3)
+        ):
+            response = self._upload(
+                [SimpleUploadedFile("copy.pdf", b"abc", content_type="application/pdf")]
+            )
+
+        self.assertContains(response, "Duplikat")
+        existing.refresh_from_db()
+        self.assertEqual(existing.correspondent, other_correspondent)
