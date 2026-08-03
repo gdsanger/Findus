@@ -2,22 +2,24 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-    """Drop the orphaned `address` column on `documents_correspondent`.
+    """No-op: superseded by `0015_correspondent_address_vorgang_department_and_more`.
 
-    The column exists only in the physical database -- it was never part of
-    any Django migration, model, or form (verified across the full history
-    of every branch). It is a leftover from an earlier, hand-built schema
-    that predates `0002_initial` (which defines Correspondent with just
-    `name` + `email`). Because Django doesn't know the column exists, every
-    INSERT omits it; the column is NOT NULL with no default, so Postgres
-    rejects the row with an IntegrityError -- meaning *no* Correspondent
-    could be created at all.
+    This migration originally dropped `documents_correspondent.address` as
+    an orphaned, unmodeled column. That premise was invalidated the moment
+    the sibling `0015_correspondent_address_vorgang_department_and_more`
+    (added independently, on another branch, with the same parent) turned
+    `address` into a real modeled field with a form (`forms.py`) reading and
+    writing it. Because that migration has no dependency on this one (both
+    branch off `0014` in parallel), a fresh `migrate` could apply this one
+    *after* the add -- silently dropping the column while the Django model
+    state and `models.py` still declared it present. That is exactly what
+    happened in production (#1055): `GET /` started raising
+    `column documents_correspondent.address does not exist`.
 
-    Nothing in the codebase reads or writes a Correspondent address, so we
-    reconcile the DB to the model by dropping the column. `IF EXISTS` keeps
-    this a no-op on databases (e.g. freshly-migrated ones) that never had
-    the drifted column. No `state_operations` are needed: the Django model
-    state already lacks the field, so this only touches the database.
+    Kept as a no-op rather than deleted so environments that already have
+    this migration's name recorded in `django_migrations` don't hit a
+    missing-migration inconsistency; `0017_merge_20260803_1901` resolves
+    the resulting two-leaf conflict.
     """
 
     dependencies = [
@@ -26,7 +28,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RunSQL(
-            sql="ALTER TABLE documents_correspondent DROP COLUMN IF EXISTS address;",
+            sql=migrations.RunSQL.noop,
             reverse_sql=migrations.RunSQL.noop,
         ),
     ]

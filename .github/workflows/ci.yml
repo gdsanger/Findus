@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  migrations-check:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DJANGO_SECRET_KEY: ci-dry-run-key
+      # Doesn't need to resolve: makemigrations --check inspects model vs.
+      # migration state and only warns (doesn't fail) if it can't also
+      # verify consistency against a live DB.
+      POSTGRES_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Detect model/migration drift and conflicting migration branches
+        run: |
+          python manage.py makemigrations --check --dry-run
