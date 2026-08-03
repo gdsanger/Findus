@@ -3,45 +3,76 @@
 {% block content %}
 {% include "partials/_content_header.html" with page_title=correspondent.name %}
 
-<section class="findus-section findus-detail-actions">
-    {% if correspondent.is_self %}
-    <span class="badge text-bg-info">Das bin ich</span>
-    {% endif %}
-    <form
-        method="post"
-        action="{% url 'documents:correspondent_delete' correspondent.pk %}"
-        class="d-inline"
-        onsubmit="return confirm('Kontakt „{{ correspondent.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
-    >
-        {% csrf_token %}
-        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
-    </form>
-</section>
-
-<section class="findus-section">
-    <h2 class="findus-section-title">Kontaktdaten</h2>
-    <form method="post" class="findus-card findus-task-form">
-        {% csrf_token %}
-        {% include "documents/partials/_form_fields.html" %}
-        <div class="findus-detail-meta-edit-actions">
-            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+<section class="findus-section findus-hub-header">
+    <div class="findus-hub-summary">
+        {% if correspondent.is_self or correspondent.email or correspondent.address or correspondent.vat_id or correspondent.iban %}
+        <div class="findus-chip-row">
+            {% if correspondent.is_self %}<span class="badge text-bg-info">Das bin ich</span>{% endif %}
+            {% if correspondent.email %}<span class="badge text-bg-secondary fw-normal">{{ correspondent.email }}</span>{% endif %}
+            {% if correspondent.address %}<span class="badge text-bg-secondary fw-normal" title="{{ correspondent.address }}">{{ correspondent.address|truncatechars:40 }}</span>{% endif %}
+            {% if correspondent.vat_id %}<span class="badge text-bg-secondary fw-normal">USt-IdNr. {{ correspondent.vat_id }}</span>{% endif %}
+            {% if correspondent.iban %}<span class="badge text-bg-secondary fw-normal">IBAN {{ correspondent.iban }}</span>{% endif %}
         </div>
-    </form>
-</section>
-
-<section class="findus-section">
-    <div class="findus-card">
+        {% endif %}
         <dl class="findus-detail-meta-list">
             <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
             <div><dt>Eingang/Ausgang</dt><dd>{{ eingang_count }} / {{ ausgang_count }}</dd></div>
             <div><dt>Offene Aufgaben</dt><dd>{{ open_tasks_count }}</dd></div>
         </dl>
     </div>
+    <div class="findus-hub-actions">
+        <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            data-bs-toggle="collapse"
+            data-bs-target="#kontaktdaten-edit"
+            aria-expanded="{% if form.errors %}true{% else %}false{% endif %}"
+            aria-controls="kontaktdaten-edit"
+        >
+            Bearbeiten
+        </button>
+        <div class="dropdown d-inline-block">
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                aria-label="Weitere Aktionen"
+            >
+                &hellip;
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                    <form
+                        method="post"
+                        action="{% url 'documents:correspondent_delete' correspondent.pk %}"
+                        onsubmit="return confirm('Kontakt „{{ correspondent.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="dropdown-item text-danger">Löschen</button>
+                    </form>
+                </li>
+            </ul>
+        </div>
+    </div>
 </section>
+
+<div class="collapse{% if form.errors %} show{% endif %}" id="kontaktdaten-edit">
+    <section class="findus-section">
+        <h2 class="findus-section-title">Kontaktdaten bearbeiten</h2>
+        <form method="post" class="findus-card findus-task-form">
+            {% csrf_token %}
+            {% include "documents/partials/_form_fields.html" %}
+            <div class="findus-detail-meta-edit-actions">
+                <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+            </div>
+        </form>
+    </section>
+</div>
 
 <section class="findus-section">
     {% url 'documents:correspondent_upload' correspondent.pk as upload_url %}
-    {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url %}
+    {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url compact=True %}
 </section>
 
 <section class="findus-section">

@@ -3,42 +3,71 @@
 {% block content %}
 {% include "partials/_content_header.html" with page_title=vorgang.name %}
 
-<section class="findus-section findus-detail-actions">
-    <form
-        method="post"
-        action="{% url 'documents:vorgang_delete' vorgang.pk %}"
-        class="d-inline"
-        onsubmit="return confirm('Vorgang „{{ vorgang.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
-    >
-        {% csrf_token %}
-        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
-    </form>
-</section>
-
-<section class="findus-section">
-    <h2 class="findus-section-title">Vorgangsdaten</h2>
-    <form method="post" class="findus-card findus-task-form">
-        {% csrf_token %}
-        {% include "documents/partials/_form_fields.html" %}
-        <div class="findus-detail-meta-edit-actions">
-            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+<section class="findus-section findus-hub-header">
+    <div class="findus-hub-summary">
+        <div class="findus-chip-row">
+            <span class="badge text-bg-secondary fw-normal">{{ vorgang.get_status_display }}</span>
+            {% if vorgang.department %}<span class="badge text-bg-secondary fw-normal">{{ vorgang.department.name }}</span>{% endif %}
         </div>
-    </form>
-</section>
-
-<section class="findus-section">
-    <div class="findus-card">
         <dl class="findus-detail-meta-list">
             <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
             <div><dt>Offene Aufgaben</dt><dd>{{ open_tasks_count }}</dd></div>
             <div><dt>Angelegt</dt><dd>{{ vorgang.created_at|date:"d.m.Y" }}</dd></div>
         </dl>
     </div>
+    <div class="findus-hub-actions">
+        <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            data-bs-toggle="collapse"
+            data-bs-target="#vorgangsdaten-edit"
+            aria-expanded="{% if form.errors %}true{% else %}false{% endif %}"
+            aria-controls="vorgangsdaten-edit"
+        >
+            Bearbeiten
+        </button>
+        <div class="dropdown d-inline-block">
+            <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                aria-label="Weitere Aktionen"
+            >
+                &hellip;
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                    <form
+                        method="post"
+                        action="{% url 'documents:vorgang_delete' vorgang.pk %}"
+                        onsubmit="return confirm('Vorgang „{{ vorgang.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="dropdown-item text-danger">Löschen</button>
+                    </form>
+                </li>
+            </ul>
+        </div>
+    </div>
 </section>
+
+<div class="collapse{% if form.errors %} show{% endif %}" id="vorgangsdaten-edit">
+    <section class="findus-section">
+        <h2 class="findus-section-title">Vorgangsdaten bearbeiten</h2>
+        <form method="post" class="findus-card findus-task-form">
+            {% csrf_token %}
+            {% include "documents/partials/_form_fields.html" %}
+            <div class="findus-detail-meta-edit-actions">
+                <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+            </div>
+        </form>
+    </section>
+</div>
 
 <section class="findus-section">
     {% url 'documents:vorgang_upload' vorgang.pk as upload_url %}
-    {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url %}
+    {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url compact=True %}
 </section>
 
 <section class="findus-section">

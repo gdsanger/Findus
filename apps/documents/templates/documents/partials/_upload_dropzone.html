@@ -1,6 +1,6 @@
 <form
     id="upload-dropzone"
-    class="findus-upload-dropzone"
+    class="findus-upload-dropzone{% if compact %} findus-upload-dropzone--compact{% endif %}"
     hx-post="{{ upload_url }}"
     hx-encoding="multipart/form-data"
     hx-trigger="change from:#upload-input"
@@ -8,6 +8,15 @@
     hx-swap="innerHTML"
     hx-indicator="#upload-indicator"
 >
+    {% if compact %}
+    <button type="button" class="btn btn-sm btn-primary" onclick="document.getElementById('upload-input').click()">
+        Hochladen
+    </button>
+    <span class="findus-upload-hint">oder Dateien hierher ziehen</span>
+    <span class="findus-upload-constraints text-muted">
+        {{ upload_allowed_extensions|join:", "|upper }} · max. {{ upload_max_size_mb|floatformat:"0" }} MB
+    </span>
+    {% else %}
     <p class="findus-upload-hint">
         Dateien hierher ziehen oder
         <button type="button" class="btn btn-sm btn-primary" onclick="document.getElementById('upload-input').click()">
@@ -17,6 +26,7 @@
     <p class="findus-upload-constraints text-muted">
         Erlaubt: {{ upload_allowed_extensions|join:", "|upper }} · max. {{ upload_max_size_mb|floatformat:"0" }} MB je Datei
     </p>
+    {% endif %}
     <input
         type="file"
         id="upload-input"

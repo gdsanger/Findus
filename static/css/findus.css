@@ -380,6 +380,27 @@ body {
     font-size: var(--findus-font-size-sm);
 }
 
+/* Compact upload row (Kontakt-/Vorgang-Hub, #1058) -- a slim single line
+   instead of the large dashed drop area, so it doesn't push the document
+   list below the fold. */
+.findus-upload-dropzone--compact {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-3);
+    padding: var(--findus-space-3) var(--findus-space-4);
+    text-align: left;
+}
+
+.findus-upload-dropzone--compact .findus-upload-hint {
+    margin: 0;
+    color: var(--findus-text-muted);
+}
+
+.findus-upload-dropzone--compact .findus-upload-constraints {
+    margin-left: auto;
+}
+
 .findus-upload-feedback {
     margin-top: var(--findus-space-3);
 }
@@ -560,6 +581,37 @@ body {
 
 .findus-detail-raw .findus-detail-content {
     margin-top: var(--findus-space-3);
+}
+
+/* Kontakt-/Vorgang-Hub kompakter Kopf (#1058): Kerndaten als Chips + KPIs
+   in einer schmalen Zeile statt eines dauerhaft offenen Formulars, so
+   dass die Dokumentliste ohne Scrollen sichtbar bleibt. */
+.findus-hub-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--findus-space-4);
+}
+
+.findus-hub-summary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+    min-width: 0;
+}
+
+.findus-hub-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--findus-space-2);
+}
+
+.findus-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-2);
 }
 
 .findus-detail-meta-header {
