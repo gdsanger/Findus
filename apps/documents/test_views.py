@@ -1241,7 +1241,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
-            {"name": "Neue Firma GmbH"},
+            {"correspondent_name": "Neue Firma GmbH"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1253,7 +1253,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
-            {"name": "Umzug 2026"},
+            {"vorgang_name": "Umzug 2026"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1264,12 +1264,50 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
-            {"name": "Dringend", "dimension": "Priorität"},
+            {"tag_name": "Dringend", "tag_dimension": "Priorität"},
         )
 
         self.assertEqual(response.status_code, 200)
         tag = Tag.objects.get(name="Dringend", dimension="Priorität")
         self.assertIn(tag, self.doc.tags.all())
+
+    def test_quick_create_uses_typed_name_despite_sibling_blank_blocks(self):
+        # Regression for #1064: the "+ Anlegen" button lives inside the meta
+        # <form>, so HTMX serialises the whole form -- including the empty
+        # Vorgang/Tag quick-create inputs. When all three shared name="name",
+        # Django's QueryDict.get() returned the last (empty) value and the
+        # typed name was silently dropped. Distinct field names keep them apart.
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
+            {
+                "correspondent": "",
+                "correspondent_name": "Neue Firma GmbH",
+                "direction": Document.Direction.EINGANG,
+                "vorgang_name": "",
+                "tag_name": "",
+                "tag_dimension": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.correspondent.name, "Neue Firma GmbH")
+        self.assertNotContains(response, "Bitte einen Namen eingeben.")
+
+    def test_quick_create_blank_name_keeps_typed_dimension_visible(self):
+        # The typed value must survive an error render so the user does not
+        # lose it (#1064: clear the input only after a successful submit).
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
+            {"tag_name": "", "tag_dimension": "Priorität"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Tag.objects.count(), 0)
+        self.assertContains(response, "Bitte einen Namen eingeben.")
+        self.assertContains(response, 'value="Priorität"')
 
     def test_quick_create_reuses_existing_by_name(self):
         existing = Correspondent.objects.create(name="Acme GmbH")
@@ -1277,7 +1315,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
-            {"name": "Acme GmbH"},
+            {"correspondent_name": "Acme GmbH"},
         )
 
         self.assertEqual(Correspondent.objects.count(), 1)
@@ -1287,7 +1325,7 @@ class DocumentMetaQuickCreateTests(TestCase):
     def test_quick_create_blank_name_shows_visible_error(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]), {"name": ""}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]), {"vorgang_name": ""}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1297,7 +1335,7 @@ class DocumentMetaQuickCreateTests(TestCase):
     def test_quick_create_blank_name_shows_visible_error_for_correspondent(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]), {"name": ""}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]), {"correspondent_name": ""}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1307,7 +1345,7 @@ class DocumentMetaQuickCreateTests(TestCase):
     def test_quick_create_blank_name_shows_visible_error_for_tag(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]), {"name": ""}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]), {"tag_name": ""}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1318,7 +1356,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
-            {"name": "x" * 300},
+            {"vorgang_name": "x" * 300},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1337,7 +1375,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_b)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
-            {"name": "Umzug 2026"},
+            {"vorgang_name": "Umzug 2026"},
         )
 
         self.assertEqual(response.status_code, 404)

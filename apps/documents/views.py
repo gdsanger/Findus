@@ -602,7 +602,14 @@ def document_meta_quick_create(request, pk, kind):
         raise Http404(f"Unbekannte Zuordnungsart: {kind}")
 
     document = _visible_document(request.user, pk)
-    name = request.POST.get("name", "").strip()
+    # Each quick-create block carries a kind-specific field name
+    # (`correspondent_name`/`vorgang_name`/`tag_name`) rather than a shared
+    # `name`. All three blocks live inside the same <form>, which HTMX
+    # serialises in full on every POST -- with a shared `name` the two empty
+    # blocks collided with the filled one and Django's QueryDict.get() picked
+    # the last (empty) value, so the typed name never reached the server (#1064).
+    name = request.POST.get(f"{kind}_name", "").strip()
+    dimension = request.POST.get(f"{kind}_dimension", "").strip()
     quick_create_error = None
     if name:
         if kind == "correspondent":
@@ -615,12 +622,17 @@ def document_meta_quick_create(request, pk, kind):
             vorgang, _created = Vorgang.objects.get_or_create(name=name)
             document.vorgaenge.add(vorgang)
         elif kind == "tag":
-            dimension = _truncated(Tag, "dimension", request.POST.get("dimension", "").strip())
+            dimension = _truncated(Tag, "dimension", dimension)
             name = _truncated(Tag, "name", name)
             tag, _created = Tag.objects.get_or_create(name=name, dimension=dimension)
             document.tags.add(tag)
     else:
-        quick_create_error = {"kind": kind, "message": "Bitte einen Namen eingeben."}
+        quick_create_error = {
+            "kind": kind,
+            "message": "Bitte einen Namen eingeben.",
+            "name": name,
+            "dimension": dimension,
+        }
 
     return render(
         request,
