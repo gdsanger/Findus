@@ -17,12 +17,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from django.test import TestCase, override_settings
+from django_q.models import Schedule
 
 from apps.accounts.models import Department
 from apps.documents.models import Correspondent, Document
 from apps.ingest.connectors.folder import WatchFolder, scan_folder
 from apps.ingest.connectors.mail_graph import GraphMailbox, scan_mailbox as scan_graph_mailbox
 from apps.ingest.connectors.mail_imap import ImapMailbox, scan_mailbox as scan_imap_mailbox
+from apps.ingest.schedules import MAIL_INGEST_SCHEDULE_NAME, sync_mail_ingest_schedule
 from apps.ingest.service import ingest_file
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-ingest-media-")
@@ -148,6 +150,33 @@ class IngestFileServiceTests(TestCase):
         args = mock_async_task.call_args.args
         self.assertEqual(args[0], extract_document_task)
         self.assertEqual(args[1], result.document.id)
+
+
+class MailIngestScheduleTests(TestCase):
+    """`sync_mail_ingest_schedule` runs via `post_migrate` (apps.py), so the
+    test DB setup already registered it once before any test method runs."""
+
+    def test_schedule_already_registered_via_post_migrate(self):
+        schedule = Schedule.objects.get(name=MAIL_INGEST_SCHEDULE_NAME)
+        self.assertEqual(schedule.func, "django.core.management.call_command")
+        self.assertEqual(schedule.args, repr(("watch_mail_ingest", "--once")))
+        self.assertEqual(schedule.schedule_type, Schedule.MINUTES)
+        self.assertEqual(schedule.repeats, -1)
+
+    def test_sync_is_idempotent(self):
+        sync_mail_ingest_schedule()
+        sync_mail_ingest_schedule()
+
+        self.assertEqual(
+            Schedule.objects.filter(name=MAIL_INGEST_SCHEDULE_NAME).count(), 1
+        )
+
+    @override_settings(FINDUS_MAIL_POLL_MINUTES=15)
+    def test_sync_picks_up_configured_interval(self):
+        sync_mail_ingest_schedule()
+
+        schedule = Schedule.objects.get(name=MAIL_INGEST_SCHEDULE_NAME)
+        self.assertEqual(schedule.minutes, 15)
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
