@@ -229,10 +229,20 @@ AWS_S3_FILE_OVERWRITE = False
 AWS_DEFAULT_ACL = None
 
 # --------------------------------------------------------------------------
-# MCP service
+# MCP service (#1052: auth baseline). `MCP_HOST` stays "0.0.0.0" -- that's
+# the bind address *inside* the container, and docker's port publishing
+# can only reach a container process listening on its non-loopback
+# interface. Restricting exposure to "local only" therefore happens one
+# level up, in docker-compose.yml's port mapping, not here (see that
+# file's `mcp` service).
 # --------------------------------------------------------------------------
 MCP_HOST = env("MCP_HOST", "0.0.0.0")
 MCP_PORT = int(env("MCP_PORT", "8001"))
+# No insecure default: empty/missing means `apps.mcp.auth` rejects every
+# request (a candidate token can never equal an empty expected token).
+MCP_TOKEN = env("MCP_TOKEN", "")
+# The single Django identity MCP tools run as -- see `apps.mcp.auth.get_mcp_user`.
+MCP_USER_USERNAME = env("MCP_USER_USERNAME", "")
 
 # --------------------------------------------------------------------------
 # AI provider layer (apps.ai.providers) -- embeddings, generation and vision

@@ -7,7 +7,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Department
@@ -1057,6 +1057,19 @@ class DocumentDeleteViewTests(TestCase):
         response = self.client.post(reverse("documents:delete", args=[self.doc.id]))
 
         self.assertEqual(response.status_code, 302)
+        self.assertTrue(Document.objects.filter(pk=self.doc.id).exists())
+
+    def test_delete_without_csrf_token_is_rejected(self):
+        """Baseline #1052: mutations rely on Django's global CsrfViewMiddleware
+
+        (no view in this app carries `@csrf_exempt`) -- a POST missing the
+        CSRF token must be rejected with 403 before the view body runs.
+        """
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user_a)
+        response = csrf_client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 403)
         self.assertTrue(Document.objects.filter(pk=self.doc.id).exists())
 
     def test_list_delete_button_shown(self):
