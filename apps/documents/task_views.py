@@ -149,6 +149,16 @@ def _create_checklist_items_from_texts(task, texts):
             ChecklistItem.objects.create(task=task, text=text, order=order)
 
 
+def _set_task_documents(user, task, posted_document_ids):
+    """Intersect posted document IDs with `visible_to(user)` before linking
+
+    them to the task (#1052) -- the form only ever renders checkboxes for
+    visible documents, but a raw POST can carry any ID, and without this
+    filter a user could link a task to a document they otherwise can't see.
+    """
+    task.documents.set(Document.objects.visible_to(user).filter(pk__in=posted_document_ids))
+
+
 @login_required
 def task_create(request):
     if request.method == "POST":
@@ -160,7 +170,7 @@ def task_create(request):
             task.visibility = visibility
             task.save()
             task.departments.set(departments)
-            task.documents.set(request.POST.getlist("documents"))
+            _set_task_documents(request.user, task, request.POST.getlist("documents"))
             _create_checklist_items_from_texts(task, request.POST.getlist("checklist_text"))
             return redirect("documents:task_detail", pk=task.pk)
         context = _task_form_context(
@@ -203,7 +213,7 @@ def task_detail(request, pk):
         form = TaskForm(request.POST, instance=task)
         if form.is_valid():
             form.save()
-            task.documents.set(request.POST.getlist("documents"))
+            _set_task_documents(request.user, task, request.POST.getlist("documents"))
             return redirect("documents:task_detail", pk=task.pk)
     else:
         form = TaskForm(instance=task)

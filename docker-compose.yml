@@ -95,7 +95,11 @@ services:
         condition: service_healthy
     command: python -m apps.mcp.server
     ports:
-      - "8001:8001"
+      # Host-loopback only (#1052): the token check in apps/mcp/auth.py is
+      # the primary control, this is defense in depth so the port is never
+      # reachable from the network directly, only via a local SSH tunnel or
+      # a reverse proxy running on this host.
+      - "127.0.0.1:8001:8001"
     volumes:
       - .:/app
 

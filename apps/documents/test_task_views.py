@@ -111,6 +111,35 @@ class TaskCreateViewTests(TestCase):
         self.assertEqual(task.visibility, Task.Visibility.DEPARTMENT)
         self.assertIn(self.document, task.documents.all())
 
+    def test_invisible_document_is_not_linked(self):
+        """Regression for #1052: a POST can carry any document ID, but only
+
+        IDs within `Document.objects.visible_to(user)` may end up linked --
+        otherwise a user could attach a task of theirs to a document they
+        have no access to.
+        """
+        invisible_document = Document.objects.create(title="Fremdes Dokument")
+        other_dept = Department.objects.create(name="Dept B")
+        invisible_document.departments.add(other_dept)
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:task_create"),
+            {
+                "title": "Rechnung zahlen",
+                "kind": Task.Kind.PAY,
+                "status": Task.Status.OPEN,
+                "due_date": "",
+                "description": "",
+                "documents": [str(self.document.pk), str(invisible_document.pk)],
+            },
+        )
+
+        task = Task.objects.get(title="Rechnung zahlen")
+        self.assertRedirects(response, reverse("documents:task_detail", args=[task.pk]))
+        self.assertIn(self.document, task.documents.all())
+        self.assertNotIn(invisible_document, task.documents.all())
+
     def test_department_less_user_creates_private_task(self):
         user = User.objects.create_user(username="carol", password="x")
         self.client.force_login(user)
@@ -267,6 +296,27 @@ class TaskDetailViewTests(TestCase):
         self.assertEqual(self.task.title, "Rechnung zahlen (angepasst)")
         self.assertEqual(self.task.due_date.isoformat(), "2026-09-01")
         self.assertIn(document, self.task.documents.all())
+
+    def test_edit_does_not_link_invisible_document(self):
+        """Same #1052 regression as task_create, for the edit path."""
+        invisible_document = Document.objects.create(title="Fremdes Dokument")
+        invisible_document.departments.add(self.dept_b)
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:task_detail", args=[self.task.pk]),
+            {
+                "title": "Rechnung zahlen",
+                "kind": Task.Kind.PAY,
+                "status": Task.Status.OPEN,
+                "due_date": "",
+                "description": "",
+                "documents": [str(invisible_document.pk)],
+            },
+        )
+
+        self.task.refresh_from_db()
+        self.assertNotIn(invisible_document, self.task.documents.all())
 
     def test_setting_status_done_sets_done_at(self):
         self.client.force_login(self.user_a)
