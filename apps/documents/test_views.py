@@ -1241,7 +1241,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
-            {"name": "Neue Firma GmbH"},
+            {"correspondent_name": "Neue Firma GmbH"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1253,7 +1253,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
-            {"name": "Umzug 2026"},
+            {"vorgang_name": "Umzug 2026"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1264,7 +1264,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
-            {"name": "Dringend", "dimension": "Priorität"},
+            {"tag_name": "Dringend", "tag_dimension": "Priorität"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1277,17 +1277,37 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
-            {"name": "Acme GmbH"},
+            {"correspondent_name": "Acme GmbH"},
         )
 
         self.assertEqual(Correspondent.objects.count(), 1)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.correspondent, existing)
 
+    def test_quick_create_ignores_other_kinds_fields(self):
+        """Regression test for #1064: htmx submits a "+ Anlegen" click together
+        with every field in the enclosing Zuordnung <form> (its hx-include
+        only adds to that, it doesn't replace it), so the request always
+        carries all three kind-prefixed name fields, not just the one the
+        user actually typed into. The view must key off the field matching
+        `kind`, not just any "name"-shaped field, or a blank Tag field again
+        overrides a typed Kontakt name.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
+            {"correspondent_name": "Neue Firma GmbH", "vorgang_name": "", "tag_name": "", "tag_dimension": ""},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.correspondent.name, "Neue Firma GmbH")
+        self.assertNotContains(response, "Bitte einen Namen eingeben.")
+
     def test_quick_create_blank_name_shows_visible_error(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]), {"name": ""}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]), {"vorgang_name": ""}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1297,7 +1317,8 @@ class DocumentMetaQuickCreateTests(TestCase):
     def test_quick_create_blank_name_shows_visible_error_for_correspondent(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]), {"name": ""}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]),
+            {"correspondent_name": ""},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1307,7 +1328,7 @@ class DocumentMetaQuickCreateTests(TestCase):
     def test_quick_create_blank_name_shows_visible_error_for_tag(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]), {"name": ""}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]), {"tag_name": ""}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1318,7 +1339,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
-            {"name": "x" * 300},
+            {"vorgang_name": "x" * 300},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1328,7 +1349,7 @@ class DocumentMetaQuickCreateTests(TestCase):
     def test_quick_create_unknown_kind_returns_404(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta_quick_create", args=[self.doc.id, "bogus"]), {"name": "x"}
+            reverse("documents:meta_quick_create", args=[self.doc.id, "bogus"]), {"correspondent_name": "x"}
         )
 
         self.assertEqual(response.status_code, 404)
@@ -1337,7 +1358,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.client.force_login(self.user_b)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
-            {"name": "Umzug 2026"},
+            {"vorgang_name": "Umzug 2026"},
         )
 
         self.assertEqual(response.status_code, 404)

@@ -594,15 +594,22 @@ def document_meta_quick_create(request, pk, kind):
     views, just for a value the user typed themselves instead of one the KI
     proposed.
 
-    A blank name used to be silently dropped, which looked from the user's
-    side like the button did nothing (#1064) -- it now reports back a
-    visible error next to the field it belongs to instead.
+    The three quick-create inputs used to all share `name="name"`. They sit
+    inside the outer Zuordnung <form>, and htmx includes a POST's "related
+    form" values with priority over hx-include -- so every "+ Anlegen" click
+    submitted all three name fields under the same key, and Django's
+    QueryDict.get() returned the *last* one in DOM order (the Tag field)
+    regardless of which button was actually clicked. A typed Kontakt name was
+    silently replaced by whatever (usually nothing) sat in the Tag field,
+    which read from the user's side as "I typed a name and it still says
+    it's required" (#1064). Each input now has a kind-prefixed name so they
+    can never collide.
     """
     if kind not in _QUICK_CREATE_KINDS:
         raise Http404(f"Unbekannte Zuordnungsart: {kind}")
 
     document = _visible_document(request.user, pk)
-    name = request.POST.get("name", "").strip()
+    name = request.POST.get(f"{kind}_name", "").strip()
     quick_create_error = None
     if name:
         if kind == "correspondent":
@@ -615,7 +622,7 @@ def document_meta_quick_create(request, pk, kind):
             vorgang, _created = Vorgang.objects.get_or_create(name=name)
             document.vorgaenge.add(vorgang)
         elif kind == "tag":
-            dimension = _truncated(Tag, "dimension", request.POST.get("dimension", "").strip())
+            dimension = _truncated(Tag, "dimension", request.POST.get("tag_dimension", "").strip())
             name = _truncated(Tag, "name", name)
             tag, _created = Tag.objects.get_or_create(name=name, dimension=dimension)
             document.tags.add(tag)
