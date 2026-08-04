@@ -714,6 +714,10 @@ body {
     flex: 1 1 10rem;
 }
 
+.findus-quick-create-error {
+    flex-basis: 100%;
+}
+
 /* Tags (#1051) -------------------------------------------------------------*/
 .findus-tag-swatch {
     display: inline-block;
