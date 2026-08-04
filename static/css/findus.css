@@ -808,3 +808,61 @@ body {
 .findus-nav-link-sub {
     font-size: var(--findus-font-size-sm);
 }
+
+/* Dashboard/Cockpit (#1065) ------------------------------------------------*/
+.findus-dashboard-search {
+    display: flex;
+    gap: var(--findus-space-2);
+}
+
+.findus-dashboard-search .form-control {
+    flex: 1 1 auto;
+}
+
+.findus-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: var(--findus-space-3);
+}
+
+.findus-kpi-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-1);
+    padding: var(--findus-space-4);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color var(--findus-transition-fast);
+}
+
+a.findus-kpi-card:hover,
+a.findus-kpi-card:focus-visible {
+    border-color: var(--findus-accent);
+    color: inherit;
+}
+
+.findus-kpi-card--accent {
+    border-color: var(--findus-accent);
+}
+
+.findus-kpi-card--warning {
+    border-color: rgba(var(--bs-danger-rgb), 0.6);
+}
+
+.findus-kpi-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.findus-kpi-label {
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-action-status-bar {
+    margin-top: var(--findus-space-3);
+}

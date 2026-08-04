@@ -2,6 +2,7 @@ from django.urls import path
 
 from . import (
     correspondent_views,
+    dashboard_views,
     tag_views,
     task_template_views,
     task_views,
@@ -13,6 +14,7 @@ app_name = "documents"
 
 urlpatterns = [
     path("", views.document_list, name="home"),
+    path("dashboard/", dashboard_views.dashboard, name="dashboard"),
     path("correspondents/", correspondent_views.correspondent_list, name="correspondent_list"),
     path("correspondents/create/", correspondent_views.correspondent_create, name="correspondent_create"),
     path("correspondents/<int:pk>/", correspondent_views.correspondent_detail, name="correspondent_detail"),
