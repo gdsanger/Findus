@@ -14,7 +14,7 @@
                     {% endfor %}
                 </select>
                 <div class="findus-quick-create" id="quick-create-correspondent">
-                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Neuer Kontakt …">
+                    <input type="text" name="name" class="form-control form-control-sm {% if quick_create_error.kind == 'correspondent' %}is-invalid{% endif %}" placeholder="Neuer Kontakt …">
                     <button
                         type="button"
                         class="btn btn-sm btn-outline-secondary"
@@ -23,6 +23,9 @@
                         hx-target="#document-meta"
                         hx-swap="innerHTML"
                     >+ Anlegen</button>
+                    {% if quick_create_error.kind == 'correspondent' %}
+                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+                    {% endif %}
                 </div>
             </div>
             <div class="findus-filter-field">
@@ -41,7 +44,7 @@
                     {% endfor %}
                 </select>
                 <div class="findus-quick-create" id="quick-create-vorgang">
-                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Neuer Vorgang …">
+                    <input type="text" name="name" class="form-control form-control-sm {% if quick_create_error.kind == 'vorgang' %}is-invalid{% endif %}" placeholder="Neuer Vorgang …">
                     <button
                         type="button"
                         class="btn btn-sm btn-outline-secondary"
@@ -50,6 +53,9 @@
                         hx-target="#document-meta"
                         hx-swap="innerHTML"
                     >+ Anlegen</button>
+                    {% if quick_create_error.kind == 'vorgang' %}
+                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+                    {% endif %}
                 </div>
             </div>
             <div class="findus-filter-field">
@@ -60,7 +66,7 @@
                     {% endfor %}
                 </select>
                 <div class="findus-quick-create" id="quick-create-tag">
-                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Neues Tag …">
+                    <input type="text" name="name" class="form-control form-control-sm {% if quick_create_error.kind == 'tag' %}is-invalid{% endif %}" placeholder="Neues Tag …">
                     <input type="text" name="dimension" class="form-control form-control-sm" placeholder="Dimension (optional)">
                     <button
                         type="button"
@@ -70,6 +76,9 @@
                         hx-target="#document-meta"
                         hx-swap="innerHTML"
                     >+ Anlegen</button>
+                    {% if quick_create_error.kind == 'tag' %}
+                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+                    {% endif %}
                 </div>
             </div>
         </div>

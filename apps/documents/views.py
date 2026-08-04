@@ -418,7 +418,7 @@ def document_delete(request, pk):
     return redirect("documents:home")
 
 
-def _meta_edit_context(document):
+def _meta_edit_context(document, quick_create_error=None):
     return {
         "document": document,
         "all_correspondents": Correspondent.objects.all(),
@@ -428,6 +428,7 @@ def _meta_edit_context(document):
         "selected_correspondent_id": document.correspondent_id,
         "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
         "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
+        "quick_create_error": quick_create_error,
     }
 
 
@@ -592,12 +593,17 @@ def document_meta_quick_create(request, pk, kind):
     same match/create-then-assign principle as the KI-suggestion accept
     views, just for a value the user typed themselves instead of one the KI
     proposed.
+
+    A blank name used to be silently dropped, which looked from the user's
+    side like the button did nothing (#1064) -- it now reports back a
+    visible error next to the field it belongs to instead.
     """
     if kind not in _QUICK_CREATE_KINDS:
         raise Http404(f"Unbekannte Zuordnungsart: {kind}")
 
     document = _visible_document(request.user, pk)
     name = request.POST.get("name", "").strip()
+    quick_create_error = None
     if name:
         if kind == "correspondent":
             name = _truncated(Correspondent, "name", name)
@@ -613,8 +619,14 @@ def document_meta_quick_create(request, pk, kind):
             name = _truncated(Tag, "name", name)
             tag, _created = Tag.objects.get_or_create(name=name, dimension=dimension)
             document.tags.add(tag)
+    else:
+        quick_create_error = {"kind": kind, "message": "Bitte einen Namen eingeben."}
 
-    return render(request, "documents/partials/_detail_meta_edit.html", _meta_edit_context(document))
+    return render(
+        request,
+        "documents/partials/_detail_meta_edit.html",
+        _meta_edit_context(document, quick_create_error=quick_create_error),
+    )
 
 
 def _render_meta(request, document):

@@ -1284,7 +1284,7 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.correspondent, existing)
 
-    def test_quick_create_blank_name_is_a_no_op(self):
+    def test_quick_create_blank_name_shows_visible_error(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]), {"name": ""}
@@ -1292,6 +1292,27 @@ class DocumentMetaQuickCreateTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Vorgang.objects.count(), 0)
+        self.assertContains(response, "Bitte einen Namen eingeben.")
+
+    def test_quick_create_blank_name_shows_visible_error_for_correspondent(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "correspondent"]), {"name": ""}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Correspondent.objects.count(), 0)
+        self.assertContains(response, "Bitte einen Namen eingeben.")
+
+    def test_quick_create_blank_name_shows_visible_error_for_tag(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]), {"name": ""}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Tag.objects.count(), 0)
+        self.assertContains(response, "Bitte einen Namen eingeben.")
 
     def test_quick_create_truncates_overlong_name_instead_of_500(self):
         self.client.force_login(self.user_a)
