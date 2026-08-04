@@ -15,6 +15,14 @@
 <ul class="findus-nav-list">
     <li>
         <a
+            href="{% url 'documents:dashboard' %}"
+            class="findus-nav-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}"
+        >
+            Dashboard
+        </a>
+    </li>
+    <li>
+        <a
             href="{% url 'documents:home' %}"
             class="findus-nav-link{% if request.resolver_match.url_name == 'home' and not request.GET.action_status %} active{% endif %}"
         >

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Dashboard" %}
+
+<section class="findus-section">
+    <form method="get" action="{% url 'documents:home' %}" class="findus-dashboard-search" role="search">
+        <input
+            type="search"
+            name="q"
+            class="form-control"
+            placeholder="Dokumente semantisch durchsuchen …"
+            aria-label="Dokumente semantisch durchsuchen"
+        >
+        <button type="submit" class="btn btn-primary">Suchen</button>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Dokumente &amp; Speicher</h2>
+    <div class="findus-kpi-grid">
+        <a href="{% url 'documents:home' %}" class="findus-kpi-card">
+            <span class="findus-kpi-value">{{ doc_stats.total }}</span>
+            <span class="findus-kpi-label">Dokumente gesamt</span>
+        </a>
+        <div class="findus-kpi-card">
+            <span class="findus-kpi-value">{{ doc_stats.total_size|default:0|filesizeformat }}</span>
+            <span class="findus-kpi-label">Belegter Speicher</span>
+        </div>
+        <a href="{% url 'documents:home' %}?status=ready" class="findus-kpi-card">
+            <span class="findus-kpi-value">{{ doc_stats.ready }}</span>
+            <span class="findus-kpi-label">Bereit</span>
+        </a>
+        <a
+            href="{% url 'documents:home' %}?status=failed"
+            class="findus-kpi-card{% if doc_stats.failed %} findus-kpi-card--warning{% endif %}"
+        >
+            <span class="findus-kpi-value">{{ doc_stats.failed }}</span>
+            <span class="findus-kpi-label">Fehlgeschlagen</span>
+        </a>
+        <div class="findus-kpi-card">
+            <span class="findus-kpi-value">{{ doc_stats.in_progress }}</span>
+            <span class="findus-kpi-label">In Arbeit</span>
+        </div>
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Erledigung</h2>
+    <div class="findus-kpi-grid">
+        <a href="{% url 'documents:home' %}?action_status=offen" class="findus-kpi-card findus-kpi-card--accent">
+            <span class="findus-kpi-value">{{ doc_stats.action_open }}</span>
+            <span class="findus-kpi-label">Offen</span>
+        </a>
+        <a href="{% url 'documents:home' %}?action_status=erledigt" class="findus-kpi-card">
+            <span class="findus-kpi-value">{{ doc_stats.action_done }}</span>
+            <span class="findus-kpi-label">Erledigt</span>
+        </a>
+        <a href="{% url 'documents:home' %}?action_status=keine" class="findus-kpi-card">
+            <span class="findus-kpi-value">{{ doc_stats.action_none }}</span>
+            <span class="findus-kpi-label">Kein Handlungsbedarf</span>
+        </a>
+    </div>
+    {% if doc_stats.total %}
+    <div class="progress findus-action-status-bar" role="progressbar" aria-label="Verteilung der Erledigung">
+        <div class="progress-bar bg-warning" style="width: {% widthratio doc_stats.action_open doc_stats.total 100 %}%"></div>
+        <div class="progress-bar bg-success" style="width: {% widthratio doc_stats.action_done doc_stats.total 100 %}%"></div>
+        <div class="progress-bar bg-secondary" style="width: {% widthratio doc_stats.action_none doc_stats.total 100 %}%"></div>
+    </div>
+    {% endif %}
+</section>
+
+<section class="findus-section">
+    <div class="findus-hub-header">
+        <h2 class="findus-section-title mb-0">Aufgaben</h2>
+        <a href="{% url 'documents:task_list' %}" class="btn btn-sm btn-outline-secondary">Alle Aufgaben</a>
+    </div>
+    <p class="text-muted">
+        {{ task_stats.open }} offen
+        {% if task_stats.overdue %}· <span class="text-danger">{{ task_stats.overdue }} überfällig</span>{% endif %}
+        {% if open_tasks %}· nächste Fälligkeit: {{ open_tasks.0.due_date|date:"d.m.Y"|default:"ohne Frist" }}{% endif %}
+    </p>
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Titel</th>
+                    <th>Art</th>
+                    <th>Fällig</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in open_tasks %}
+                <tr>
+                    <td><a href="{% url 'documents:task_detail' task.pk %}">{{ task.title }}</a></td>
+                    <td>{{ task.get_kind_display }}</td>
+                    <td>
+                        {% if task.due_date %}
+                        <span
+                            class="badge {% if task.due_date < today %}text-bg-danger{% elif task.due_date <= due_soon_until %}text-bg-warning{% else %}text-bg-secondary{% endif %}"
+                        >
+                            {{ task.due_date|date:"d.m.Y" }}
+                        </span>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="3" class="text-muted">Keine offenen Aufgaben.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Dokument hochladen</h2>
+    {% url 'documents:upload' as upload_url %}
+    {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url %}
+</section>
+
+<section class="findus-section findus-chip-row">
+    <a href="{% url 'documents:home' %}?action_status=offen" class="btn btn-sm btn-outline-secondary">Zu erledigen</a>
+    <a href="{% url 'documents:home' %}?status=failed" class="btn btn-sm btn-outline-secondary">Fehlgeschlagene</a>
+    <a href="{% url 'documents:task_create' %}" class="btn btn-sm btn-outline-secondary">Aufgabe anlegen</a>
+</section>
+{% endblock %}
+
+{% block scripts %}
+{% include "documents/partials/_upload_dropzone_script.html" %}
+{% endblock %}
