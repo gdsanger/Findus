@@ -436,6 +436,16 @@ FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS = float(
 )
 
 # --------------------------------------------------------------------------
+# Ingest: Mail-Trigger-Intervall der django-q2-Schedule "mail-ingest" (#1060,
+# siehe apps.ingest.schedules) -- unabhängig von
+# FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS oben, das den Poll-Abstand des
+# dauerhaft laufenden `watch_mail_ingest`-Prozesses steuert; hier geht es um
+# den Minuten-Takt, in dem der qcluster-Scheduler `watch_mail_ingest --once`
+# auslöst.
+# --------------------------------------------------------------------------
+FINDUS_MAIL_POLL_MINUTES = int(env("FINDUS_MAIL_POLL_MINUTES", "5"))
+
+# --------------------------------------------------------------------------
 # Logging: console (for container stdout) + one dated file per day under
 # ./logs, retained 7 days. See config.logging_utils for the handler and the
 # request-id filter. The level is env-driven (DEBUG/INFO/WARNING/ERROR ...);

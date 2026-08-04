@@ -46,3 +46,17 @@ andere widerspricht (z. B. add vs. drop derselben Spalte). Eine reine
 Merge-Migration löst nur den Graph-Konflikt, verhindert aber nicht, dass
 die widersprüchliche Migration in falscher Reihenfolge nach der anderen
 läuft.
+
+## Mail-Ingest-Schedule (#1060)
+
+Der Mail-Ingest (`watch_mail_ingest --once`) wird periodisch über eine
+django-q2-`Schedule` namens `mail-ingest` ausgelöst, die `apps.ingest`
+selbst über `post_migrate` registriert (`apps/ingest/schedules.py`) --
+kein manueller DB-Eintrag mehr, jedes `migrate` legt sie an bzw. hält sie
+aktuell (idempotent, keine Duplikate). Der Takt kommt aus
+`FINDUS_MAIL_POLL_MINUTES` (Default 5 Minuten).
+
+Damit die Schedule tatsächlich feuert, muss der `qcluster`-Prozess
+(Docker-Service `worker`, a.k.a. findus-worker) laufen -- er tickt den
+Scheduler und führt die fälligen Tasks aus. Ohne laufenden `worker` bleibt
+die Schedule in der DB stehen, ohne dass Mails importiert werden.
