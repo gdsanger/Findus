@@ -17,7 +17,6 @@ from .models import (
     Chunk,
     Correspondent,
     Document,
-    DocumentLink,
     SuggestionStatus,
     Tag,
     TagSuggestion,
@@ -106,6 +105,30 @@ class DocumentListViewTests(TestCase):
         response = self.client.get(reverse("documents:home"))
 
         self.assertNotContains(response, "Vertrag Other GmbH")
+
+    def test_child_document_does_not_get_its_own_top_level_row(self):
+        """Unterdokumente (#1069) hängen eingeklappt unter ihrem
+
+        Leitdokument -- der Eingang bleibt übersichtlich, statt jeden
+        Mail-Anhang als eigene Zeile zu zeigen. Der einzige sichtbare
+        Leitdokument-Root ist `own_doc`, also darf die Tabelle nur eine
+        Kopf- und eine Datenzeile haben, nicht zwei Datenzeilen.
+        """
+        Document.objects.create_child(self.own_doc, title="Anhang.pdf")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"), HTTP_HX_REQUEST="true")
+
+        self.assertEqual(response.content.count(b"<tr>"), 2)
+
+    def test_child_title_is_reachable_collapsed_under_leitdokument(self):
+        child = Document.objects.create_child(self.own_doc, title="Anhang.pdf")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "Anhang.pdf")
+        self.assertContains(response, reverse("documents:detail", args=[child.id]))
 
     def test_full_page_response_includes_base_template_nav(self):
         self.client.force_login(self.user_a)
@@ -363,6 +386,34 @@ class DocumentSearchViewTests(TestCase):
         self.assertContains(response, "Beratungsleistungen")
         self.assertContains(response, "%")
 
+    def test_search_hit_in_child_document_shows_breadcrumb_to_leitdokument(self):
+        """A hit inside a Unterdokument (#1069) must surface on its own,
+
+        with a breadcrumb back to its Leitdokument -- unlike structured
+        browsing, search never collapses children away.
+        """
+        child = Document.objects.create_child(self.own_doc, title="Anhang.pdf")
+        Chunk.objects.create(
+            document=child,
+            position=0,
+            content="Kontoauszug Januar",
+            embedding=_one_hot(5),
+            embedding_model="stub",
+            embedding_model_version="1",
+        )
+
+        self.client.force_login(self.user_a)
+        with patch(
+            "apps.documents.retrieval.get_embedding_provider",
+            return_value=_StubEmbeddingProvider(_one_hot(5)),
+        ):
+            response = self.client.get(reverse("documents:home"), {"q": "Kontoauszug"})
+
+        self.assertContains(response, "Anhang.pdf")
+        self.assertContains(response, reverse("documents:detail", args=[child.id]))
+        self.assertContains(response, "Rechnung Acme")
+        self.assertContains(response, reverse("documents:detail", args=[self.own_doc.id]))
+
     def test_search_combines_with_correspondent_filter(self):
         self.client.force_login(self.user_a)
         response = self._search({"q": "Rechnung", "correspondent": self.other.id})
@@ -558,34 +609,54 @@ class DocumentDetailViewTests(TestCase):
 
         self.assertNotContains(response, "Privater Task")
 
-    def test_document_links_are_shown_in_both_directions(self):
-        other = Document.objects.create(
-            title="Mahnung Acme", visibility=Document.Visibility.DEPARTMENT
-        )
-        other.departments.add(self.dept_a)
-        DocumentLink.objects.create(
-            from_document=self.doc, to_document=other, link_type=DocumentLink.LinkType.RELATED
+    def test_children_are_shown_on_leitdokument_detail_page(self):
+        child = Document.objects.create_child(
+            self.doc, title="Anhang.pdf", child_role=Document.ChildRole.MAIL_ATTACHMENT
         )
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertContains(response, "Mahnung Acme")
-        self.assertContains(response, reverse("documents:detail", args=[other.id]))
+        self.assertContains(response, "Anhang.pdf")
+        self.assertContains(response, reverse("documents:detail", args=[child.id]))
 
-    def test_linked_document_outside_visibility_is_not_leaked(self):
-        hidden = Document.objects.create(
-            title="Geheimvertrag", visibility=Document.Visibility.DEPARTMENT
-        )
-        hidden.departments.add(self.dept_b)
-        DocumentLink.objects.create(
-            from_document=self.doc, to_document=hidden, link_type=DocumentLink.LinkType.RELATED
+    def test_child_outside_visibility_is_not_leaked(self):
+        Document.objects.create_child(
+            self.doc, title="Geheimanhang.pdf", departments=[self.dept_b]
         )
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertNotContains(response, "Geheimvertrag")
+        self.assertNotContains(response, "Geheimanhang.pdf")
+
+    def test_child_detail_page_shows_breadcrumb_to_leitdokument(self):
+        child = Document.objects.create_child(self.doc, title="Anhang.pdf")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[child.id]))
+
+        self.assertContains(response, "Rechnung Acme")
+        self.assertContains(response, reverse("documents:detail", args=[self.doc.id]))
+
+    def test_breadcrumb_is_hidden_when_leitdokument_is_not_visible(self):
+        private_parent = Document.objects.create(
+            title="Geheime Mail", visibility=Document.Visibility.PRIVATE, owner=self.user_b
+        )
+        # An overridden, broader scope than the parent's (#1069) -- the
+        # rare case a child needs its own visibility -- must not leak the
+        # otherwise-hidden parent's title into the breadcrumb.
+        child = Document.objects.create_child(
+            private_parent,
+            title="Anhang.pdf",
+            visibility=Document.Visibility.DEPARTMENT,
+            departments=[self.dept_a],
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[child.id]))
+
+        self.assertNotContains(response, "Geheime Mail")
 
 
 class DocumentActionStatusViewTests(TestCase):
@@ -1033,6 +1104,32 @@ class DocumentDeleteViewTests(TestCase):
         response = self.client.post(reverse("documents:delete", args=[self.doc.id]))
 
         self.assertRedirects(response, reverse("documents:home"))
+
+    def test_deleting_leitdokument_cascades_to_children(self):
+        """Kaskadenverhalten (#1069): ein Unterdokument ist ohne sein
+
+        Leitdokument eine verwaiste Karteikarte ohne erklärten Scope, daher
+        `on_delete=CASCADE` -- Löschen des Leitdokuments nimmt seine ganze
+        Unterdokument-Kette mit.
+        """
+        child = Document.objects.create_child(self.doc, title="Anhang.pdf")
+        grandchild = Document.objects.create_child(child, title="Anhang-Anhang.pdf")
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertFalse(Document.objects.filter(pk=child.id).exists())
+        self.assertFalse(Document.objects.filter(pk=grandchild.id).exists())
+
+    def test_deleting_leitdokument_removes_children_original_files(self):
+        child = Document.objects.create_child(self.doc, title="Anhang.pdf")
+        child.original_file.save("anhang.pdf", io.BytesIO(b"%PDF-1.4 attachment"), save=True)
+        file_path = child.original_file.path
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:delete", args=[self.doc.id]))
+
+        self.assertFalse(default_storage.exists(file_path))
 
     def test_delete_requires_get_not_allowed(self):
         self.client.force_login(self.user_a)

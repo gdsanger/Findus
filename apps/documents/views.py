@@ -3,6 +3,7 @@ import logging
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db.models import Prefetch
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.clickjacking import xframe_options_sameorigin
@@ -33,11 +34,27 @@ def filtered_documents(request):
     """Apply the combinable Absender/Vorgang/Tag/Status filters (#1014) on
     top of the visibility scope -- filters narrow what's already visible,
     they never widen it.
+
+    Structured browsing shows only Leitdokumente (`.roots()`, #1069) --
+    Unterdokumente hängen eingeklappt darunter (see `_document_list.html`)
+    statt als eigene Top-Level-Zeile aufzutauchen. Semantic search
+    (`_search_hits`) intentionally does *not* use this: a hit inside a
+    Unterdokument must surface on its own there.
     """
     documents = (
         Document.objects.visible_to(request.user)
+        .roots()
         .select_related("correspondent")
-        .prefetch_related("vorgaenge", "tags")
+        .prefetch_related(
+            "vorgaenge",
+            "tags",
+            Prefetch(
+                "children",
+                queryset=Document.objects.visible_to(request.user).select_related(
+                    "correspondent"
+                ),
+            ),
+        )
     )
 
     correspondent_id = request.GET.get("correspondent", "").strip()
@@ -250,7 +267,7 @@ def document_upload(request):
 def _visible_document(user, pk):
     return get_object_or_404(
         Document.objects.visible_to(user)
-        .select_related("correspondent")
+        .select_related("correspondent", "parent")
         .prefetch_related("vorgaenge", "tags"),
         pk=pk,
     )
@@ -275,11 +292,16 @@ def document_detail(request, pk):
     context = {
         **_document_tasks_context(request.user, document),
         **_analysis_status_context(document),
-        "outgoing_links": document.links_from.select_related("to_document").filter(
-            to_document__in=visible_documents
+        # Direktzugriff auf ein Unterdokument zeigt den Elternkontext
+        # (#1069) -- aber nur, wenn das Leitdokument auch sichtbar ist:
+        # der Scope eines Kindes ist überschreibbar, ein sichtbares Kind
+        # mit unsichtbarem Elter darf dessen Titel nicht leaken.
+        "parent_visible": (
+            document.parent_id is not None
+            and visible_documents.filter(pk=document.parent_id).exists()
         ),
-        "incoming_links": document.links_to.select_related("from_document").filter(
-            from_document__in=visible_documents
+        "children": document.children.filter(pk__in=visible_documents).select_related(
+            "correspondent"
         ),
         "action_status_choices": Document.ActionStatus.choices,
     }
@@ -406,14 +428,17 @@ def document_delete(request, pk):
 
     by the same `visible_to` scope (department/owner) as every other
     document view -- confirmation happens client-side before the POST is
-    ever sent. Chunks, tag/Vorgang suggestions, DocumentLinks and the Task
-    m2m rows all cascade via FK `on_delete=CASCADE`/m2m cleanup; only the
-    object-storage original needs an explicit delete, since Django never
-    removes FileField contents on its own.
+    ever sent. Chunks, tag/Vorgang suggestions, Unterdokumente (#1069) and
+    the Task m2m rows all cascade via FK `on_delete=CASCADE`/m2m cleanup;
+    only the object-storage originals need an explicit delete, since
+    Django never removes FileField contents on its own -- deleting a
+    Leitdokument takes its whole subtree with it, so every descendant's
+    `original_file` needs the same treatment, not just this document's own.
     """
     document = _visible_document(request.user, pk)
-    if document.original_file:
-        document.original_file.delete(save=False)
+    for doc in [document, *document.subtree()]:
+        if doc.original_file:
+            doc.original_file.delete(save=False)
     document.delete()
     return redirect("documents:home")
 

@@ -2,6 +2,11 @@
 {% load documents_extras %}
 {% block title %}{{ document.title }} – Findus{% endblock %}
 {% block content %}
+{% if document.parent_id and parent_visible %}
+<p class="findus-document-breadcrumb">
+    aus: <a href="{% url 'documents:detail' document.parent_id %}">{{ document.parent.title }}</a>
+</p>
+{% endif %}
 {% include "partials/_content_header.html" with page_title=document.title %}
 
 <section class="findus-section findus-detail-actions">
@@ -113,26 +118,18 @@
 </section>
 
 <section class="findus-section">
-    <h2 class="findus-section-title">Querverweise</h2>
-    {% if outgoing_links or incoming_links %}
+    <h2 class="findus-section-title">Unterdokumente</h2>
+    {% if children %}
     <ul class="findus-detail-links">
-        {% for link in outgoing_links %}
+        {% for child in children %}
         <li>
-            <span class="badge text-bg-secondary">{{ link.get_link_type_display }}</span>
-            <a href="{% url 'documents:detail' link.to_document.pk %}">{{ link.to_document.title }}</a>
-            {% if link.note %}<span class="text-muted">– {{ link.note }}</span>{% endif %}
-        </li>
-        {% endfor %}
-        {% for link in incoming_links %}
-        <li>
-            <span class="badge text-bg-secondary">{{ link.get_link_type_display }} von</span>
-            <a href="{% url 'documents:detail' link.from_document.pk %}">{{ link.from_document.title }}</a>
-            {% if link.note %}<span class="text-muted">– {{ link.note }}</span>{% endif %}
+            {% if child.child_role %}<span class="badge text-bg-secondary">{{ child.get_child_role_display }}</span>{% endif %}
+            <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
         </li>
         {% endfor %}
     </ul>
     {% else %}
-    <p class="text-muted">Keine Querverweise.</p>
+    <p class="text-muted">Keine Unterdokumente.</p>
     {% endif %}
 </section>
 {% endblock %}

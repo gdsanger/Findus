@@ -1,6 +1,7 @@
 import datetime
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -16,6 +17,103 @@ from .services import (
 )
 
 User = get_user_model()
+
+
+class DocumentHierarchyTests(TestCase):
+    """Covers the Leitdokument/Unterdokument-Baum (#1069): `parent`/
+
+    `child_role`, Zyklusschutz, Scope-Vererbung über `create_child()` und
+    die Baum-Abfragen `roots()`/`children_of()`/`subtree()`.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.owner = User.objects.create_user(username="alice", password="x")
+        self.parent = Document.objects.create(
+            title="Mail: Rechnung",
+            visibility=Document.Visibility.DEPARTMENT,
+            owner=self.owner,
+        )
+        self.parent.departments.add(self.dept_a)
+
+    def test_create_child_inherits_owner_visibility_and_departments(self):
+        child = Document.objects.create_child(self.parent, title="Anhang.pdf")
+
+        self.assertEqual(child.owner, self.owner)
+        self.assertEqual(child.visibility, Document.Visibility.DEPARTMENT)
+        self.assertEqual(set(child.departments.all()), {self.dept_a})
+        self.assertEqual(child.parent, self.parent)
+
+    def test_create_child_can_override_scope(self):
+        dept_b = Department.objects.create(name="Dept B")
+        other_owner = User.objects.create_user(username="bob", password="x")
+
+        child = Document.objects.create_child(
+            self.parent,
+            title="Anhang.pdf",
+            owner=other_owner,
+            visibility=Document.Visibility.PRIVATE,
+            departments=[dept_b],
+        )
+
+        self.assertEqual(child.owner, other_owner)
+        self.assertEqual(child.visibility, Document.Visibility.PRIVATE)
+        self.assertEqual(set(child.departments.all()), {dept_b})
+
+    def test_create_child_sets_child_role(self):
+        child = Document.objects.create_child(
+            self.parent, title="Anhang.pdf", child_role=Document.ChildRole.MAIL_ATTACHMENT
+        )
+
+        self.assertEqual(child.child_role, Document.ChildRole.MAIL_ATTACHMENT)
+
+    def test_manually_nested_child_has_blank_child_role_by_default(self):
+        child = Document.objects.create(title="Nachtrag", parent=self.parent)
+
+        self.assertEqual(child.child_role, "")
+
+    def test_document_cannot_be_its_own_parent(self):
+        with self.assertRaises(ValidationError):
+            self.parent.parent = self.parent
+            self.parent.save()
+
+    def test_indirect_cycle_is_rejected(self):
+        child = Document.objects.create_child(self.parent, title="Anhang.pdf")
+
+        with self.assertRaises(ValidationError):
+            self.parent.parent = child
+            self.parent.save()
+
+    def test_roots_excludes_children(self):
+        child = Document.objects.create_child(self.parent, title="Anhang.pdf")
+
+        roots = Document.objects.roots()
+        self.assertIn(self.parent, roots)
+        self.assertNotIn(child, roots)
+
+    def test_children_of_returns_direct_children_only(self):
+        child = Document.objects.create_child(self.parent, title="Anhang.pdf")
+        grandchild = Document.objects.create_child(child, title="Anhang-Anhang.pdf")
+
+        direct_children = Document.objects.children_of(self.parent)
+        self.assertEqual(set(direct_children), {child})
+        self.assertNotIn(grandchild, direct_children)
+
+    def test_subtree_returns_descendants_at_any_depth(self):
+        child = Document.objects.create_child(self.parent, title="Anhang.pdf")
+        grandchild = Document.objects.create_child(child, title="Anhang-Anhang.pdf")
+        unrelated = Document.objects.create(title="Unrelated")
+
+        subtree = self.parent.subtree()
+        self.assertEqual(set(subtree), {child, grandchild})
+        self.assertNotIn(unrelated, subtree)
+
+    def test_deleting_parent_cascades_to_children(self):
+        child = Document.objects.create_child(self.parent, title="Anhang.pdf")
+
+        self.parent.delete()
+
+        self.assertFalse(Document.objects.filter(pk=child.pk).exists())
 
 
 class DocumentVisibleToTests(TestCase):

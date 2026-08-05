@@ -2,32 +2,39 @@
 {% if page_obj %}
 <div class="findus-search-results">
     {% for hit in page_obj %}
-    <a href="{% url 'documents:detail' hit.document.id %}" class="findus-search-hit">
-        <div class="findus-search-hit-header">
-            <span class="findus-search-hit-title">{{ hit.document.title }}</span>
-            <span class="findus-search-hit-score" title="Relevanz">{% widthratio hit.score 1 100 %}%</span>
-        </div>
-        {% if hit.snippet %}
-        <p class="findus-search-hit-snippet">{{ hit.snippet|truncatechars:220 }}</p>
+    <div class="findus-search-hit">
+        {% if hit.document.parent %}
+        <p class="findus-document-breadcrumb mb-1">
+            aus: <a href="{% url 'documents:detail' hit.document.parent.pk %}">{{ hit.document.parent.title }}</a>
+        </p>
         {% endif %}
-        <div class="findus-search-hit-meta">
-            <span>{{ hit.document.correspondent.name|default:"—" }}</span>
-            <span class="badge {{ hit.document.direction|direction_badge_class }}">
-                {{ hit.document.get_direction_display }}
-            </span>
-            {% if hit.document.action_status != "keine" %}
-            <span class="badge {{ hit.document.action_status|action_status_badge_class }}">
-                {{ hit.document.get_action_status_display }}
-            </span>
+        <a href="{% url 'documents:detail' hit.document.id %}" class="findus-search-hit-link">
+            <div class="findus-search-hit-header">
+                <span class="findus-search-hit-title">{{ hit.document.title }}</span>
+                <span class="findus-search-hit-score" title="Relevanz">{% widthratio hit.score 1 100 %}%</span>
+            </div>
+            {% if hit.snippet %}
+            <p class="findus-search-hit-snippet">{{ hit.snippet|truncatechars:220 }}</p>
             {% endif %}
-            {% for vorgang in hit.document.vorgaenge.all %}
-            <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
-            {% endfor %}
-            {% for tag in hit.document.tags.all %}
-            <span class="badge text-bg-secondary">{{ tag }}</span>
-            {% endfor %}
-        </div>
-    </a>
+            <div class="findus-search-hit-meta">
+                <span>{{ hit.document.correspondent.name|default:"—" }}</span>
+                <span class="badge {{ hit.document.direction|direction_badge_class }}">
+                    {{ hit.document.get_direction_display }}
+                </span>
+                {% if hit.document.action_status != "keine" %}
+                <span class="badge {{ hit.document.action_status|action_status_badge_class }}">
+                    {{ hit.document.get_action_status_display }}
+                </span>
+                {% endif %}
+                {% for vorgang in hit.document.vorgaenge.all %}
+                <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
+                {% endfor %}
+                {% for tag in hit.document.tags.all %}
+                <span class="badge text-bg-secondary">{{ tag }}</span>
+                {% endfor %}
+            </div>
+        </a>
+    </div>
     {% endfor %}
 </div>
 

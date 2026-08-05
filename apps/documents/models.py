@@ -1,6 +1,7 @@
 import mimetypes
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
@@ -11,6 +12,12 @@ from apps.accounts.models import Department
 _HEX_COLOR_VALIDATOR = RegexValidator(
     regex=r"^#[0-9a-fA-F]{6}$", message="Farbe muss ein Hex-Code sein, z. B. #a1b2c3."
 )
+
+# Sentinel for `DocumentQuerySet.create_child()` -- distinguishes "caller
+# didn't pass this" (inherit from parent) from an explicit override of
+# `None`/empty, which `departments=[]` or `owner=None` must still be able to
+# express.
+_UNSET = object()
 
 
 class TimeStampedModel(models.Model):
@@ -111,7 +118,11 @@ class DocumentQuerySet(models.QuerySet):
 
         Genau zwei Ebenen (siehe Architektur.md, "Sichtbarkeitsmodell"):
         Abteilung sieht alles · privat = nur Besitzer. RLS bewusst noch
-        nicht — Durchsetzung läuft rein über diesen Manager/QuerySet.
+        nicht — Durchsetzung läuft rein über diesen Manager/QuerySet. Gilt
+        unverändert für Unterdokumente (#1069) -- die Baum-Struktur ändert
+        nichts an dieser Query, sie filtert weiter nur nach
+        `visibility`/`owner`/`departments`, egal ob der Treffer ein
+        Leitdokument oder ein Unterdokument ist.
         """
         if user.is_superuser:
             return self
@@ -125,6 +136,47 @@ class DocumentQuerySet(models.QuerySet):
                 owner=user,
             )
         ).distinct()
+
+    def roots(self):
+        """Leitdokumente (kein `parent`) -- was Eingang/Browsing (#1069) als
+
+        eigene Zeile zeigt; Unterdokumente hängen eingeklappt darunter.
+        """
+        return self.filter(parent__isnull=True)
+
+    def children_of(self, document):
+        return self.filter(parent=document)
+
+    def create_child(
+        self,
+        parent,
+        *,
+        child_role="",
+        owner=_UNSET,
+        visibility=_UNSET,
+        departments=_UNSET,
+        **fields,
+    ):
+        """Create a Unterdokument unter `parent` (#1069).
+
+        Erbt per Default den Scope (`owner`/`visibility`/`departments`) vom
+        Leitdokument -- ein Anhang kann inhaltlich keinen anderen
+        Sichtbarkeitsbereich haben als sein Anschreiben. Jedes der drei
+        Scope-Felder bleibt einzeln überschreibbar für den Einzelfall, der
+        einen abweichenden Scope braucht.
+        """
+        document = self.model(
+            parent=parent,
+            child_role=child_role,
+            owner=parent.owner if owner is _UNSET else owner,
+            visibility=parent.visibility if visibility is _UNSET else visibility,
+            **fields,
+        )
+        document.save()
+        document.departments.set(
+            parent.departments.all() if departments is _UNSET else departments
+        )
+        return document
 
 
 class Document(TimeStampedModel):
@@ -192,6 +244,20 @@ class Document(TimeStampedModel):
         OPEN = "offen", "Offen"
         DONE = "erledigt", "Erledigt"
 
+    class ChildRole(models.TextChoices):
+        """Semantik der Kante zu `parent` (#1069) -- hält fest, *warum* ein
+
+        Dokument unter seinem Leitdokument hängt, damit ein automatisch
+        erzeugter Mail-Anhang später von einer manuell gesetzten
+        Verschachtelung unterscheidbar bleibt. Leer/`""` = keine
+        Automatik, jemand hat die Zuordnung von Hand gesetzt.
+        """
+
+        MAIL_ATTACHMENT = "mail_attachment", "Mail-Anhang"
+        EMBEDDED = "embedded", "Eingebettet"
+        NACHTRAG = "nachtrag", "Nachtrag"
+        VERSION = "version", "Version"
+
     title = models.CharField(max_length=255)
     correspondent = models.ForeignKey(
         Correspondent,
@@ -199,6 +265,26 @@ class Document(TimeStampedModel):
         null=True,
         blank=True,
         related_name="documents",
+    )
+    # Leitdokument-Hierarchie (#1069): selbst-referenzierend statt eines
+    # generischen Querverweis-Modells, weil sich Mail-Anschreiben+Anhänge,
+    # Brief+Anlagen, Vertrag+Nachträge etc. alle mit demselben 1:n-Baum
+    # abbilden lassen. CASCADE, nicht SET_NULL/PROTECT: ein Unterdokument
+    # ohne sein Leitdokument wäre eine verwaiste Karteikarte ohne erklärten
+    # Scope (der ja vom Leitdokument geerbt wird, siehe `create_child`) --
+    # und PROTECT würde jedes Löschen eines Leitdokuments blockieren,
+    # solange Kinder existieren, ohne dass das einen Vorteil brächte, da
+    # `document_delete` ohnehin erst nach einer expliziten Nutzer-
+    # Bestätigung feuert.
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="children",
+    )
+    child_role = models.CharField(
+        max_length=20, choices=ChildRole.choices, blank=True, default=""
     )
     vorgaenge = models.ManyToManyField(Vorgang, blank=True, related_name="documents")
     tags = models.ManyToManyField(Tag, blank=True, related_name="documents")
@@ -272,6 +358,52 @@ class Document(TimeStampedModel):
 
     def __str__(self):
         return self.title
+
+    def save(self, *args, **kwargs):
+        if self.parent_id is not None:
+            self._check_no_parent_cycle()
+        super().save(*args, **kwargs)
+
+    def _check_no_parent_cycle(self):
+        """Walk the `parent` chain before saving (#1069) -- a self-ref FK
+
+        has no built-in cycle protection, and A↝B↝A would turn `subtree()`
+        and the Eingang's tree view into an infinite loop.
+        """
+        ancestor_id = self.parent_id
+        visited = set()
+        while ancestor_id is not None:
+            if self.pk is not None and ancestor_id == self.pk:
+                raise ValidationError(
+                    "Zyklische Leitdokument-Zuordnung: ein Dokument kann "
+                    "nicht (mittelbar) sein eigenes Unterdokument sein."
+                )
+            if ancestor_id in visited:
+                return
+            visited.add(ancestor_id)
+            ancestor_id = (
+                Document.objects.filter(pk=ancestor_id)
+                .values_list("parent_id", flat=True)
+                .first()
+            )
+
+    def subtree(self):
+        """All descendants of this document, any depth (#1069) -- "alles
+
+        aus diesem Leitdokument". Iterative Breadth-First-Suche statt
+        rekursiver CTE: Anhang-Bäume sind flach, ein künstliches
+        Tiefenlimit ist unnötig, aber eine simple Python-Schleife genügt.
+        """
+        collected_ids = []
+        frontier = [self.pk]
+        while frontier:
+            frontier = list(
+                Document.objects.filter(parent_id__in=frontier).values_list(
+                    "pk", flat=True
+                )
+            )
+            collected_ids.extend(frontier)
+        return Document.objects.filter(pk__in=collected_ids)
 
     @property
     def original_filename(self):
@@ -371,36 +503,6 @@ class VorgangSuggestion(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} -> Document {self.document_id}"
-
-
-class DocumentLink(TimeStampedModel):
-    class LinkType(models.TextChoices):
-        RELATED = "related", "Verwandt"
-        REPLY = "reply", "Antwort auf"
-        ATTACHMENT = "attachment", "Anhang von"
-        SUPERSEDES = "supersedes", "Ersetzt"
-
-    from_document = models.ForeignKey(
-        Document, on_delete=models.CASCADE, related_name="links_from"
-    )
-    to_document = models.ForeignKey(
-        Document, on_delete=models.CASCADE, related_name="links_to"
-    )
-    link_type = models.CharField(
-        max_length=20, choices=LinkType.choices, default=LinkType.RELATED
-    )
-    note = models.CharField(max_length=255, blank=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["from_document", "to_document", "link_type"],
-                name="unique_document_link",
-            ),
-        ]
-
-    def __str__(self):
-        return f"{self.from_document_id} -> {self.to_document_id} ({self.link_type})"
 
 
 class Chunk(TimeStampedModel):
