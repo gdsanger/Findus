@@ -73,7 +73,7 @@ class DocumentRetrievalService:
     ) -> QuerySet[Document]:
         documents = (
             Document.objects.visible_to(self.user)
-            .select_related("correspondent")
+            .select_related("correspondent", "parent")
             .prefetch_related("vorgaenge", "tags")
         )
         if correspondent is not None:
@@ -106,7 +106,13 @@ class DocumentRetrievalService:
         direction: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> QuerySet[Document]:
-        """Structured browse -- no semantic query, just visibility + filters."""
+        """Structured browse -- no semantic query, just visibility + filters.
+
+        Roots only (#1069): browsing surfaces Leitdokumente, Unterdokumente
+        stay collapsed underneath (`Document.children`) -- unlike
+        `search()`, which must still return a matching Unterdokument as its
+        own hit.
+        """
         return self._filtered_documents(
             correspondent=correspondent,
             vorgang=vorgang,
@@ -116,7 +122,7 @@ class DocumentRetrievalService:
             status=status,
             direction=direction,
             action_status=action_status,
-        )
+        ).roots()
 
     def search(
         self,
