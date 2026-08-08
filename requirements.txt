@@ -15,6 +15,14 @@ pgvector==0.4.1
 django-htmx==1.23.2
 Markdown==3.7
 
+# Mail-Ingest: Body als Leitdokument (#1070). beautifulsoup4 entrümpelt den
+# (HTML-)Mailbody zu Klartext (Tracking-Pixel/Skripte/zitierte Verläufe raus,
+# nur der stdlib-html.parser als Backend -- keine lxml-Binärabhängigkeit).
+# fpdf2 rendert daraus ein lesbares PDF für die Ansicht (reines Python, kein
+# wkhtmltopdf/Headless-Browser-Binary im Container).
+beautifulsoup4==4.13.4
+fpdf2==2.8.7
+
 # Cache / queue / background worker (Django-Q2, not Celery)
 django-q2==1.8.0
 redis==5.2.1

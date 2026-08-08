@@ -244,6 +244,20 @@ class Document(TimeStampedModel):
         OPEN = "offen", "Offen"
         DONE = "erledigt", "Erledigt"
 
+    class Kind(models.TextChoices):
+        """Woraus dieses Dokument entstanden ist (#1070). `mail_body` ist ein
+
+        aus dem E-Mail-Text erzeugtes Leitdokument (bereinigter Klartext für
+        den Index + generiertes PDF für die Ansicht) -- im Gegensatz zu
+        `document`, dem Normalfall einer eingegangenen/hochgeladenen Datei.
+        Trägt die "aus Body erzeugt"-Kennzeichnung (Badge im Detail) und
+        erlaubt es dem Mail-Ingest, ein bereits erfasstes Body-Leitdokument
+        per Message-ID wiederzuerkennen (Dedup), statt es doppelt anzulegen.
+        """
+
+        DOCUMENT = "document", "Dokument"
+        MAIL_BODY = "mail_body", "Mail-Text"
+
     class ChildRole(models.TextChoices):
         """Semantik der Kante zu `parent` (#1069) -- hält fest, *warum* ein
 
@@ -259,6 +273,9 @@ class Document(TimeStampedModel):
         VERSION = "version", "Version"
 
     title = models.CharField(max_length=255)
+    kind = models.CharField(
+        max_length=20, choices=Kind.choices, default=Kind.DOCUMENT, db_index=True
+    )
     correspondent = models.ForeignKey(
         Correspondent,
         on_delete=models.SET_NULL,
@@ -404,6 +421,14 @@ class Document(TimeStampedModel):
             )
             collected_ids.extend(frontier)
         return Document.objects.filter(pk__in=collected_ids)
+
+    @property
+    def is_mail_body(self):
+        """True for a Leitdokument erzeugt aus dem E-Mail-Text (#1070) --
+
+        drives the "aus Body erzeugt" badge and keeps the check in one place.
+        """
+        return self.kind == self.Kind.MAIL_BODY
 
     @property
     def original_filename(self):

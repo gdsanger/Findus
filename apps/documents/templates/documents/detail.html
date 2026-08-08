@@ -9,6 +9,12 @@
 {% endif %}
 {% include "partials/_content_header.html" with page_title=document.title %}
 
+{% if document.is_mail_body %}
+<p class="findus-document-kind">
+    <span class="badge text-bg-info">Aus E-Mail-Text erzeugt</span>
+</p>
+{% endif %}
+
 <section class="findus-section findus-detail-actions">
     {% if document.original_file %}
     {% if document.is_inline_previewable %}
