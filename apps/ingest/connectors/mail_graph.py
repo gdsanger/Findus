@@ -1,12 +1,12 @@
 """Microsoft-Graph-Postfach-Connector: liest ungelesene Mails aus einem
 per Graph API erreichbaren Postfach und übergibt sie an den gemeinsamen
-Ingest-Kontrakt (`apps.ingest.service`) -- ein Document je Anhang. Nur
-wenn eine Mail *keine* Anhänge hat, wird stattdessen der Mailbody zum
-Document (sonst ginge die Info verloren); hat sie Anhänge, hängt
-Betreff/Absender/Datum/Body als Kontext (`Document.metadata`) an den
-Anhang-Documents statt ein eigenes Body-Document zu erzeugen (#1062 --
-vorher gab's pro Mail ein "Geister-Dokument" aus dem Body zusätzlich zu
-den Anhängen).
+Ingest-Kontrakt (`apps.ingest.service.ingest_mail`). Jede Mail wird zu
+*einem* Leitdokument aus dem Body (`kind=mail_body`), die Anhänge hängen
+als Unterdokumente (`child_role=mail_attachment`) darunter (#1070 --
+nutzt die Dokument-Hierarchie aus #1069). Der Body wird immer aufbereitet
+(HTML -> Klartext + PDF) und auf Substanz geprüft; ohne substanziellen
+Inhalt bleibt das Leitdokument eine dünne Hülle (nur Metadaten), die
+Anhänge hängen trotzdem daran.
 
 Nutzt den client-credentials Token-Fetch aus `apps.mail.backends.graph`
 (`GraphTokenClient`) -- dieselbe App-Registrierung wie der Mail-Versand,
@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import re
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Optional
@@ -38,13 +37,15 @@ from django.conf import settings
 from apps.accounts.models import Department
 from apps.documents.models import Document
 from apps.documents.services import find_or_create_correspondent_by_email
-from apps.ingest.service import ingest_file
+from apps.ingest.service import MailAttachment, ingest_mail
 from apps.mail.backends.graph import GraphTokenClient
 
 logger = logging.getLogger(__name__)
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
-MESSAGE_SELECT_FIELDS = "id,subject,from,receivedDateTime,hasAttachments,body"
+MESSAGE_SELECT_FIELDS = (
+    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,body"
+)
 
 
 @dataclass(frozen=True)
@@ -134,72 +135,39 @@ def _sender_email_and_name(message: dict) -> tuple[str, str]:
     return sender.get("address", ""), sender.get("name", "")
 
 
-def _safe_filename(subject: str, extension: str) -> str:
-    safe_subject = re.sub(r"[^\w\-. ]", "_", subject or "email").strip()[:80] or "email"
-    return f"{safe_subject}.{extension}"
+def _recipients(message: dict) -> str:
+    addresses = [
+        ((recipient or {}).get("emailAddress") or {}).get("address", "")
+        for recipient in message.get("toRecipients") or []
+    ]
+    return ", ".join(address for address in addresses if address)
 
 
-def _assign_correspondent(result, correspondent) -> None:
-    if correspondent is None or not result.created:
-        return
-    result.document.correspondent = correspondent
-    result.document.save(update_fields=["correspondent"])
-
-
-def _ingest_attachments(mailbox, token, message, department, correspondent, metadata) -> None:
+def _collect_attachments(mailbox, token, message) -> list[MailAttachment]:
+    if not message.get("hasAttachments"):
+        return []
+    attachments: list[MailAttachment] = []
     for attachment in _fetch_attachments(mailbox, token, message["id"]):
         if attachment.get("@odata.type") != "#microsoft.graph.fileAttachment":
             continue
         content = attachment.get("contentBytes")
         if not content:
             continue
-        result = ingest_file(
-            BytesIO(base64.b64decode(content)),
-            filename=attachment.get("name") or "attachment",
-            source=Document.Source.MAIL,
-            department=department,
-            visibility=mailbox.visibility,
-            content_type=attachment.get("contentType", ""),
-            origin_metadata=metadata,
-            on_duplicate=mailbox.on_duplicate,
-            correspondent=correspondent,
+        attachments.append(
+            MailAttachment(
+                fileobj=BytesIO(base64.b64decode(content)),
+                filename=attachment.get("name") or "attachment",
+                content_type=attachment.get("contentType", ""),
+            )
         )
-        _assign_correspondent(result, correspondent)
-        logger.info(
-            "Ingest-Graph-Postfach: %s -> Document %s (created=%s, duplicate=%s)",
-            attachment.get("name"),
-            result.document.id,
-            result.created,
-            result.duplicate,
-        )
+    return attachments
 
 
-def _ingest_body(mailbox, message, department, correspondent, metadata) -> None:
+def _body_content(message: dict) -> tuple[str, str]:
     body = message.get("body") or {}
     content = body.get("content") or ""
-    if not content:
-        return
-    content_type = body.get("contentType") or "text"
-    extension = "html" if content_type == "html" else "txt"
-    result = ingest_file(
-        BytesIO(content.encode("utf-8")),
-        filename=_safe_filename(message.get("subject", ""), extension),
-        source=Document.Source.MAIL,
-        title=message.get("subject") or None,
-        department=department,
-        visibility=mailbox.visibility,
-        content_type="text/html" if extension == "html" else "text/plain",
-        origin_metadata=metadata,
-        on_duplicate=mailbox.on_duplicate,
-        correspondent=correspondent,
-    )
-    _assign_correspondent(result, correspondent)
-    logger.info(
-        "Ingest-Graph-Postfach: Mailbody -> Document %s (created=%s, duplicate=%s)",
-        result.document.id,
-        result.created,
-        result.duplicate,
-    )
+    content_type = "text/html" if (body.get("contentType") or "text") == "html" else "text/plain"
+    return content, content_type
 
 
 def scan_mailbox(mailbox: GraphMailbox) -> None:
@@ -219,23 +187,34 @@ def scan_mailbox(mailbox: GraphMailbox) -> None:
         try:
             sender_email, sender_name = _sender_email_and_name(message)
             correspondent = find_or_create_correspondent_by_email(sender_email, sender_name)
-            origin_metadata = {
+            body, body_content_type = _body_content(message)
+            mail_metadata = {
                 "message_id": message_id,
                 "mail_from": sender_email,
+                "mail_to": _recipients(message),
                 "mail_subject": message.get("subject", ""),
                 "mail_date": message.get("receivedDateTime", ""),
             }
 
-            if message.get("hasAttachments"):
-                # Body wird nicht zum eigenen Document, sondern nur als
-                # Kontext an die Anhang-Documents gehängt (#1062).
-                body_content = (message.get("body") or {}).get("content") or ""
-                metadata = dict(origin_metadata)
-                if body_content:
-                    metadata["mail_body"] = body_content
-                _ingest_attachments(mailbox, token, message, department, correspondent, metadata)
-            elif mailbox.ingest_body:
-                _ingest_body(mailbox, message, department, correspondent, origin_metadata)
+            result = ingest_mail(
+                body=body,
+                body_content_type=body_content_type,
+                attachments=_collect_attachments(mailbox, token, message),
+                mail_metadata=mail_metadata,
+                department=department,
+                visibility=mailbox.visibility,
+                on_duplicate=mailbox.on_duplicate,
+                correspondent=correspondent,
+                fill_body=mailbox.ingest_body,
+            )
+            logger.info(
+                "Ingest-Graph-Postfach: Mail -> Leitdokument %s "
+                "(created=%s, duplicate=%s, anhaenge=%s)",
+                result.leitdokument.id,
+                result.created,
+                result.duplicate,
+                len(result.attachments),
+            )
 
             _mark_as_read(mailbox, token, message_id)
         except Exception:

@@ -1,11 +1,12 @@
 """IMAP-Postfach-Connector: pollt ein Postfach per IMAP4, holt ungelesene
 Mails und übergibt sie an den gemeinsamen Ingest-Kontrakt
-(`apps.ingest.service`) -- ein Document je Anhang. Nur wenn eine Mail
-*keine* Anhänge hat, wird stattdessen der Mailbody zum Document (sonst
-ginge die Info verloren); hat sie Anhänge, hängt Betreff/Absender/Datum/
-Body als Kontext (`Document.metadata`) an den Anhang-Documents statt ein
-eigenes Body-Document zu erzeugen (#1062 -- vorher gab's pro Mail ein
-"Geister-Dokument" aus dem Body zusätzlich zu den Anhängen).
+(`apps.ingest.service.ingest_mail`). Jede Mail wird zu *einem*
+Leitdokument aus dem Body (`kind=mail_body`), die Anhänge hängen als
+Unterdokumente (`child_role=mail_attachment`) darunter (#1070 -- nutzt
+die Dokument-Hierarchie aus #1069). Der Body wird immer aufbereitet
+(HTML -> Klartext + PDF) und auf Substanz geprüft; ohne substanziellen
+Inhalt bleibt das Leitdokument eine dünne Hülle (nur Metadaten), die
+Anhänge hängen trotzdem daran.
 
 Reines `imaplib`/`email` (Stdlib) statt einer zusätzlichen Abhängigkeit --
 passt zum Rest der Codebase (z. B. `apps.ai.providers`, `apps.mail.backends`:
@@ -26,7 +27,6 @@ import email
 import email.policy
 import imaplib
 import logging
-import re
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -38,7 +38,7 @@ from django.conf import settings
 from apps.accounts.models import Department
 from apps.documents.models import Document
 from apps.documents.services import find_or_create_correspondent_by_email
-from apps.ingest.service import ingest_file
+from apps.ingest.service import MailAttachment, ingest_mail
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +115,6 @@ def _sender_email_and_name(msg: EmailMessage) -> tuple[str, str]:
     return address, name
 
 
-def _safe_filename(subject: str, extension: str) -> str:
-    safe_subject = re.sub(r"[^\w\-. ]", "_", subject or "email").strip()[:80] or "email"
-    return f"{safe_subject}.{extension}"
-
-
-def _assign_correspondent(result, correspondent) -> None:
-    if correspondent is None or not result.created:
-        return
-    result.document.correspondent = correspondent
-    result.document.save(update_fields=["correspondent"])
-
-
 def _body_content(msg) -> tuple[Optional[str], Optional[str]]:
     """Return `(content, content_type)` of the mail's preferred body part, or `(None, None)`."""
     body_part = msg.get_body(preferencelist=("html", "plain"))
@@ -138,57 +126,20 @@ def _body_content(msg) -> tuple[Optional[str], Optional[str]]:
     return content, body_part.get_content_type()
 
 
-def _ingest_attachments(parts, mailbox, department, correspondent, metadata) -> None:
-    for part in parts:
+def _collect_attachments(msg) -> list[MailAttachment]:
+    attachments: list[MailAttachment] = []
+    for part in msg.iter_attachments():
         payload = part.get_payload(decode=True)
         if not payload:
             continue
-        result = ingest_file(
-            BytesIO(payload),
-            filename=part.get_filename() or "attachment",
-            source=Document.Source.MAIL,
-            department=department,
-            visibility=mailbox.visibility,
-            content_type=part.get_content_type(),
-            origin_metadata=metadata,
-            on_duplicate=mailbox.on_duplicate,
-            correspondent=correspondent,
+        attachments.append(
+            MailAttachment(
+                fileobj=BytesIO(payload),
+                filename=part.get_filename() or "attachment",
+                content_type=part.get_content_type(),
+            )
         )
-        _assign_correspondent(result, correspondent)
-        logger.info(
-            "Ingest-IMAP-Postfach: %s -> Document %s (created=%s, duplicate=%s)",
-            part.get_filename(),
-            result.document.id,
-            result.created,
-            result.duplicate,
-        )
-
-
-def _ingest_body(msg, mailbox, department, correspondent, metadata) -> None:
-    content, content_type = _body_content(msg)
-    if content is None:
-        return
-    extension = "html" if content_type == "text/html" else "txt"
-    subject = metadata.get("mail_subject", "")
-    result = ingest_file(
-        BytesIO(content.encode("utf-8")),
-        filename=_safe_filename(subject, extension),
-        source=Document.Source.MAIL,
-        title=subject or None,
-        department=department,
-        visibility=mailbox.visibility,
-        content_type=content_type,
-        origin_metadata=metadata,
-        on_duplicate=mailbox.on_duplicate,
-        correspondent=correspondent,
-    )
-    _assign_correspondent(result, correspondent)
-    logger.info(
-        "Ingest-IMAP-Postfach: Mailbody -> Document %s (created=%s, duplicate=%s)",
-        result.document.id,
-        result.created,
-        result.duplicate,
-    )
+    return attachments
 
 
 def scan_mailbox(mailbox: ImapMailbox) -> None:
@@ -205,24 +156,34 @@ def scan_mailbox(mailbox: ImapMailbox) -> None:
 
                 sender_email, sender_name = _sender_email_and_name(msg)
                 correspondent = find_or_create_correspondent_by_email(sender_email, sender_name)
-                origin_metadata = {
+                body, body_content_type = _body_content(msg)
+                mail_metadata = {
                     "message_id": msg.get("Message-ID", ""),
                     "mail_from": sender_email,
+                    "mail_to": msg.get("To", ""),
                     "mail_subject": msg.get("Subject", ""),
                     "mail_date": msg.get("Date", ""),
                 }
 
-                attachments = list(msg.iter_attachments())
-                if attachments:
-                    # Body wird nicht zum eigenen Document, sondern nur als
-                    # Kontext an die Anhang-Documents gehängt (#1062).
-                    content, _ = _body_content(msg)
-                    metadata = dict(origin_metadata)
-                    if content:
-                        metadata["mail_body"] = content
-                    _ingest_attachments(attachments, mailbox, department, correspondent, metadata)
-                elif mailbox.ingest_body:
-                    _ingest_body(msg, mailbox, department, correspondent, origin_metadata)
+                result = ingest_mail(
+                    body=body,
+                    body_content_type=body_content_type or "",
+                    attachments=_collect_attachments(msg),
+                    mail_metadata=mail_metadata,
+                    department=department,
+                    visibility=mailbox.visibility,
+                    on_duplicate=mailbox.on_duplicate,
+                    correspondent=correspondent,
+                    fill_body=mailbox.ingest_body,
+                )
+                logger.info(
+                    "Ingest-IMAP-Postfach: Mail -> Leitdokument %s "
+                    "(created=%s, duplicate=%s, anhaenge=%s)",
+                    result.leitdokument.id,
+                    result.created,
+                    result.duplicate,
+                    len(result.attachments),
+                )
 
                 _mark_seen(connection, message_id)
             except Exception:

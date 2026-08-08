@@ -12,13 +12,22 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+from io import BytesIO
 from typing import IO, Any, Literal, Optional
 
 from django.core.files import File
 
 from apps.accounts.models import Department
 from apps.documents.models import Correspondent, Document
+from apps.documents.text_sanitize import clean_text
+from apps.ingest.mail_body import (
+    build_index_text,
+    clean_body,
+    has_substance,
+    render_body_pdf,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +41,24 @@ class IngestResult:
     document: Document
     created: bool
     duplicate: bool
+
+
+@dataclass(frozen=True)
+class MailAttachment:
+    """Ein Mail-Anhang, normalisiert ueber beide Backends (IMAP/Graph) --
+    der Connector reicht nur Bytes + Herkunft, der Ingest kennt den Rest."""
+
+    fileobj: IO[bytes]
+    filename: str
+    content_type: str = ""
+
+
+@dataclass(frozen=True)
+class MailIngestResult:
+    leitdokument: Document
+    created: bool
+    duplicate: bool
+    attachments: list[IngestResult] = field(default_factory=list)
 
 
 def _hash_and_size(fileobj: IO[bytes]) -> tuple[str, int]:
@@ -76,6 +103,25 @@ def _enqueue_processing(document_id: int) -> str:
     return async_task(extract_document_task, document_id)
 
 
+def _enqueue_body_processing(document_id: int) -> str:
+    """Enqueue der Pipeline fuer ein Body-Leitdokument (#1070): Analyse ->
+    Embedding, *ohne* Extraktion. Der Index-Text (Metadaten-Kopf +
+    bereinigter Body) steht schon in `text_content` -- die Extraktions-
+    Kaskade wuerde ihn nur durch aus dem generierten PDF zurueckgelesenen
+    Text ersetzen. `analyze_document_task` verkettet selbst weiter zum
+    Embedding."""
+    from django_q.tasks import async_task
+
+    from apps.documents.tasks import analyze_document_task
+
+    return async_task(analyze_document_task, document_id)
+
+
+def _safe_pdf_filename(subject: str) -> str:
+    safe_subject = re.sub(r"[^\w\-. ]", "_", subject or "email").strip()[:80] or "email"
+    return f"{safe_subject}.pdf"
+
+
 def ingest_file(
     fileobj: IO[bytes],
     *,
@@ -89,6 +135,8 @@ def ingest_file(
     origin_metadata: Optional[dict] = None,
     on_duplicate: OnDuplicate = "skip",
     correspondent: Optional[Correspondent] = None,
+    parent: Optional[Document] = None,
+    child_role: str = "",
 ) -> IngestResult:
     """Ingest `fileobj` as a new `Document`, or recognize it as a duplicate.
 
@@ -105,6 +153,11 @@ def ingest_file(
     document untouched; `on_duplicate="link"` additionally records the
     new occurrence's provenance on it -- neither path re-imports the
     file or writes a second blob to storage.
+
+    `parent`/`child_role` hang a newly created `Document` under a
+    Leitdokument (#1069/#1070) -- used for mail attachments
+    (`child_role="mail_attachment"`). A duplicate hit is never re-parented;
+    the existing document keeps whatever tree position it already had.
     """
 
     sha256, size = _hash_and_size(fileobj)
@@ -140,6 +193,8 @@ def ingest_file(
         owner=owner,
         visibility=visibility or Document.Visibility.DEPARTMENT,
         correspondent=correspondent,
+        parent=parent,
+        child_role=child_role,
     )
     document.original_file.save(filename, File(fileobj), save=False)
     document.save()
@@ -155,3 +210,173 @@ def ingest_file(
         sha256,
     )
     return IngestResult(document=document, created=True, duplicate=False)
+
+
+def _create_mail_leitdokument(
+    *,
+    subject: str,
+    mail_metadata: dict,
+    cleaned_body: str,
+    source: str,
+    department: Optional[Department],
+    owner: Optional[Any],
+    visibility: Optional[str],
+    correspondent: Optional[Correspondent],
+) -> tuple[Document, bool]:
+    """Legt das Body-Leitdokument einer Mail an (#1070).
+
+    Mit substanziellem Body (`cleaned_body` nicht leer): Index-Text
+    (Metadaten-Kopf + Body) in `text_content`, generiertes PDF als
+    `original_file`, Enqueue Analyse->Embedding. Ohne: duenne Huelle --
+    nur Metadaten, kein Body-Text/PDF/Embedding. Die Anhaenge haengt der
+    Aufrufer in beiden Faellen als Unterdokumente darunter.
+
+    Zweiter Rueckgabewert: ob ein Body-PDF gefuellt wurde (True) oder es
+    eine Huelle blieb (False) -- nur fuers Logging/Tests.
+    """
+    metadata = dict(mail_metadata)
+    title = (subject or "(ohne Betreff)")[:255]
+
+    document = Document(
+        title=title,
+        kind=Document.Kind.MAIL_BODY,
+        source=source,
+        owner=owner,
+        visibility=visibility or Document.Visibility.DEPARTMENT,
+        correspondent=correspondent,
+    )
+
+    filled = bool(cleaned_body)
+    if filled:
+        index_text = clean_text(build_index_text(mail_metadata, cleaned_body))
+        pdf_bytes = render_body_pdf(mail_metadata, cleaned_body)
+        filename = _safe_pdf_filename(subject)
+        metadata.update(
+            {
+                "original_filename": filename,
+                "mime_type": "application/pdf",
+                "size": len(pdf_bytes),
+                # Kennzeichnung "aus Body erzeugt" (Anforderung #4) -- neben
+                # dem Badge, das `kind=mail_body` im Detail rendert.
+                "body_source": "generated_from_mail",
+            }
+        )
+        document.text_content = index_text
+        document.markdown = index_text
+        document.extraction_method = Document.ExtractionMethod.TEXT_LAYER
+        document.sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+        document.metadata = metadata
+        document.processing_status = Document.ProcessingStatus.PENDING
+        document.original_file.save(filename, File(BytesIO(pdf_bytes)), save=False)
+        document.save()
+    else:
+        metadata["body_source"] = "thin_shell"
+        document.metadata = metadata
+        document.processing_status = Document.ProcessingStatus.READY
+        document.save()
+
+    if department is not None:
+        document.departments.add(department)
+
+    if filled:
+        _enqueue_body_processing(document.id)
+
+    return document, filled
+
+
+def ingest_mail(
+    *,
+    body: Optional[str],
+    body_content_type: str,
+    attachments: list[MailAttachment],
+    mail_metadata: dict,
+    source: str = Document.Source.MAIL,
+    department: Optional[Department] = None,
+    owner: Optional[Any] = None,
+    visibility: Optional[str] = None,
+    on_duplicate: OnDuplicate = "skip",
+    correspondent: Optional[Correspondent] = None,
+    fill_body: bool = True,
+) -> MailIngestResult:
+    """Ingest a whole mail as one Leitdokument (Body) + n Unterdokumente
+    (Anhaenge), #1070.
+
+    `mail_metadata` carries the provenance both backends normalise the same
+    way (`message_id`, `mail_from`, `mail_to`, `mail_subject`, `mail_date`).
+    The Body wird immer aufbereitet und auf Substanz geprueft (auch bei
+    Mails *mit* Anhang) -- der Substanz-Check (`mail_body.has_substance`,
+    Schwelle `FINDUS_MAIL_BODY_MIN_WORDS`) entscheidet nur, ob das
+    Leitdokument einen gefuellten Body (Klartext/PDF/Embedding) bekommt
+    oder eine duenne Huelle bleibt; die Anhaenge haengen so oder so daran.
+
+    Dedup des Leitdokuments ueber die Message-ID: eine bereits erfasste
+    Mail wird nicht ein zweites Mal angelegt (Idempotenz-Netz neben dem
+    Seen/Read-Flag der Connectoren). `fill_body=False` (Mailbox-Schalter
+    `ingest_body`) erzwingt die Huelle auch bei substanziellem Body.
+    """
+    message_id = (mail_metadata.get("message_id") or "").strip()
+    if message_id:
+        existing = (
+            Document.objects.filter(
+                kind=Document.Kind.MAIL_BODY, metadata__message_id=message_id
+            )
+            .roots()
+            .first()
+        )
+        if existing is not None:
+            logger.info(
+                "Ingest-Mail: Duplikat message_id=%s erkannt -> Document %s",
+                message_id,
+                existing.id,
+            )
+            return MailIngestResult(
+                leitdokument=existing, created=False, duplicate=True, attachments=[]
+            )
+
+    subject = mail_metadata.get("mail_subject") or ""
+    cleaned = clean_body(body or "", body_content_type or "")
+    substantial = fill_body and bool(cleaned) and has_substance(cleaned)
+
+    leitdokument, filled = _create_mail_leitdokument(
+        subject=subject,
+        mail_metadata=mail_metadata,
+        cleaned_body=cleaned if substantial else "",
+        source=source,
+        department=department,
+        owner=owner,
+        visibility=visibility,
+        correspondent=correspondent,
+    )
+    logger.info(
+        "Ingest-Mail: Leitdokument %s angelegt (kind=mail_body, body_gefuellt=%s, "
+        "anhaenge=%s, message_id=%s)",
+        leitdokument.id,
+        filled,
+        len(attachments),
+        message_id,
+    )
+
+    attachment_results: list[IngestResult] = []
+    for attachment in attachments:
+        result = ingest_file(
+            attachment.fileobj,
+            filename=attachment.filename,
+            source=source,
+            department=department,
+            owner=owner,
+            visibility=visibility or leitdokument.visibility,
+            content_type=attachment.content_type,
+            origin_metadata=dict(mail_metadata),
+            on_duplicate=on_duplicate,
+            correspondent=correspondent,
+            parent=leitdokument,
+            child_role=Document.ChildRole.MAIL_ATTACHMENT,
+        )
+        attachment_results.append(result)
+
+    return MailIngestResult(
+        leitdokument=leitdokument,
+        created=True,
+        duplicate=False,
+        attachments=attachment_results,
+    )

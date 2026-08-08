@@ -445,6 +445,13 @@ FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS = float(
     env("FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS", "60")
 )
 
+# Mail-Body als Leitdokument (#1070): Mindest-Wortzahl im bereinigten
+# Body (nach Entfernen von Zitat-Verlauf/Signatur/Tracking), ab der er
+# als eigenständiger Inhalt gilt. Darunter bleibt das Leitdokument eine
+# dünne Hülle (nur Metadaten, kein Body-PDF/Embedding) -- die Schwelle
+# entscheidet also "Body-Inhalt füllen ja/nein", nicht "Dokument ja/nein".
+FINDUS_MAIL_BODY_MIN_WORDS = int(env("FINDUS_MAIL_BODY_MIN_WORDS", "8"))
+
 # --------------------------------------------------------------------------
 # Ingest: Mail-Trigger-Intervall der django-q2-Schedule "mail-ingest" (#1060,
 # siehe apps.ingest.schedules) -- unabhängig von
