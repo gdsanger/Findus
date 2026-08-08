@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import mimetypes
 import re
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -20,6 +19,7 @@ from typing import IO, Any, Literal, Optional
 from django.core.files import File
 
 from apps.accounts.models import Department
+from apps.documents.mime import resolve_mime_type
 from apps.documents.models import Correspondent, Document
 from apps.documents.text_sanitize import clean_text
 from apps.ingest.mail_body import (
@@ -172,9 +172,12 @@ def ingest_file(
             origin_metadata=origin_metadata,
         )
 
-    resolved_content_type = content_type or mimetypes.guess_type(filename)[0] or (
-        "application/octet-stream"
-    )
+    # MIME zentral aus dem Inhalt bestimmen (#1077) -- die Client-/Upload-
+    # Angabe `content_type` ist bei Scannern haeufig `octet-stream`. Der
+    # Header genuegt fuer die Magic-Bytes-/libmagic-Erkennung.
+    header = fileobj.read(_HASH_CHUNK_SIZE)
+    fileobj.seek(0)
+    resolved_content_type = resolve_mime_type(header, filename=filename, declared=content_type)
     metadata = dict(origin_metadata or {})
     metadata.update(
         {

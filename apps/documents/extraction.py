@@ -30,6 +30,7 @@ from django.conf import settings
 
 from apps.ai.providers import ImageInput, VisionProvider, get_vision_provider
 
+from .mime import resolve_mime_type
 from .models import Document
 from .text_sanitize import clean_text
 
@@ -214,7 +215,10 @@ def _dispatch(
         return _extract_docx(data), 1
     if mime_type.startswith("text/"):
         return _extract_plain_text(data), 1
-    raise ValueError(f"Extraktion: nicht unterstuetzter MIME-Typ '{mime_type}'")
+    raise ValueError(
+        f"Extraktion: nicht unterstuetzter Dateityp '{mime_type}'. "
+        "Unterstuetzt werden PDF, Bilder (PNG/JPG/TIFF), Word (DOCX) und Textdateien."
+    )
 
 
 def _detect_language(text: str) -> str:
@@ -276,12 +280,22 @@ def extract_document(
     document.save(update_fields=["processing_status", "processing_error", "updated_at"])
 
     try:
-        mime_type = document.metadata.get("mime_type", "")
         document.original_file.open("rb")
         try:
             data = document.original_file.read()
         finally:
             document.original_file.close()
+
+        # MIME robust aus dem Inhalt bestimmen, nicht blind aus den beim
+        # Ingest gespeicherten Metadaten (#1077): so wird ein als
+        # `octet-stream` eingeliefertes PDF beim (Re-)Processing als
+        # `application/pdf` erkannt statt abgelehnt. Der normalisierte Typ
+        # wird zugleich in `metadata.mime_type` zurueckgeschrieben.
+        mime_type = resolve_mime_type(
+            data,
+            filename=document.original_filename,
+            declared=document.metadata.get("mime_type", ""),
+        )
 
         vision_provider_factory: VisionProviderFactory = (
             (lambda: vision_provider) if vision_provider is not None else get_vision_provider
@@ -295,6 +309,7 @@ def extract_document(
         document.extraction_method = _resolve_method(results)
         document.metadata = {
             **document.metadata,
+            "mime_type": mime_type,
             "language": _detect_language(text_content),
             "page_count": page_count,
         }

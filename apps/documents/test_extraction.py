@@ -274,6 +274,41 @@ class ExtractDocumentFailureTests(TestCase):
         self.assertEqual(document.processing_status, Document.ProcessingStatus.FAILED)
         self.assertIn("application/zip", document.processing_error)
 
+    def test_pdf_with_octet_stream_mime_is_recognised_and_extracted(self):
+        # Scanner/Upload-Wege melden fuer echte PDFs oft den generischen
+        # `application/octet-stream` (#1077). Der Inhalt (%PDF) muss den
+        # gespeicherten Typ ueberstimmen, statt abgelehnt zu werden -- auch
+        # bei Dateinamen mit Leerzeichen ("001 1.pdf").
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH])
+        document = _make_document(
+            filename="20260708130035_001 1.pdf",
+            data=pdf_bytes,
+            mime_type="application/octet-stream",
+        )
+
+        with patch("apps.documents.extraction._ocr_image") as mock_ocr:
+            result = extract_document(document.id, vision_provider=FakeVisionProvider())
+
+        self.assertEqual(result.extraction_method, Document.ExtractionMethod.TEXT_LAYER)
+        self.assertIn("deutscher Testsatz", result.text_content)
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.EXTRACTING)
+        self.assertEqual(result.processing_error, "")
+        # Der normalisierte Typ wird zurueckgeschrieben, nicht der octet-stream-Wert.
+        self.assertEqual(result.metadata["mime_type"], "application/pdf")
+        mock_ocr.assert_not_called()
+
+    def test_truly_unsupported_file_has_clear_error(self):
+        document = _make_document(
+            filename="daten.bin", data=b"\x00\x01\x02\x03rohdaten", mime_type=""
+        )
+
+        with self.assertRaises(ValueError):
+            extract_document(document.id, vision_provider=FakeVisionProvider())
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.FAILED)
+        self.assertIn("nicht unterstuetzter Dateityp", document.processing_error)
+
     def test_vision_provider_failure_marks_failed_and_reraises(self):
         pdf_bytes = _make_pdf([None])
         document = _make_document(filename="scan.pdf", data=pdf_bytes, mime_type="application/pdf")
