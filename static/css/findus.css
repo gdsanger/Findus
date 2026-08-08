@@ -470,19 +470,21 @@ body {
 }
 
 .findus-search-hit {
-    display: block;
     padding: var(--findus-space-4);
     background-color: var(--findus-surface);
     border: 1px solid var(--findus-border);
     border-radius: var(--findus-radius-md);
-    color: inherit;
-    text-decoration: none;
     transition: border-color var(--findus-transition-fast);
 }
 
 .findus-search-hit:hover {
-    color: inherit;
     border-color: var(--findus-accent);
+}
+
+.findus-search-hit-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
 }
 
 .findus-search-hit-header {
@@ -659,6 +661,27 @@ body {
     background-color: var(--findus-surface);
     border: 1px solid var(--findus-border);
     border-radius: var(--findus-radius-md);
+}
+
+/* Leitdokument/Unterdokument-Baum (#1069) -- Unterdokumente hängen
+   eingeklappt unter ihrem Leitdokument, statt als eigene Zeile in der
+   Liste zu erscheinen. */
+.findus-document-children summary {
+    cursor: pointer;
+}
+
+.findus-document-children-list {
+    list-style: none;
+    margin: var(--findus-space-2) 0 0;
+    padding: 0 0 0 var(--findus-space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-1);
+}
+
+.findus-document-breadcrumb {
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
 }
 
 /* Original-Vorschau Slide-Over (#1036) ------------------------------------*/

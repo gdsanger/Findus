@@ -5,7 +5,6 @@ from .models import (
     Chunk,
     Correspondent,
     Document,
-    DocumentLink,
     Tag,
     TagSuggestion,
     Task,
@@ -33,13 +32,6 @@ class ChunkInline(admin.TabularInline):
 
     def has_add_permission(self, request, obj=None):
         return False
-
-
-class DocumentLinkInline(admin.TabularInline):
-    model = DocumentLink
-    fk_name = "from_document"
-    autocomplete_fields = ("to_document",)
-    extra = 0
 
 
 class DocumentTaskInline(admin.TabularInline):
@@ -87,6 +79,8 @@ class VorgangSuggestionInline(admin.TabularInline):
 class DocumentAdmin(admin.ModelAdmin):
     list_display = (
         "title",
+        "parent",
+        "child_role",
         "correspondent",
         "direction",
         "action_status",
@@ -105,10 +99,10 @@ class DocumentAdmin(admin.ModelAdmin):
         "tags",
     )
     search_fields = ("title", "text_content")
-    autocomplete_fields = ("correspondent", "owner", "vorgaenge", "tags")
+    autocomplete_fields = ("correspondent", "owner", "parent", "vorgaenge", "tags")
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
-    inlines = [ChunkInline, DocumentLinkInline, DocumentTaskInline, TagSuggestionInline, VorgangSuggestionInline]
+    inlines = [ChunkInline, DocumentTaskInline, TagSuggestionInline, VorgangSuggestionInline]
 
 
 @admin.register(Correspondent)
