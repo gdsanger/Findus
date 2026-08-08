@@ -47,6 +47,11 @@ pytesseract==0.3.13
 python-docx==1.2.0
 Pillow==12.3.0
 langdetect==1.0.9
+# Robuste MIME-Erkennung aus dem Dateiinhalt (#1077): Scanner/Upload-Wege
+# melden fuer echte PDFs oft `application/octet-stream`. python-magic bindet
+# die auf dem Server vorhandene libmagic (`file`) an; fehlt sie, faellt
+# apps.documents.mime auf Magic-Bytes + Dateiendung zurueck.
+python-magic==0.4.27
 
 # Production server
 gunicorn==23.0.0
