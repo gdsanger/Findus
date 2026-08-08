@@ -242,13 +242,22 @@ class FolderConnectorScanTests(TestCase):
         scan_folder(missing)
 
 
-def _build_email_bytes(*, subject, sender, body_text=None, attachments=None) -> bytes:
+_FAKE_PDF = b"%PDF-1.4 fake body pdf"
+_SUBSTANTIAL_BODY = "Anbei die Rechnung, bitte pruefen und bis Freitag zahlen."
+
+
+def _build_email_bytes(
+    *, subject, sender, body_text=None, body_html=None, message_id="<abc-123@example.com>",
+    attachments=None,
+) -> bytes:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = "ingest@findus.example"
-    message["Message-ID"] = "<abc-123@example.com>"
+    message["Message-ID"] = message_id
     message.set_content(body_text or "")
+    if body_html is not None:
+        message.add_alternative(body_html, subtype="html")
     for filename, content, maintype, subtype in attachments or []:
         message.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
     return message.as_bytes()
@@ -288,6 +297,9 @@ class FakeImapConnection:
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+@patch("apps.ingest.service.render_pdf_from_html", return_value=_FAKE_PDF)
+@patch("apps.ingest.service._enqueue_analysis", return_value="task-analyze")
+@patch("apps.ingest.service._enqueue_processing", return_value="task-1")
 class ImapMailConnectorTests(TestCase):
     @classmethod
     def tearDownClass(cls):
@@ -299,122 +311,101 @@ class ImapMailConnectorTests(TestCase):
         kwargs.update(overrides)
         return ImapMailbox(**kwargs)
 
-    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_attachment_is_ingested_correspondent_matched_and_message_marked_seen(
-        self, mock_enqueue, mock_imap_ssl
-    ):
+    def _run(self, raw):
+        fake_connection = FakeImapConnection({b"1": raw})
+        with patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL", return_value=fake_connection):
+            scan_imap_mailbox(self._mailbox())
+        return fake_connection
+
+    def test_mail_with_attachment_creates_lead_and_child(self, *_mocks):
         raw = _build_email_bytes(
             subject="Rechnung",
             sender="Anna Beispiel <anna@example.com>",
+            body_text=_SUBSTANTIAL_BODY,
             attachments=[("invoice.pdf", b"%PDF-1.4 content", "application", "pdf")],
         )
-        fake_connection = FakeImapConnection({b"1": raw})
-        mock_imap_ssl.return_value = fake_connection
+        fake_connection = self._run(raw)
 
-        scan_imap_mailbox(self._mailbox(ingest_body=False))
+        self.assertEqual(Document.objects.count(), 2)
+        lead = Document.objects.get(kind=Document.Kind.MAIL_BODY)
+        self.assertEqual(lead.correspondent.email, "anna@example.com")
+        self.assertEqual(lead.departments.get().name, "IT")
+        self.assertIn("Rechnung", lead.text_content)
+        self.assertIn("bis Freitag", lead.text_content)
+        self.assertTrue(lead.original_file.name)
+        self.assertEqual(lead.mime_type, "application/pdf")
 
-        self.assertEqual(Document.objects.count(), 1)
-        document = Document.objects.get()
-        self.assertEqual(document.source, Document.Source.MAIL)
-        self.assertEqual(document.correspondent.email, "anna@example.com")
-        self.assertEqual(document.correspondent.name, "Anna Beispiel")
-        self.assertEqual(document.departments.get().name, "IT")
+        child = lead.children.get()
+        self.assertEqual(child.child_role, Document.ChildRole.MAIL_ATTACHMENT)
+        self.assertEqual(child.kind, Document.Kind.DOCUMENT)
+        self.assertEqual(child.source, Document.Source.MAIL)
+        self.assertEqual(child.correspondent.email, "anna@example.com")
         self.assertIn(b"1", fake_connection.seen)
         self.assertTrue(fake_connection.logged_out)
 
-    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_second_poll_does_not_reimport_already_seen_message(self, mock_enqueue, mock_imap_ssl):
+    def test_substanceless_mail_is_shell_but_keeps_attachment(self, *_mocks):
         raw = _build_email_bytes(
-            subject="Rechnung",
+            subject="RE: Rechnung",
             sender="anna@example.com",
+            body_text="Passt, danke",
+            attachments=[("invoice.pdf", b"%PDF-1.4 content", "application", "pdf")],
+        )
+        self._run(raw)
+
+        lead = Document.objects.get(kind=Document.Kind.MAIL_BODY)
+        self.assertFalse(lead.original_file)
+        self.assertTrue(lead.is_body_shell)
+        self.assertEqual(lead.text_content, "")
+        self.assertTrue(lead.metadata["mail_body_substanceless"])
+        self.assertEqual(lead.processing_status, Document.ProcessingStatus.READY)
+        self.assertEqual(lead.children.count(), 1)
+
+    def test_body_only_mail_creates_lead_with_pdf(self, *_mocks):
+        raw = _build_email_bytes(
+            subject="Hallo", sender="anna@example.com", body_text=_SUBSTANTIAL_BODY
+        )
+        self._run(raw)
+
+        self.assertEqual(Document.objects.count(), 1)
+        lead = Document.objects.get()
+        self.assertEqual(lead.kind, Document.Kind.MAIL_BODY)
+        self.assertTrue(lead.original_file.name)
+        self.assertTrue(lead.metadata["mail_body_generated"])
+
+    def test_second_poll_does_not_reimport_already_seen_message(self, *_mocks):
+        raw = _build_email_bytes(
+            subject="Rechnung", sender="anna@example.com", body_text=_SUBSTANTIAL_BODY,
             attachments=[("invoice.pdf", b"content", "application", "pdf")],
         )
         fake_connection = FakeImapConnection({b"1": raw})
-        mock_imap_ssl.return_value = fake_connection
-
-        scan_imap_mailbox(self._mailbox(ingest_body=False))
-        scan_imap_mailbox(self._mailbox(ingest_body=False))
-
-        self.assertEqual(Document.objects.count(), 1)
-
-    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_body_becomes_context_not_separate_document_when_attachment_present(
-        self, mock_enqueue, mock_imap_ssl
-    ):
-        raw = _build_email_bytes(
-            subject="Hallo",
-            sender="anna@example.com",
-            body_text="Hallo Welt",
-            attachments=[("invoice.pdf", b"content", "application", "pdf")],
-        )
-        fake_connection = FakeImapConnection({b"1": raw})
-        mock_imap_ssl.return_value = fake_connection
-
-        scan_imap_mailbox(self._mailbox(ingest_body=True))
-
-        self.assertEqual(Document.objects.count(), 1)
-        document = Document.objects.get()
-        self.assertEqual(document.metadata["mail_subject"], "Hallo")
-        self.assertEqual(document.metadata["mail_from"], "anna@example.com")
-        self.assertIn("Hallo Welt", document.metadata["mail_body"])
-
-    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_two_attachments_produce_two_documents_no_body_document(
-        self, mock_enqueue, mock_imap_ssl
-    ):
-        raw = _build_email_bytes(
-            subject="Rechnung",
-            sender="anna@example.com",
-            body_text="Hallo Welt",
-            attachments=[
-                ("invoice.pdf", b"content-1", "application", "pdf"),
-                ("contract.pdf", b"content-2", "application", "pdf"),
-            ],
-        )
-        fake_connection = FakeImapConnection({b"1": raw})
-        mock_imap_ssl.return_value = fake_connection
-
-        scan_imap_mailbox(self._mailbox(ingest_body=True))
+        with patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL", return_value=fake_connection):
+            scan_imap_mailbox(self._mailbox())
+            scan_imap_mailbox(self._mailbox())
 
         self.assertEqual(Document.objects.count(), 2)
-        for document in Document.objects.all():
-            self.assertIn("Hallo Welt", document.metadata["mail_body"])
 
-    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_body_only_mail_creates_single_document(self, mock_enqueue, mock_imap_ssl):
+    def test_ingest_body_false_forces_shell(self, *_mocks):
         raw = _build_email_bytes(
-            subject="Hallo",
-            sender="anna@example.com",
-            body_text="Hallo Welt",
-        )
-        fake_connection = FakeImapConnection({b"1": raw})
-        mock_imap_ssl.return_value = fake_connection
-
-        scan_imap_mailbox(self._mailbox(ingest_body=True))
-
-        self.assertEqual(Document.objects.count(), 1)
-        document = Document.objects.get()
-        self.assertEqual(document.metadata["mail_subject"], "Hallo")
-
-    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
-    def test_failed_message_stays_unseen_for_retry(self, mock_imap_ssl):
-        raw = _build_email_bytes(
-            subject="Rechnung",
-            sender="anna@example.com",
+            subject="Rechnung", sender="anna@example.com", body_text=_SUBSTANTIAL_BODY,
             attachments=[("invoice.pdf", b"content", "application", "pdf")],
         )
         fake_connection = FakeImapConnection({b"1": raw})
-        mock_imap_ssl.return_value = fake_connection
-
-        with patch(
-            "apps.ingest.connectors.mail_imap.ingest_file", side_effect=RuntimeError("boom")
-        ):
+        with patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL", return_value=fake_connection):
             scan_imap_mailbox(self._mailbox(ingest_body=False))
+
+        lead = Document.objects.get(kind=Document.Kind.MAIL_BODY)
+        self.assertTrue(lead.is_body_shell)
+        self.assertEqual(lead.children.count(), 1)
+
+    def test_failed_message_stays_unseen_for_retry(self, *_mocks):
+        raw = _build_email_bytes(
+            subject="Rechnung", sender="anna@example.com", body_text=_SUBSTANTIAL_BODY,
+            attachments=[("invoice.pdf", b"content", "application", "pdf")],
+        )
+        fake_connection = FakeImapConnection({b"1": raw})
+        with patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL", return_value=fake_connection), \
+                patch("apps.ingest.connectors.mail_imap.ingest_mail", side_effect=RuntimeError("boom")):
+            scan_imap_mailbox(self._mailbox())
 
         self.assertEqual(Document.objects.count(), 0)
         self.assertNotIn(b"1", fake_connection.seen)
@@ -428,6 +419,9 @@ def _mock_json_response(json_body):
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+@patch("apps.ingest.service.render_pdf_from_html", return_value=_FAKE_PDF)
+@patch("apps.ingest.service._enqueue_analysis", return_value="task-analyze")
+@patch("apps.ingest.service._enqueue_processing", return_value="task-1")
 class GraphMailConnectorTests(TestCase):
     @classmethod
     def tearDownClass(cls):
@@ -445,135 +439,154 @@ class GraphMailConnectorTests(TestCase):
         kwargs.update(overrides)
         return GraphMailbox(**kwargs)
 
-    @patch("apps.ingest.connectors.mail_graph.requests.patch")
-    @patch("apps.ingest.connectors.mail_graph.requests.get")
-    @patch("apps.mail.backends.graph.requests.post")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_attachment_is_ingested_correspondent_matched_and_message_marked_read(
-        self, mock_enqueue, mock_token_post, mock_get, mock_patch
-    ):
-        mock_token_post.return_value = _mock_json_response(
-            {"access_token": "tok-1", "expires_in": 3600}
-        )
+    def _message(self, **overrides):
         message = {
             "id": "msg-1",
             "subject": "Rechnung",
             "from": {"emailAddress": {"address": "anna@example.com", "name": "Anna Beispiel"}},
             "receivedDateTime": "2026-08-01T10:00:00Z",
-            "hasAttachments": True,
-            "body": {"contentType": "text", "content": ""},
+            "hasAttachments": False,
+            "body": {"contentType": "text", "content": _SUBSTANTIAL_BODY},
         }
+        message.update(overrides)
+        return message
+
+    def test_mail_with_attachment_creates_lead_and_child(self, *_mocks):
+        message = self._message(hasAttachments=True)
         attachment = {
             "@odata.type": "#microsoft.graph.fileAttachment",
             "name": "invoice.pdf",
             "contentType": "application/pdf",
             "contentBytes": "aGVsbG8gd29ybGQ=",
         }
-        mock_get.side_effect = [
-            _mock_json_response({"value": [message]}),
-            _mock_json_response({"value": [attachment]}),
-        ]
-        mock_patch.return_value = _mock_json_response({})
-
-        scan_graph_mailbox(self._mailbox(ingest_body=False))
-
-        self.assertEqual(Document.objects.count(), 1)
-        document = Document.objects.get()
-        self.assertEqual(document.source, Document.Source.MAIL)
-        self.assertEqual(document.correspondent.email, "anna@example.com")
-        self.assertEqual(document.departments.get().name, "IT")
-        mock_patch.assert_called_once()
-        self.assertIn("/messages/msg-1", mock_patch.call_args.args[0])
-        self.assertEqual(mock_patch.call_args.kwargs["json"], {"isRead": True})
-
-    @patch("apps.ingest.connectors.mail_graph.requests.patch")
-    @patch("apps.ingest.connectors.mail_graph.requests.get")
-    @patch("apps.mail.backends.graph.requests.post")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_body_ingested_when_no_attachments(self, mock_enqueue, mock_token_post, mock_get, mock_patch):
-        mock_token_post.return_value = _mock_json_response(
-            {"access_token": "tok-1", "expires_in": 3600}
-        )
-        message = {
-            "id": "msg-1",
-            "subject": "Hallo",
-            "from": {"emailAddress": {"address": "anna@example.com", "name": "Anna"}},
-            "receivedDateTime": "2026-08-01T10:00:00Z",
-            "hasAttachments": False,
-            "body": {"contentType": "text", "content": "Hallo Welt"},
-        }
-        mock_get.return_value = _mock_json_response({"value": [message]})
-        mock_patch.return_value = _mock_json_response({})
-
-        scan_graph_mailbox(self._mailbox(ingest_body=True))
-
-        self.assertEqual(Document.objects.count(), 1)
-        mock_patch.assert_called_once()
-
-    @patch("apps.ingest.connectors.mail_graph.requests.patch")
-    @patch("apps.ingest.connectors.mail_graph.requests.get")
-    @patch("apps.mail.backends.graph.requests.post")
-    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
-    def test_two_attachments_produce_two_documents_no_body_document(
-        self, mock_enqueue, mock_token_post, mock_get, mock_patch
-    ):
-        mock_token_post.return_value = _mock_json_response(
-            {"access_token": "tok-1", "expires_in": 3600}
-        )
-        message = {
-            "id": "msg-1",
-            "subject": "Rechnung",
-            "from": {"emailAddress": {"address": "anna@example.com", "name": "Anna Beispiel"}},
-            "receivedDateTime": "2026-08-01T10:00:00Z",
-            "hasAttachments": True,
-            "body": {"contentType": "text", "content": "Hallo Welt"},
-        }
-        attachment_1 = {
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            "name": "invoice.pdf",
-            "contentType": "application/pdf",
-            "contentBytes": "aGVsbG8gd29ybGQ=",
-        }
-        attachment_2 = {
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            "name": "contract.pdf",
-            "contentType": "application/pdf",
-            "contentBytes": "Y29udHJhY3Q=",
-        }
-        mock_get.side_effect = [
-            _mock_json_response({"value": [message]}),
-            _mock_json_response({"value": [attachment_1, attachment_2]}),
-        ]
-        mock_patch.return_value = _mock_json_response({})
-
-        scan_graph_mailbox(self._mailbox(ingest_body=True))
+        with patch("apps.mail.backends.graph.requests.post", return_value=_mock_json_response(
+            {"access_token": "tok-1", "expires_in": 3600})), \
+                patch("apps.ingest.connectors.mail_graph.requests.get", side_effect=[
+                    _mock_json_response({"value": [message]}),
+                    _mock_json_response({"value": [attachment]}),
+                ]), \
+                patch("apps.ingest.connectors.mail_graph.requests.patch",
+                      return_value=_mock_json_response({})) as mock_patch:
+            scan_graph_mailbox(self._mailbox())
 
         self.assertEqual(Document.objects.count(), 2)
-        for document in Document.objects.all():
-            self.assertEqual(document.metadata["mail_subject"], "Rechnung")
-            self.assertEqual(document.metadata["mail_body"], "Hallo Welt")
+        lead = Document.objects.get(kind=Document.Kind.MAIL_BODY)
+        self.assertTrue(lead.original_file.name)
+        self.assertEqual(lead.correspondent.email, "anna@example.com")
+        child = lead.children.get()
+        self.assertEqual(child.child_role, Document.ChildRole.MAIL_ATTACHMENT)
+        mock_patch.assert_called_once()
+        self.assertIn("/messages/msg-1", mock_patch.call_args.args[0])
 
-    @patch("apps.ingest.connectors.mail_graph.requests.patch")
-    @patch("apps.ingest.connectors.mail_graph.requests.get")
-    @patch("apps.mail.backends.graph.requests.post")
-    def test_failed_message_is_not_marked_read(self, mock_token_post, mock_get, mock_patch):
-        mock_token_post.return_value = _mock_json_response(
-            {"access_token": "tok-1", "expires_in": 3600}
-        )
-        message = {
-            "id": "msg-1",
-            "subject": "Rechnung",
-            "from": {"emailAddress": {"address": "anna@example.com", "name": "Anna"}},
-            "receivedDateTime": "2026-08-01T10:00:00Z",
-            "hasAttachments": False,
-            "body": {"contentType": "text", "content": "Hallo Welt"},
-        }
-        mock_get.return_value = _mock_json_response({"value": [message]})
+    def test_substanceless_mail_is_shell(self, *_mocks):
+        message = self._message(body={"contentType": "text", "content": "Passt, danke"})
+        with patch("apps.mail.backends.graph.requests.post", return_value=_mock_json_response(
+            {"access_token": "tok-1", "expires_in": 3600})), \
+                patch("apps.ingest.connectors.mail_graph.requests.get",
+                      return_value=_mock_json_response({"value": [message]})), \
+                patch("apps.ingest.connectors.mail_graph.requests.patch",
+                      return_value=_mock_json_response({})):
+            scan_graph_mailbox(self._mailbox())
 
-        with patch(
-            "apps.ingest.connectors.mail_graph.ingest_file", side_effect=RuntimeError("boom")
-        ):
-            scan_graph_mailbox(self._mailbox(ingest_body=True))
+        lead = Document.objects.get()
+        self.assertTrue(lead.is_body_shell)
+
+    def test_failed_message_is_not_marked_read(self, *_mocks):
+        message = self._message()
+        with patch("apps.mail.backends.graph.requests.post", return_value=_mock_json_response(
+            {"access_token": "tok-1", "expires_in": 3600})), \
+                patch("apps.ingest.connectors.mail_graph.requests.get",
+                      return_value=_mock_json_response({"value": [message]})), \
+                patch("apps.ingest.connectors.mail_graph.requests.patch",
+                      return_value=_mock_json_response({})) as mock_patch, \
+                patch("apps.ingest.connectors.mail_graph.ingest_mail",
+                      side_effect=RuntimeError("boom")):
+            scan_graph_mailbox(self._mailbox())
 
         mock_patch.assert_not_called()
         self.assertEqual(Document.objects.count(), 0)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+@patch("apps.ingest.service.render_pdf_from_html", return_value=_FAKE_PDF)
+@patch("apps.ingest.service._enqueue_analysis", return_value="task-analyze")
+@patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+class IngestMailServiceTests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def test_lead_deduped_by_message_id(self, *_mocks):
+        from apps.ingest.service import MailAttachment, ingest_mail
+
+        kwargs = dict(
+            message_id="<dup@example.com>",
+            subject="Rechnung",
+            sender_email="anna@example.com",
+            body=_SUBSTANTIAL_BODY,
+            body_content_type="text/plain",
+            attachments=[MailAttachment("a.pdf", b"content", "application/pdf")],
+        )
+        first = ingest_mail(**kwargs)
+        second = ingest_mail(**kwargs)
+
+        self.assertTrue(first.lead_created)
+        self.assertFalse(second.lead_created)
+        self.assertEqual(first.lead.id, second.lead.id)
+        self.assertEqual(Document.objects.filter(kind=Document.Kind.MAIL_BODY).count(), 1)
+
+    def test_quoted_history_and_signature_not_in_index(self, *_mocks):
+        from apps.ingest.service import ingest_mail
+
+        body = (
+            "Neuer Text mit genug Woertern fuer die Substanzpruefung hier.\n"
+            "-- \nChristian\n"
+            "Am 01.02.2026 um 10:00 schrieb Max:\n"
+            "> alte geheime zitat zeile die nicht in den index darf\n"
+        )
+        result = ingest_mail(
+            message_id="<quote@example.com>",
+            subject="Antwort",
+            sender_email="anna@example.com",
+            body=body,
+            body_content_type="text/plain",
+        )
+        index_text = result.lead.text_content
+        self.assertIn("Neuer Text", index_text)
+        self.assertNotIn("geheime zitat", index_text)
+        self.assertNotIn("Christian", index_text)
+
+
+class MailBodyPreparationTests(TestCase):
+    def test_html_body_is_decluttered(self):
+        from apps.ingest.mail_body import prepare_body
+
+        html = (
+            "<html><head><style>x{}</style></head><body>"
+            "<div style='display:none'>preheader</div>"
+            "<p>Sichtbarer Inhalt der Nachricht steht hier.</p>"
+            "<img src='t.gif' width='1' height='1'>"
+            "<blockquote>alter verlauf</blockquote>"
+            "</body></html>"
+        )
+        result = prepare_body(html, "text/html")
+        self.assertIn("Sichtbarer Inhalt", result.text)
+        self.assertNotIn("preheader", result.text)
+        self.assertNotIn("alter verlauf", result.text)
+        self.assertNotIn("script", result.html.lower())
+
+    def test_substance_word_count(self):
+        from apps.ingest.mail_body import prepare_body
+
+        self.assertEqual(prepare_body("Passt, danke", "text/plain").word_count, 2)
+        self.assertGreaterEqual(
+            prepare_body(_SUBSTANTIAL_BODY, "text/plain").word_count, 5
+        )
+
+    def test_pdf_render_missing_binary_raises_pdfrendererror(self):
+        from apps.ingest.mail_body import PdfRenderError, render_pdf_from_html
+
+        with patch("apps.ingest.mail_body.subprocess.run", side_effect=FileNotFoundError()):
+            with self.assertRaises(PdfRenderError):
+                render_pdf_from_html("<html></html>")

@@ -446,6 +446,16 @@ FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS = float(
 )
 
 # --------------------------------------------------------------------------
+# Ingest: Substanz-Schwelle des Mail-Bodys (#1070) -- ab wie vielen Wörtern
+# im bereinigten Body-Klartext (nach Entfernen von Zitat-Verlauf/Signatur)
+# gilt der Body als substanziell und wird zu Index-Text + PDF aufbereitet.
+# Darunter bleibt das Mail-Leitdokument eine reine Metadaten-Hülle
+# ("Passt, danke"), an der die Anhänge trotzdem hängen. Siehe
+# apps.ingest.mail_body / apps.ingest.service.ingest_mail.
+# --------------------------------------------------------------------------
+FINDUS_MAIL_BODY_MIN_WORDS = int(env("FINDUS_MAIL_BODY_MIN_WORDS", "5"))
+
+# --------------------------------------------------------------------------
 # Ingest: Mail-Trigger-Intervall der django-q2-Schedule "mail-ingest" (#1060,
 # siehe apps.ingest.schedules) -- unabhängig von
 # FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS oben, das den Poll-Abstand des

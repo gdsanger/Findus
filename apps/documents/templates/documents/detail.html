@@ -4,6 +4,15 @@
 {% block content %}
 {% include "partials/_content_header.html" with page_title=document.title %}
 
+{% if document.is_mail_body %}
+<p>
+    <span class="badge text-bg-secondary">aus E-Mail-Body erzeugt</span>
+    {% if document.is_body_shell %}
+    <span class="badge text-bg-light text-muted">ohne Inhalt (nur Metadaten)</span>
+    {% endif %}
+</p>
+{% endif %}
+
 <section class="findus-section findus-detail-actions">
     {% if document.original_file %}
     {% if document.is_inline_previewable %}
@@ -42,6 +51,28 @@
         {% include "documents/partials/_detail_meta.html" %}
     </div>
 </section>
+
+{% if mail_parent or mail_children %}
+<section class="findus-section">
+    <h2 class="findus-section-title">Zur E-Mail gehörend</h2>
+    <div class="findus-card">
+        {% if mail_parent %}
+        <p class="mb-2">
+            Anhang zu:
+            <a href="{% url 'documents:detail' mail_parent.pk %}">{{ mail_parent.title }}</a>
+        </p>
+        {% endif %}
+        {% if mail_children %}
+        <p class="mb-1">Anhänge:</p>
+        <ul class="mb-0">
+            {% for child in mail_children %}
+            <li><a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
 
 <section class="findus-section">
     <h2 class="findus-section-title">Zusammenfassung</h2>

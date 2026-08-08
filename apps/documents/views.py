@@ -281,6 +281,14 @@ def document_detail(request, pk):
         "incoming_links": document.links_to.select_related("from_document").filter(
             from_document__in=visible_documents
         ),
+        # Dokument-Hierarchie (#1069/#1070): Mail-Leitdokument <-> Anhänge,
+        # nur was der Nutzer ohnehin sehen darf.
+        "mail_parent": (
+            visible_documents.filter(pk=document.parent_id).first()
+            if document.parent_id
+            else None
+        ),
+        "mail_children": visible_documents.filter(parent=document),
         "action_status_choices": Document.ActionStatus.choices,
     }
     return render(request, "documents/detail.html", context)

@@ -87,6 +87,7 @@ class VorgangSuggestionInline(admin.TabularInline):
 class DocumentAdmin(admin.ModelAdmin):
     list_display = (
         "title",
+        "kind",
         "correspondent",
         "direction",
         "action_status",
@@ -96,6 +97,7 @@ class DocumentAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = (
+        "kind",
         "direction",
         "action_status",
         "processing_status",
@@ -105,7 +107,7 @@ class DocumentAdmin(admin.ModelAdmin):
         "tags",
     )
     search_fields = ("title", "text_content")
-    autocomplete_fields = ("correspondent", "owner", "vorgaenge", "tags")
+    autocomplete_fields = ("correspondent", "owner", "vorgaenge", "tags", "parent")
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
     inlines = [ChunkInline, DocumentLinkInline, DocumentTaskInline, TagSuggestionInline, VorgangSuggestionInline]

@@ -40,6 +40,12 @@ python-docx==1.2.0
 Pillow==12.3.0
 langdetect==1.0.9
 
+# Mail-Body-Aufbereitung (apps.ingest.mail_body, #1070): entrümpelt den
+# (HTML-)Mail-Body zu Index-Klartext. Stdlib-Parser `html.parser`, kein
+# zusätzliches lxml. Das PDF-Rendering shellt gegen das `wkhtmltopdf`-Binary
+# (im Dockerfile installiert, wie tesseract/poppler), keine pip-Abhängigkeit.
+beautifulsoup4==4.13.4
+
 # Production server
 gunicorn==23.0.0
 

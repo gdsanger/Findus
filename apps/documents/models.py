@@ -192,6 +192,28 @@ class Document(TimeStampedModel):
         OPEN = "offen", "Offen"
         DONE = "erledigt", "Erledigt"
 
+    class Kind(models.TextChoices):
+        """Was für ein Dokument ist das? (#1069/#1070) -- ein normaler
+        Beleg (`document`, der Default) oder das aus einer Mail erzeugte
+        Leitdokument (`mail_body`), das den aufbereiteten Mail-Body trägt
+        und dessen Anhänge als Unterdokumente (`child_role`) darunter
+        hängen. Bewusst getrennt von `source`: `source=mail` sagt nur
+        "kam per Mail" (gilt auch für die Anhang-Dokumente), `kind` sagt
+        "ist der Mail-Body selbst".
+        """
+
+        DOCUMENT = "document", "Dokument"
+        MAIL_BODY = "mail_body", "Mail-Body"
+
+    class ChildRole(models.TextChoices):
+        """Wie hängt ein Unterdokument an seinem `parent`? (#1069/#1070) --
+        aktuell nur "Mail-Anhang" (der Anhang unter dem Mail-Leitdokument);
+        bewusst als eigenes Feld statt eines `DocumentLink`, weil es eine
+        harte Eltern/Kind-Hierarchie ist, kein lockerer Querverweis.
+        """
+
+        MAIL_ATTACHMENT = "mail_attachment", "Mail-Anhang"
+
     title = models.CharField(max_length=255)
     correspondent = models.ForeignKey(
         Correspondent,
@@ -223,6 +245,27 @@ class Document(TimeStampedModel):
     source = models.CharField(
         max_length=20, choices=Source.choices, default=Source.UPLOAD
     )
+    kind = models.CharField(
+        max_length=20, choices=Kind.choices, default=Kind.DOCUMENT, db_index=True
+    )
+
+    # Dokument-Hierarchie (#1069): ein Leitdokument (z. B. der Mail-Body)
+    # mit n Unterdokumenten (z. B. die Anhänge). `parent`=NULL ist der
+    # Normalfall (eigenständiges Dokument bzw. das Leitdokument selbst).
+    # SET_NULL statt CASCADE: löscht man das Leitdokument, sind die Anhänge
+    # weiterhin echte, für sich stehende Dokumente -- sie sollen nicht
+    # mitgelöscht werden, nur ihre Elternbeziehung entfällt.
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="children",
+    )
+    child_role = models.CharField(
+        max_length=20, choices=ChildRole.choices, blank=True
+    )
+
     processing_status = models.CharField(
         max_length=20,
         choices=ProcessingStatus.choices,
@@ -307,6 +350,27 @@ class Document(TimeStampedModel):
         """
         mime = self.mime_type
         return mime in self.INLINE_PREVIEW_MIME_TYPES or mime.startswith("image/")
+
+    @property
+    def is_mail_body(self):
+        """True für das aus einer Mail erzeugte Leitdokument (#1070) --
+
+        Grundlage für den "aus Body erzeugt"-Badge in der UI und für die
+        Sonderbehandlung im Ingest (bereits fertiger Index-Text, kein
+        erneuter Extraktionslauf über das generierte PDF).
+        """
+        return self.kind == self.Kind.MAIL_BODY
+
+    @property
+    def is_body_shell(self):
+        """True für ein substanzloses Mail-Leitdokument (#1070): reine
+
+        Metadaten-Hülle ohne Body-Index-Text/PDF, an der aber trotzdem die
+        Anhänge als Unterdokumente hängen. Am Index-Text festgemacht (nicht
+        am File), damit ein indizierter Body, dessen PDF-Rendering
+        ausnahmsweise scheiterte, nicht fälschlich als leere Hülle gilt.
+        """
+        return self.is_mail_body and not self.text_content
 
 
 class SuggestionStatus(models.TextChoices):
