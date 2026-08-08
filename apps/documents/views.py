@@ -284,6 +284,16 @@ def _document_tasks_context(user, document, quick_create_form=None):
     }
 
 
+def _children_context(user, document):
+    visible_documents = Document.objects.visible_to(user)
+    return {
+        "document": document,
+        "children": document.children.filter(pk__in=visible_documents).select_related(
+            "correspondent"
+        ),
+    }
+
+
 @login_required
 def document_detail(request, pk):
     document = _visible_document(request.user, pk)
@@ -292,6 +302,7 @@ def document_detail(request, pk):
     context = {
         **_document_tasks_context(request.user, document),
         **_analysis_status_context(document),
+        **_children_context(request.user, document),
         # Direktzugriff auf ein Unterdokument zeigt den Elternkontext
         # (#1069) -- aber nur, wenn das Leitdokument auch sichtbar ist:
         # der Scope eines Kindes ist überschreibbar, ein sichtbares Kind
@@ -299,9 +310,6 @@ def document_detail(request, pk):
         "parent_visible": (
             document.parent_id is not None
             and visible_documents.filter(pk=document.parent_id).exists()
-        ),
-        "children": document.children.filter(pk__in=visible_documents).select_related(
-            "correspondent"
         ),
         "action_status_choices": Document.ActionStatus.choices,
     }
@@ -441,6 +449,40 @@ def document_delete(request, pk):
             doc.original_file.delete(save=False)
     document.delete()
     return redirect("documents:home")
+
+
+@login_required
+@require_POST
+def document_child_delete(request, pk, child_id):
+    """Delete a single Unterdokument from the parent's children list (#1080)
+
+    -- mail attachments bring a lot of noise (signature logos etc.) that's
+    worth discarding individually without losing the rest of the mail.
+    Same delete mechanics as `document_delete` (#1022), just scoped to one
+    child (plus its own subtree, in case it has children of its own)
+    instead of the whole tree, and re-rendered as the HTMX partial instead
+    of a redirect so the list updates without a full page reload.
+
+    The child is looked up through `visible_to` again, not just the parent
+    -- a child's scope can be overridden independently of its parent
+    (`Document.create_child`), so parent visibility alone isn't sufficient
+    proof the user may act on this specific child.
+    """
+    document = _visible_document(request.user, pk)
+    child = get_object_or_404(
+        Document.objects.visible_to(request.user),
+        pk=child_id,
+        parent_id=document.pk,
+    )
+    for doc in [child, *child.subtree()]:
+        if doc.original_file:
+            doc.original_file.delete(save=False)
+    child.delete()
+    return render(
+        request,
+        "documents/partials/_detail_children.html",
+        _children_context(request.user, document),
+    )
 
 
 def _meta_edit_context(document, quick_create_error=None):

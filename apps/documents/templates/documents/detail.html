@@ -125,18 +125,9 @@
 
 <section class="findus-section">
     <h2 class="findus-section-title">Unterdokumente</h2>
-    {% if children %}
-    <ul class="findus-detail-links">
-        {% for child in children %}
-        <li>
-            {% if child.child_role %}<span class="badge text-bg-secondary">{{ child.get_child_role_display }}</span>{% endif %}
-            <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p class="text-muted">Keine Unterdokumente.</p>
-    {% endif %}
+    <div id="document-children">
+        {% include "documents/partials/_detail_children.html" %}
+    </div>
 </section>
 {% endblock %}
 

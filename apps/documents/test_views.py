@@ -1182,6 +1182,167 @@ class DocumentDeleteViewTests(TestCase):
         self.assertContains(response, reverse("documents:delete", args=[self.doc.id]))
 
 
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class DocumentChildDeleteViewTests(TestCase):
+    """Covers #1080: a single Unterdokument (e.g. a mail attachment like a
+
+    signature logo) can be removed from a Leitdokument's children list
+    without discarding the rest of the mail -- same scoping and cleanup
+    guarantees as the whole-document delete (#1022), just narrowed to one
+    child.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Mail von Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+        self.child = Document.objects.create_child(
+            self.doc, title="logo.png", child_role=Document.ChildRole.MAIL_ATTACHMENT
+        )
+        self.child.original_file.save("logo.png", io.BytesIO(b"\x89PNG fake"), save=True)
+        self.chunk = Chunk.objects.create(
+            document=self.child,
+            position=0,
+            content="logo",
+            embedding=_one_hot(0),
+            embedding_model="stub",
+            embedding_model_version="1",
+        )
+
+    def test_delete_removes_child_but_keeps_parent(self):
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:child_delete", args=[self.doc.id, self.child.id]))
+
+        self.assertFalse(Document.objects.filter(pk=self.child.id).exists())
+        self.assertTrue(Document.objects.filter(pk=self.doc.id).exists())
+
+    def test_delete_removes_chunks(self):
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:child_delete", args=[self.doc.id, self.child.id]))
+
+        self.assertFalse(Chunk.objects.filter(pk=self.chunk.id).exists())
+
+    def test_delete_removes_original_file_from_storage(self):
+        file_path = self.child.original_file.path
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:child_delete", args=[self.doc.id, self.child.id]))
+
+        self.assertFalse(default_storage.exists(file_path))
+
+    def test_delete_removes_grandchildren_and_their_files(self):
+        grandchild = Document.objects.create_child(self.child, title="inline.png")
+        grandchild.original_file.save("inline.png", io.BytesIO(b"\x89PNG fake"), save=True)
+        file_path = grandchild.original_file.path
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:child_delete", args=[self.doc.id, self.child.id]))
+
+        self.assertFalse(Document.objects.filter(pk=grandchild.id).exists())
+        self.assertFalse(default_storage.exists(file_path))
+
+    def test_delete_renders_updated_children_partial(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "logo.png")
+        self.assertContains(response, "Keine Unterdokumente.")
+
+    def test_delete_requires_get_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 405)
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+
+    def test_delete_is_scoped_by_parent_visibility(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+
+    def test_delete_is_scoped_by_own_visibility_even_if_parent_visible(self):
+        """A child's scope can be overridden independently of its parent
+
+        (`Document.create_child`) -- the delete must recheck the child's own
+        visibility, not just trust that the parent was visible.
+        """
+        self.child.visibility = Document.Visibility.PRIVATE
+        self.child.owner = self.user_b
+        self.child.departments.clear()
+        self.child.save()
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+
+    def test_child_id_must_belong_to_given_parent(self):
+        other_doc = Document.objects.create(
+            title="Anderes Leitdokument", visibility=Document.Visibility.DEPARTMENT
+        )
+        other_doc.departments.add(self.dept_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:child_delete", args=[other_doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+
+    def test_delete_requires_login(self):
+        response = self.client.post(
+            reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+
+    def test_delete_without_csrf_token_is_rejected(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user_a)
+        response = csrf_client.post(
+            reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+
+    def test_detail_shows_child_delete_button(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(
+            response, reverse("documents:child_delete", args=[self.doc.id, self.child.id])
+        )
+
+
 class DocumentMetaEditTests(TestCase):
     """Covers the nice-to-have HTMX editing of Vorgang/Tag assignments."""
 
