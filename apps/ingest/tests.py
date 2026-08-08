@@ -9,6 +9,7 @@ behaviour end to end.
 
 from __future__ import annotations
 
+import base64
 import shutil
 import tempfile
 from email.message import EmailMessage
@@ -21,6 +22,11 @@ from django_q.models import Schedule
 
 from apps.accounts.models import Department
 from apps.documents.models import Correspondent, Document
+from apps.ingest.attachment_filter import (
+    AttachmentFilterConfig,
+    filter_mail_attachments,
+    referenced_cids,
+)
 from apps.ingest.connectors.folder import WatchFolder, scan_folder
 from apps.ingest.connectors.mail_graph import GraphMailbox, scan_mailbox as scan_graph_mailbox
 from apps.ingest.connectors.mail_imap import ImapMailbox, scan_mailbox as scan_imap_mailbox
@@ -39,6 +45,16 @@ SUBSTANTIAL_BODY = (
     "anbei die Rechnung, der Betrag weicht wegen der Nachbuchung ab, "
     "bitte bis Freitag pruefen."
 )
+
+def _png_bytes(width: int, height: int) -> bytes:
+    """Ein echtes (kleines) PNG mit den gewuenschten Massen -- fuer den
+    Anhang-Filter (#1081), der Bildmasse/-groesse auswertet."""
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (width, height), (120, 200, 60)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-ingest-media-")
 
@@ -483,6 +499,34 @@ class ImapMailConnectorTests(TestCase):
         for child in children:
             self.assertEqual(child.child_role, Document.ChildRole.MAIL_ATTACHMENT)
 
+    @patch("apps.ingest.service._enqueue_body_processing", return_value="task-body")
+    @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_signature_logo_is_not_imported_but_pdf_is(
+        self, mock_enqueue, mock_imap_ssl, mock_body_enqueue
+    ):
+        """Grampf-Filter (#1081): ein winziges Signatur-Logo landet nicht als
+        Unterdokument, der echte PDF-Beleg schon."""
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="anna@example.com",
+            body_text=SUBSTANTIAL_BODY,
+            attachments=[
+                ("invoice.pdf", b"%PDF-1.4 content", "application", "pdf"),
+                ("linkedin-logo.png", _png_bytes(48, 48), "image", "png"),
+            ],
+        )
+        fake_connection = FakeImapConnection({b"1": raw})
+        mock_imap_ssl.return_value = fake_connection
+
+        scan_imap_mailbox(self._mailbox(ingest_body=True))
+
+        self.assertEqual(Document.objects.count(), 2)
+        leit = Document.objects.get(kind=Document.Kind.MAIL_BODY)
+        children = Document.objects.filter(parent=leit)
+        self.assertEqual(children.count(), 1)
+        self.assertEqual(children.get().original_filename, "invoice.pdf")
+
     @patch("apps.ingest.connectors.mail_imap.imaplib.IMAP4_SSL")
     def test_failed_message_stays_unseen_for_retry(self, mock_imap_ssl):
         raw = _build_email_bytes(
@@ -682,6 +726,152 @@ class GraphMailConnectorTests(TestCase):
 
         mock_patch.assert_not_called()
         self.assertEqual(Document.objects.count(), 0)
+
+    @patch("apps.ingest.service._enqueue_body_processing", return_value="task-body")
+    @patch("apps.ingest.connectors.mail_graph.requests.patch")
+    @patch("apps.ingest.connectors.mail_graph.requests.get")
+    @patch("apps.mail.backends.graph.requests.post")
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_inline_logo_is_not_imported_but_pdf_is(
+        self, mock_enqueue, mock_token_post, mock_get, mock_patch, mock_body_enqueue
+    ):
+        """Grampf-Filter (#1081): ein als `isInline` markiertes Signatur-Bild
+        wird nicht importiert, der PDF-Beleg schon."""
+        mock_token_post.return_value = _mock_json_response(
+            {"access_token": "tok-1", "expires_in": 3600}
+        )
+        message = {
+            "id": "msg-1",
+            "subject": "Rechnung",
+            "from": {"emailAddress": {"address": "anna@example.com", "name": "Anna"}},
+            "receivedDateTime": "2026-08-01T10:00:00Z",
+            "hasAttachments": True,
+            "body": {"contentType": "text", "content": SUBSTANTIAL_BODY},
+        }
+        pdf = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "invoice.pdf",
+            "contentType": "application/pdf",
+            "contentBytes": "aGVsbG8gd29ybGQ=",
+        }
+        logo = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "instagram-logo.png",
+            "contentType": "image/png",
+            "isInline": True,
+            "contentId": "logo@sig",
+            "contentBytes": base64.b64encode(_png_bytes(400, 400)).decode(),
+        }
+        mock_get.side_effect = [
+            _mock_json_response({"value": [message]}),
+            _mock_json_response({"value": [pdf, logo]}),
+        ]
+        mock_patch.return_value = _mock_json_response({})
+
+        scan_graph_mailbox(self._mailbox(ingest_body=True))
+
+        self.assertEqual(Document.objects.count(), 2)
+        leit = Document.objects.get(kind=Document.Kind.MAIL_BODY)
+        children = Document.objects.filter(parent=leit)
+        self.assertEqual(children.count(), 1)
+        self.assertEqual(children.get().original_filename, "invoice.pdf")
+
+
+class AttachmentFilterTests(TestCase):
+    """Unit tests fuer den Grampf-Filter (#1081), gegen die reine Funktion --
+    ohne Connector/DB. Die Schwellen kommen aus den Settings und werden pro
+    Test explizit gesetzt, damit die Defaults wechseln koennen."""
+
+    def _attachment(self, *, content_type, data=b"x", content_id="", inline=False):
+        return MailAttachment(
+            fileobj=BytesIO(data),
+            filename="anhang",
+            content_type=content_type,
+            content_id=content_id,
+            inline=inline,
+        )
+
+    def _keep(self, attachments, *, body=""):
+        return filter_mail_attachments(attachments, body=body)
+
+    def test_referenced_cids_extracts_ids_from_html(self):
+        html = '<img src="cid:logo@sig"><img src=\'cid:foot@sig\'>'
+        self.assertEqual(referenced_cids(html), {"logo@sig", "foot@sig"})
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=0,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=0,
+    )
+    def test_inline_image_is_dropped(self):
+        att = self._attachment(content_type="image/png", inline=True)
+        self.assertEqual(self._keep([att]), [])
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=0,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=0,
+    )
+    def test_cid_referenced_image_is_dropped(self):
+        att = self._attachment(content_type="image/png", content_id="<logo@sig>")
+        self.assertEqual(self._keep([att], body='<img src="cid:logo@sig">'), [])
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=0,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=0,
+    )
+    def test_unreferenced_cid_image_is_kept(self):
+        att = self._attachment(
+            content_type="image/png", data=_png_bytes(400, 400), content_id="<logo@sig>"
+        )
+        self.assertEqual(self._keep([att], body="<p>ohne Bildbezug</p>"), [att])
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=20480,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=0,
+    )
+    def test_small_image_is_dropped_by_bytes(self):
+        att = self._attachment(content_type="image/png", data=_png_bytes(300, 300))
+        self.assertEqual(self._keep([att]), [])
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=0,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=200,
+    )
+    def test_tracking_pixel_is_dropped_by_dimension(self):
+        att = self._attachment(content_type="image/png", data=_png_bytes(1, 1))
+        self.assertEqual(self._keep([att]), [])
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=0,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=200,
+    )
+    def test_large_image_is_kept(self):
+        att = self._attachment(content_type="image/png", data=_png_bytes(400, 400))
+        self.assertEqual(self._keep([att]), [att])
+
+    @override_settings(
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES=999999,
+        FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION=999999,
+    )
+    def test_non_image_is_never_dropped(self):
+        """Sicherheitsnetz: PDFs/Office werden nie verworfen -- auch nicht
+        wenn sie inline und winzig sind."""
+        pdf = self._attachment(
+            content_type="application/pdf", data=b"%PDF", inline=True, content_id="<x@y>"
+        )
+        self.assertEqual(self._keep([pdf], body='<img src="cid:x@y">'), [pdf])
+
+    @override_settings(FINDUS_INGEST_ATTACHMENT_FILTER_ENABLED=False)
+    def test_disabled_filter_keeps_everything(self):
+        att = self._attachment(content_type="image/png", data=_png_bytes(1, 1), inline=True)
+        self.assertEqual(self._keep([att]), [att])
+
+    def test_fileobj_seek_reset_for_downstream_ingest(self):
+        """Der Filter darf den Lesezeiger nicht verbrauchen -- der Ingest
+        liest die Bytes danach noch."""
+        cfg = AttachmentFilterConfig(min_image_bytes=0, min_image_dimension=0)
+        att = self._attachment(content_type="image/png", data=_png_bytes(400, 400))
+        filter_mail_attachments([att], body="", config=cfg)
+        self.assertEqual(att.fileobj.tell(), 0)
 
 
 class MailBodyCleaningTests(TestCase):

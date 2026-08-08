@@ -22,6 +22,7 @@ from apps.accounts.models import Department
 from apps.documents.mime import resolve_mime_type
 from apps.documents.models import Correspondent, Document
 from apps.documents.text_sanitize import clean_text
+from apps.ingest.attachment_filter import filter_mail_attachments
 from apps.ingest.mail_body import (
     build_index_text,
     clean_body,
@@ -46,11 +47,17 @@ class IngestResult:
 @dataclass(frozen=True)
 class MailAttachment:
     """Ein Mail-Anhang, normalisiert ueber beide Backends (IMAP/Graph) --
-    der Connector reicht nur Bytes + Herkunft, der Ingest kennt den Rest."""
+    der Connector reicht nur Bytes + Herkunft, der Ingest kennt den Rest.
+
+    `content_id`/`inline` speisen den Grampf-Filter (#1081): Signatur-/
+    Deko-Bilder (Content-Disposition inline bzw. per `cid:` im Body
+    referenziert) werden gar nicht erst als Unterdokument angelegt."""
 
     fileobj: IO[bytes]
     filename: str
     content_type: str = ""
+    content_id: str = ""
+    inline: bool = False
 
 
 @dataclass(frozen=True)
@@ -335,6 +342,12 @@ def ingest_mail(
             return MailIngestResult(
                 leitdokument=existing, created=False, duplicate=True, attachments=[]
             )
+
+    # Grampf-Filter (#1081): Signatur-/Deko-Bilder (Social-Logos, winzige
+    # Inline-Grafiken, Tracking-Pixel) raus, bevor sie zu Unterdokumenten
+    # werden. Braucht den Body fuer die `cid:`-Referenzen; Nicht-Bilder
+    # (PDF/Office/echte Belege) bleiben unangetastet.
+    attachments = filter_mail_attachments(attachments, body=body)
 
     subject = mail_metadata.get("mail_subject") or ""
     cleaned = clean_body(body or "", body_content_type or "")

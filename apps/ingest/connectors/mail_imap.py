@@ -132,11 +132,14 @@ def _collect_attachments(msg) -> list[MailAttachment]:
         payload = part.get_payload(decode=True)
         if not payload:
             continue
+        disposition = (part.get_content_disposition() or "").strip().lower()
         attachments.append(
             MailAttachment(
                 fileobj=BytesIO(payload),
                 filename=part.get_filename() or "attachment",
                 content_type=part.get_content_type(),
+                content_id=part.get("Content-ID", "") or "",
+                inline=disposition == "inline",
             )
         )
     return attachments
