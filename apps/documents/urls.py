@@ -49,6 +49,11 @@ urlpatterns = [
     ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path(
+        "documents/<int:pk>/children/<int:child_id>/delete/",
+        views.document_child_delete,
+        name="child_delete",
+    ),
+    path(
         "documents/<int:pk>/action-status/",
         views.document_action_status,
         name="action_status",

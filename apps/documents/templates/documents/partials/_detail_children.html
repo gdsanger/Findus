@@ -1,0 +1,26 @@
+{% if children %}
+<ul class="findus-detail-links">
+    {% for child in children %}
+    <li class="d-flex justify-content-between align-items-center gap-2">
+        <span>
+            {% if child.child_role %}<span class="badge text-bg-secondary">{{ child.get_child_role_display }}</span>{% endif %}
+            <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
+        </span>
+        <form
+            method="post"
+            action="{% url 'documents:child_delete' document.pk child.pk %}"
+            hx-post="{% url 'documents:child_delete' document.pk child.pk %}"
+            hx-target="#document-children"
+            hx-swap="innerHTML"
+            class="d-inline"
+            onsubmit="return confirm('Unterdokument „{{ child.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
+        >
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">Keine Unterdokumente.</p>
+{% endif %}
