@@ -212,6 +212,22 @@ class CorrespondentDetailViewTests(TestCase):
         self.assertContains(response, "Rechnung Acme")
         self.assertNotContains(response, "findus-sidebar")
 
+    def test_document_list_offers_timeline_view(self):
+        """The Kontakt hub reuses the shared document-list block (#1087) --
+
+        the Timeline view is available here too, still scoped to this
+        Correspondent, without a second document-list implementation.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:correspondent_detail", args=[self.correspondent.pk]),
+            {"view": "timeline"},
+        )
+
+        self.assertContains(response, "findus-timeline\"")
+        self.assertContains(response, "Rechnung Acme")
+        self.assertNotContains(response, "Anderer Kontakt")
+
     def test_hub_offers_inline_edit_form_and_delete_action(self):
         """The Kontakt-Hub (#1050) edits/deletes directly -- the shared
         Stammdaten page (#1021) it used to detour through is gone entirely

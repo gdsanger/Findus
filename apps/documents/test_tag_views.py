@@ -209,6 +209,20 @@ class TagDetailViewTests(TestCase):
         self.assertContains(response, "Rechnung Acme")
         self.assertNotContains(response, "findus-sidebar")
 
+    def test_document_list_offers_timeline_view(self):
+        """The Tag hub reuses the shared document-list block (#1087) -- the
+
+        Timeline view is available here too, still scoped to this Tag.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:tag_detail", args=[self.tag.pk]), {"view": "timeline"}
+        )
+
+        self.assertContains(response, "findus-timeline\"")
+        self.assertContains(response, "Rechnung Acme")
+        self.assertNotContains(response, "Anderes Dokument")
+
     def test_hub_offers_inline_edit_form_and_delete_action(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:tag_detail", args=[self.tag.pk]))

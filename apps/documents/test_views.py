@@ -357,6 +357,100 @@ class DocumentListViewTests(TestCase):
         )
 
 
+class DocumentTimelineViewTests(TestCase):
+    """Timeline-Ansicht (#1087): reiner Anzeige-Modus des gemeinsamen
+
+    Dokumentlisten-Bausteins -- gruppiert das bereits gefilterte/sortierte
+    `page_obj` nach Monat/Jahr von `display_date`, statt selbst zu filtern
+    oder zu sortieren.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+
+        self.acme = Correspondent.objects.create(name="Acme GmbH")
+
+        self.august_doc = Document.objects.create(
+            title="August-Rechnung",
+            document_date=date(2026, 8, 1),
+            correspondent=self.acme,
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        self.august_doc.departments.add(self.dept)
+
+        self.july_doc = Document.objects.create(
+            title="Juli-Vertrag",
+            document_date=date(2026, 7, 15),
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        self.july_doc.departments.add(self.dept)
+
+        self.undated_doc = Document.objects.create(
+            title="Ohne Dokumentdatum",
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        self.undated_doc.departments.add(self.dept)
+
+    def test_list_view_is_default(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "<table")
+        self.assertNotContains(response, "findus-timeline\"")
+
+    def test_view_toggle_is_shown(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus-view-toggle")
+        self.assertContains(response, 'name="view"')
+
+    def test_timeline_view_groups_by_month(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+
+        self.assertContains(response, "findus-timeline\"")
+        self.assertContains(response, "August 2026")
+        self.assertContains(response, "Juli 2026")
+
+    def test_timeline_view_marks_upload_date_fallback(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+
+        self.assertContains(response, "(Upload)")
+
+    def test_timeline_view_links_to_detail(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+
+        self.assertContains(response, reverse("documents:detail", args=[self.august_doc.id]))
+
+    def test_timeline_view_still_respects_filters(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("documents:home"), {"view": "timeline", "correspondent": self.acme.id}
+        )
+
+        self.assertContains(response, "August-Rechnung")
+        self.assertNotContains(response, "Juli-Vertrag")
+
+    def test_view_param_is_preserved_in_pagination_links(self):
+        for index in range(25):
+            doc = Document.objects.create(
+                title=f"Bulk {index}",
+                document_date=date(2026, 1, 1),
+                visibility=Document.Visibility.DEPARTMENT,
+            )
+            doc.departments.add(self.dept)
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+
+        self.assertContains(response, "view=timeline")
+
+
 class DocumentSearchViewTests(TestCase):
     """Covers the semantic search bar (#1015): a `q` param on the document
     list switches to visibility-filtered, ranked hits from

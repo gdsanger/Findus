@@ -1,0 +1,15 @@
+{% if document.children.all %}
+<details class="findus-document-children">
+    <summary><a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a></summary>
+    <ul class="findus-document-children-list">
+        {% for child in document.children.all %}
+        <li>
+            <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
+            {% if child.child_role %}<span class="badge text-bg-light text-muted">{{ child.get_child_role_display }}</span>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</details>
+{% else %}
+<a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>
+{% endif %}
