@@ -1,3 +1,4 @@
+import datetime
 import json
 
 from django.test import TestCase, override_settings
@@ -151,6 +152,45 @@ class AnalyzeDocumentTests(TestCase):
         result = analyze_document(document.id, generation_provider=self._provider())
 
         self.assertEqual(result.correspondent, existing)
+
+    def test_sets_document_date_from_key_facts(self):
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.document_date, datetime.date(2026, 8, 1))
+
+    def test_does_not_overwrite_existing_document_date(self):
+        """#1085: a manually corrected (or previously KI-set) `document_date`
+
+        must survive a re-run -- otherwise "Analyse erneut ausfuehren"
+        would silently discard a user's correction.
+        """
+        document = Document.objects.create(
+            title="rechnung.pdf",
+            text_content="Rechnung Inhalt",
+            document_date=datetime.date(2025, 12, 24),
+        )
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.document_date, datetime.date(2025, 12, 24))
+
+    def test_malformed_document_date_is_ignored(self):
+        reply = json.dumps(
+            {
+                "title": "Doc",
+                "summary": "",
+                "key_facts": {"document_date": "irgendwann letzten Monat"},
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="doc.pdf", text_content="Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertIsNone(result.document_date)
 
     def test_creates_tag_and_vorgang_suggestions(self):
         document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")

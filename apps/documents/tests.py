@@ -116,6 +116,30 @@ class DocumentHierarchyTests(TestCase):
         self.assertFalse(Document.objects.filter(pk=child.pk).exists())
 
 
+class DocumentDisplayDateTests(TestCase):
+    """Covers `Document.display_date`/`display_date_is_upload_fallback`
+
+    (#1085): the Anzeige-Datum is `document_date` when the KI-Analyse/user
+    set one, else the Upload-Datum (`created_at`) -- never the reverse,
+    and `created_at` itself must stay untouched either way.
+    """
+
+    def test_uses_document_date_when_set(self):
+        document = Document.objects.create(
+            title="Rechnung", document_date=datetime.date(2026, 1, 15)
+        )
+
+        self.assertEqual(document.display_date, datetime.date(2026, 1, 15))
+        self.assertFalse(document.display_date_is_upload_fallback)
+
+    def test_falls_back_to_created_at_when_document_date_missing(self):
+        document = Document.objects.create(title="Brief ohne erkanntes Datum")
+
+        self.assertEqual(document.display_date, document.created_at.date())
+        self.assertTrue(document.display_date_is_upload_fallback)
+        self.assertIsNone(document.document_date)
+
+
 class DocumentVisibleToTests(TestCase):
     """Covers the two-level visibility model (see Architektur.md,
 

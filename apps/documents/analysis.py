@@ -52,6 +52,7 @@ prefix.
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Optional
 
@@ -166,6 +167,23 @@ def _clamp_confidence(value: object) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, number))
+
+
+def _parse_document_date(value: object) -> Optional[datetime.date]:
+    """Parse the KI's `key_facts.document_date` (prompted as "YYYY-MM-DD",
+
+    #1085) into a real `date` -- an LLM reply is free text, not a validated
+    field, so a missing/malformed value (empty string, prose, wrong format)
+    must fall back to `None` instead of raising and losing the rest of the
+    analysis.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _normalize_tag_fields(name: str, dimension: str) -> tuple[str, str]:
@@ -323,6 +341,16 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
     if title:
         document.title = title
         update_fields.append("title")
+
+    # Dokumentdatum (#1085): wie `direction` nur befuellen, solange es noch
+    # leer ist -- eine per Hand korrigierte oder bereits von einem
+    # frueheren Analyse-Lauf gesetzte `document_date` darf ein erneuter
+    # `document_analysis_rerun` nicht stillschweigend ueberschreiben.
+    if document.document_date is None:
+        parsed_document_date = _parse_document_date(key_facts_in.get("document_date"))
+        if parsed_document_date is not None:
+            document.document_date = parsed_document_date
+            update_fields.append("document_date")
 
     sender_kwargs = {
         "name": key_facts_in.get("sender_name") or "",
