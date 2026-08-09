@@ -382,7 +382,11 @@ FINDUS_AI_PROVIDERS = {
         "base_url": env("FINDUS_ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
         "generation_model": env("FINDUS_ANTHROPIC_GENERATION_MODEL", "claude-sonnet-5"),
         "generation_model_version": env("FINDUS_ANTHROPIC_GENERATION_MODEL_VERSION", "1"),
-        "max_tokens": int(env("FINDUS_ANTHROPIC_MAX_TOKENS", "1024")),
+        # Default-Output-Budget für Calls, die keins mitgeben. 1.024 war zu
+        # knapp für jede strukturierte Antwort (#1096) -- Anthropic verlangt
+        # das Feld zwingend, es ist eine Obergrenze und keine Reservierung,
+        # also kostet ein großzügiger Default nichts.
+        "max_tokens": int(env("FINDUS_ANTHROPIC_MAX_TOKENS", "4096")),
     },
     "gemini": {
         "api_key": env("FINDUS_GEMINI_API_KEY", ""),

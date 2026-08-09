@@ -7,7 +7,7 @@ embedding/generation call sites without a real provider.
 
 from __future__ import annotations
 
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, Optional, Sequence, Union
 
 from .base import (
     EmbeddingResult,
@@ -44,6 +44,12 @@ class FakeEmbeddingProvider:
 class FakeGenerationProvider:
     """Echoes the last user message back, optionally split into chunks
     for the streaming path.
+
+    `replies` (a sequence, consumed one per call) and `truncated` let a
+    test drive the truncation/retry path of `generate_json` (#1096)
+    without hand-rolling a stub provider: the first call can report a
+    cut-off reply and the second a complete one. `max_tokens_calls`
+    records the budget each call was made with.
     """
 
     name = "fake"
@@ -54,27 +60,51 @@ class FakeGenerationProvider:
         model: str = "fake-generate",
         version: str = "1",
         reply: Optional[str] = None,
+        replies: Optional[Sequence[str]] = None,
+        truncated: Union[bool, Sequence[bool]] = False,
     ):
         self.model = model
         self.version = version
         self.reply = reply
+        self.replies = list(replies) if replies is not None else None
+        self.truncated = truncated
         self.calls: list[list[Message]] = []
+        self.max_tokens_calls: list[Optional[int]] = []
 
     def _reply_for(self, messages: list[Message]) -> str:
+        if self.replies is not None:
+            index = min(len(self.calls) - 1, len(self.replies) - 1)
+            return self.replies[index]
         if self.reply is not None:
             return self.reply
         user_messages = [m for m in messages if m.role == "user"]
         last = user_messages[-1].content if user_messages else ""
         return f"echo: {last}"
 
+    def _truncated_for_current_call(self) -> bool:
+        if isinstance(self.truncated, bool):
+            return self.truncated
+        index = len(self.calls) - 1
+        return bool(self.truncated[index]) if index < len(self.truncated) else False
+
     def generate(
-        self, messages: Iterable[Message], *, stream: bool = False
+        self,
+        messages: Iterable[Message],
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
     ) -> GenerationOutput:
         messages = list(messages)
         self.calls.append(messages)
+        self.max_tokens_calls.append(max_tokens)
         text = self._reply_for(messages)
         if not stream:
-            return GenerationResult(text=text, model=self.model, version=self.version)
+            return GenerationResult(
+                text=text,
+                model=self.model,
+                version=self.version,
+                truncated=self._truncated_for_current_call(),
+            )
         return self._stream(text)
 
     def _stream(self, text: str) -> Iterator[GenerationChunk]:
