@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Brief-Vorlagen – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Brief-Vorlagen" %}
+
+<section class="findus-section findus-detail-actions">
+    <a href="{% url 'documents:letter_template_create' %}" class="btn btn-sm btn-primary">+ Neue Vorlage</a>
+</section>
+
+<section class="findus-section">
+    <div class="findus-card table-responsive p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Kategorie</th>
+                    <th>Beschreibung</th>
+                    <th>Platzhalter</th>
+                    <th>Sichtbarkeit</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for template in templates %}
+                <tr>
+                    <td><a href="{% url 'documents:letter_template_detail' template.pk %}">{{ template.name }}</a></td>
+                    <td>{{ template.category|default:"—" }}</td>
+                    <td class="text-muted">{{ template.description|truncatechars:90|default:"—" }}</td>
+                    <td>{{ template.placeholders.all|length }}</td>
+                    <td>{{ template.get_visibility_display }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'documents:letter_template_detail' template.pk %}" class="btn btn-sm btn-outline-secondary">Bearbeiten</a>
+                        <form
+                            method="post"
+                            action="{% url 'documents:letter_template_delete' template.pk %}"
+                            class="d-inline"
+                            onsubmit="return confirm('Vorlage „{{ template.name }}“ wirklich löschen?');"
+                        >
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-muted">Keine Brief-Vorlagen vorhanden.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

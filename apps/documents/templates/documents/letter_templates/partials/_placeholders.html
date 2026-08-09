@@ -1,0 +1,122 @@
+{% if placeholder_error %}
+<div class="alert alert-danger py-2 px-3 small">{{ placeholder_error }}</div>
+{% endif %}
+
+<div class="findus-card">
+    <ul class="list-group list-group-flush mb-3">
+        {% for placeholder in placeholders %}
+        <li class="list-group-item bg-transparent">
+            <div class="findus-letter-placeholder-row">
+                <form
+                    class="findus-letter-placeholder-fields"
+                    method="post"
+                    action="{% url 'documents:letter_template_placeholder_update' template.pk placeholder.pk %}"
+                    hx-post="{% url 'documents:letter_template_placeholder_update' template.pk placeholder.pk %}"
+                    hx-target="#letter-template-placeholders"
+                    hx-swap="innerHTML"
+                >
+                    {% csrf_token %}
+                    <input
+                        type="text"
+                        name="key"
+                        value="{{ placeholder.key }}"
+                        aria-label="Schlüssel"
+                        class="form-control form-control-sm findus-letter-placeholder-key"
+                    >
+                    <input
+                        type="text"
+                        name="label"
+                        value="{{ placeholder.label }}"
+                        aria-label="Bezeichnung"
+                        placeholder="Bezeichnung"
+                        class="form-control form-control-sm"
+                    >
+                    <select name="source" aria-label="Quelle" class="form-select form-select-sm">
+                        {% for group_label, options in source_groups %}
+                        <optgroup label="{{ group_label }}">
+                            {% for value, option_label in options %}
+                            <option value="{{ value }}"{% if value == placeholder.source %} selected{% endif %}>{{ option_label }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                    </select>
+                    <div class="form-check mb-0">
+                        <input
+                            type="checkbox"
+                            name="required"
+                            class="form-check-input"
+                            id="placeholder-required-{{ placeholder.pk }}"
+                            {% if placeholder.required %}checked{% endif %}
+                        >
+                        <label class="form-check-label small" for="placeholder-required-{{ placeholder.pk }}">Pflicht</label>
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-outline-secondary text-nowrap">Speichern</button>
+                </form>
+
+                <div class="findus-checklist-order-actions">
+                    <form
+                        method="post"
+                        action="{% url 'documents:letter_template_placeholder_move' template.pk placeholder.pk 'up' %}"
+                        hx-post="{% url 'documents:letter_template_placeholder_move' template.pk placeholder.pk 'up' %}"
+                        hx-target="#letter-template-placeholders"
+                        hx-swap="innerHTML"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="Nach oben verschieben" {% if forloop.first %}disabled{% endif %}>↑</button>
+                    </form>
+                    <form
+                        method="post"
+                        action="{% url 'documents:letter_template_placeholder_move' template.pk placeholder.pk 'down' %}"
+                        hx-post="{% url 'documents:letter_template_placeholder_move' template.pk placeholder.pk 'down' %}"
+                        hx-target="#letter-template-placeholders"
+                        hx-swap="innerHTML"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="Nach unten verschieben" {% if forloop.last %}disabled{% endif %}>↓</button>
+                    </form>
+                    <form
+                        method="post"
+                        action="{% url 'documents:letter_template_placeholder_delete' template.pk placeholder.pk %}"
+                        hx-post="{% url 'documents:letter_template_placeholder_delete' template.pk placeholder.pk %}"
+                        hx-target="#letter-template-placeholders"
+                        hx-swap="innerHTML"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Entfernen</button>
+                    </form>
+                </div>
+            </div>
+            <div class="findus-letter-placeholder-hint">
+                <code>{% templatetag openvariable %}{{ placeholder.key }}{% templatetag closevariable %}</code>
+                <span class="text-muted">← {{ placeholder.source_label }}</span>
+            </div>
+        </li>
+        {% empty %}
+        <li class="list-group-item bg-transparent text-muted">Noch keine Platzhalter.</li>
+        {% endfor %}
+    </ul>
+
+    <form
+        class="findus-letter-placeholder-fields"
+        method="post"
+        action="{% url 'documents:letter_template_placeholder_add' template.pk %}"
+        hx-post="{% url 'documents:letter_template_placeholder_add' template.pk %}"
+        hx-target="#letter-template-placeholders"
+        hx-swap="innerHTML"
+    >
+        {% csrf_token %}
+        {{ add_form.key }}
+        {{ add_form.label }}
+        {{ add_form.source }}
+        <div class="form-check mb-0">
+            {{ add_form.required }}
+            <label class="form-check-label small" for="{{ add_form.required.id_for_label }}">Pflicht</label>
+        </div>
+        <button type="submit" class="btn btn-sm btn-outline-secondary text-nowrap">+ Hinzufügen</button>
+    </form>
+    {% if add_form.errors %}
+    <div class="text-danger small mt-2">
+        {% for field, errors in add_form.errors.items %}<div>{{ errors|striptags }}</div>{% endfor %}
+    </div>
+    {% endif %}
+</div>

@@ -1,6 +1,15 @@
 from django import forms
 
-from .models import Correspondent, Tag, Task, TaskTemplate, Vorgang
+from .letter_bindings import source_choices
+from .models import (
+    Correspondent,
+    LetterTemplate,
+    LetterTemplatePlaceholder,
+    Tag,
+    Task,
+    TaskTemplate,
+    Vorgang,
+)
 
 _TEXT_WIDGET = forms.TextInput(attrs={"class": "form-control form-control-sm"})
 _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
@@ -120,3 +129,142 @@ class TaskTemplateForm(forms.ModelForm):
                 attrs={"class": "form-control form-control-sm", "min": 0}
             ),
         }
+
+
+class LetterTemplateForm(forms.ModelForm):
+    """Vorlagen-Kopf, Anleitung und die überschreibbaren Layout-Teile (#1094).
+
+    Die Layout-Felder (`layout_*`) sind bewusst *keine* Model-Felder,
+    sondern schreiben in das `layout`-JSON: das Layout wächst mit dem
+    Renderer (#4b), und für jede neue Option eine eigene Spalte plus
+    Migration anzulegen wäre teuer, ohne etwas zu gewinnen. Beim Speichern
+    wird das bestehende JSON *aktualisiert*, nicht ersetzt -- so überlebt
+    ein Schlüssel, den dieses Formular (noch) nicht kennt, jede
+    Bearbeitung.
+
+    `owner`/`departments`/`visibility` bleiben wie bei `TaskTemplateForm`
+    Sache der View, Platzhalter werden inline auf der Detailseite gepflegt.
+    """
+
+    LAYOUT_FIELDS = ("letterhead", "date_place", "closing")
+
+    layout_letterhead = forms.CharField(
+        label="Briefkopf",
+        required=False,
+        widget=forms.Textarea(attrs={"class": "form-control form-control-sm", "rows": 2}),
+        help_text="Kopfzeile über dem Absenderblock; leer = nur der Absender.",
+    )
+    layout_date_place = forms.CharField(
+        label="Ort in der Datumszeile",
+        required=False,
+        widget=_TEXT_WIDGET,
+    )
+    layout_closing = forms.CharField(
+        label="Grußformel",
+        required=False,
+        widget=_TEXT_WIDGET,
+    )
+
+    class Meta:
+        model = LetterTemplate
+        fields = ["name", "description", "category", "instructions", "signature", "logo"]
+        labels = {
+            "name": "Name",
+            "description": "Beschreibung (wann verwende ich das?)",
+            "category": "Kategorie",
+            "instructions": "Anleitung (Markdown)",
+            "signature": "Signatur",
+            "logo": "Logo (optional)",
+        }
+        widgets = {
+            "name": _TEXT_WIDGET,
+            "description": forms.Textarea(
+                attrs={"class": "form-control form-control-sm", "rows": 2}
+            ),
+            "category": forms.TextInput(
+                attrs={
+                    "class": "form-control form-control-sm",
+                    "list": "letter-template-categories",
+                    "autocomplete": "off",
+                }
+            ),
+            "instructions": forms.Textarea(
+                attrs={
+                    "class": "form-control form-control-sm findus-letter-instructions",
+                    "rows": 14,
+                    "placeholder": "## Ton\n…\n\n## Aufbau\n1. …",
+                }
+            ),
+            "signature": forms.Textarea(
+                attrs={"class": "form-control form-control-sm", "rows": 4}
+            ),
+            "logo": forms.ClearableFileInput(attrs={"class": "form-control form-control-sm"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for key in self.LAYOUT_FIELDS:
+            self.fields[f"layout_{key}"].initial = (
+                self.instance.layout_value(key) if self.instance else None
+            )
+
+    def save(self, commit=True):
+        template = super().save(commit=False)
+        layout = dict(template.layout or {})
+        for key in self.LAYOUT_FIELDS:
+            layout[key] = self.cleaned_data.get(f"layout_{key}", "").strip()
+        template.layout = layout
+        if commit:
+            template.save()
+            self.save_m2m()
+        return template
+
+
+class LetterTemplatePlaceholderForm(forms.ModelForm):
+    """Eine Daten-Bindung (#1094). `source` bekommt seine Auswahl aus der
+    Quellen-Registry (`letter_bindings.source_choices`), nicht aus einer
+    Model-`choices`-Liste -- eine später registrierte Quelle taucht damit
+    ohne Migration und ohne Formular-Änderung im Select auf.
+    """
+
+    class Meta:
+        model = LetterTemplatePlaceholder
+        fields = ["key", "label", "source", "required"]
+        labels = {
+            "key": "Schlüssel",
+            "label": "Bezeichnung",
+            "source": "Quelle",
+            "required": "Pflicht",
+        }
+        widgets = {
+            "key": forms.TextInput(
+                attrs={"class": "form-control form-control-sm", "placeholder": "empfaenger_adresse"}
+            ),
+            "label": _TEXT_WIDGET,
+            "required": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        }
+
+    def __init__(self, *args, template=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.template = template or getattr(self.instance, "template", None)
+        self.fields["source"] = forms.ChoiceField(
+            label="Quelle",
+            choices=source_choices(),
+            widget=_SELECT_WIDGET,
+        )
+
+    def clean_key(self):
+        """Die UniqueConstraint (template, key) prüft das Formular nicht von
+        selbst -- `template` ist kein Formularfeld, also lässt Djangos
+        `validate_unique` sie aus und ein doppelter Schlüssel liefe in einen
+        IntegrityError statt in eine Fehlermeldung.
+        """
+        key = self.cleaned_data["key"]
+        if self.template is None:
+            return key
+        duplicates = self.template.placeholders.filter(key=key)
+        if self.instance.pk:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise forms.ValidationError(f"Der Schlüssel „{key}“ ist schon vergeben.")
+        return key

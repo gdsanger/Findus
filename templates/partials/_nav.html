@@ -79,6 +79,13 @@
         >
             Tags
         </a>
+
+        <a
+            href="{% url 'documents:letter_template_list' %}"
+            class="findus-nav-link{% if 'letter_template' in request.resolver_match.url_name %} active{% endif %}"
+        >
+            Brief-Vorlagen
+        </a>
     </li>
     <li>
         <a

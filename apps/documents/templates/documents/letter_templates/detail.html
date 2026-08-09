@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ template.name }} – Brief-Vorlage – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title=template.name %}
+
+<section class="findus-section findus-detail-actions">
+    <a href="{% url 'documents:letter_template_list' %}" class="btn btn-sm btn-outline-secondary">Zurück zur Liste</a>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Bearbeiten</h2>
+    <form method="post" enctype="multipart/form-data" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/letter_templates/_form_fields.html" %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+        </div>
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">Platzhalter / Daten-Bindungen</h2>
+    <p class="text-muted small">
+        Jeder Platzhalter bindet einen Wert an eine Findus-interne Quelle – die eigene
+        Identität, den Kontakt, das Bezugsdokument samt Key-Facts, den Vorgang, das Datum
+        oder eine manuelle Eingabe beim Erzeugen des Schreibens.
+    </p>
+    <div id="letter-template-placeholders">
+        {% include "documents/letter_templates/partials/_placeholders.html" %}
+    </div>
+</section>
+{% endblock %}
