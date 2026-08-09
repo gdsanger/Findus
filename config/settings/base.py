@@ -322,6 +322,29 @@ FINDUS_ANALYSIS_MAX_CHARS = int(env("FINDUS_ANALYSIS_MAX_CHARS", "12000"))
 FINDUS_ANALYSIS_MAX_CONTACTS = int(env("FINDUS_ANALYSIS_MAX_CONTACTS", "200"))
 
 # --------------------------------------------------------------------------
+# Handlungsempfehlungen je Vorgang (#1093,
+# apps.documents.recommendations): ein `generate()`-Call pro Generierung,
+# nur auf Knopfdruck. Datenbasis sind die Zusammenfassungen/Key-Facts der
+# Dokumente (#1020), NICHT deren Volltexte -- MAX_DOCUMENTS begrenzt, wie
+# viele Dokumente ein Vorgang in den Prompt schickt (die jüngsten, danach
+# wieder chronologisch), MAX_SUMMARY_CHARS die Länge je Zusammenfassung.
+# Wurde gekürzt, steht das in `based_on["truncated"]` und damit im Panel --
+# eine stille Kürzung wäre eine Lüge über die Datenbasis. MAX_ITEMS ist
+# die Obergrenze an Empfehlungen pro Lauf (im Prompt genannt und beim
+# Parsen hart durchgesetzt, damit eine ausufernde Modellantwort keine
+# 200-Zeilen-Liste anlegt).
+# --------------------------------------------------------------------------
+FINDUS_VORGANG_RECOMMENDATION_MAX_DOCUMENTS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_MAX_DOCUMENTS", "40")
+)
+FINDUS_VORGANG_RECOMMENDATION_MAX_SUMMARY_CHARS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_MAX_SUMMARY_CHARS", "800")
+)
+FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS", "8")
+)
+
+# --------------------------------------------------------------------------
 # Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
 # -> vision, cheapest usable stage wins. A page only escalates to the next
 # (more expensive) stage when the current one produced fewer than

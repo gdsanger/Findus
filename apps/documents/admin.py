@@ -12,6 +12,8 @@ from .models import (
     TaskTemplate,
     TaskTemplateItem,
     Vorgang,
+    VorgangRecommendation,
+    VorgangRecommendationRun,
     VorgangSuggestion,
 )
 
@@ -133,6 +135,32 @@ class VorgangAdmin(admin.ModelAdmin):
     list_display = ("name", "status", "department", "created_at")
     list_filter = ("status", "department")
     search_fields = ("name",)
+
+
+class VorgangRecommendationInline(admin.TabularInline):
+    """Read-only view of the generated Handlungsempfehlungen (#1093).
+
+    Übernehmen/Verwerfen happens on the Vorgang-Hub, not here -- and
+    nothing may hand-create a recommendation, since a row without a real
+    generation behind it would carry provenance it never had.
+    """
+
+    model = VorgangRecommendation
+    fields = ("order", "title", "due_date", "priority", "status", "task")
+    readonly_fields = fields
+    extra = 0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(VorgangRecommendationRun)
+class VorgangRecommendationRunAdmin(admin.ModelAdmin):
+    list_display = ("vorgang", "status", "generated_at", "ai_model")
+    list_filter = ("status",)
+    search_fields = ("vorgang__name", "situation")
+    readonly_fields = ("based_on", "error", "ai_model", "ai_model_version")
+    inlines = [VorgangRecommendationInline]
 
 
 @admin.register(Tag)

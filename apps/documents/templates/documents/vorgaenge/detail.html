@@ -88,6 +88,11 @@
 </section>
 
 <section class="findus-section">
+    <h2 class="findus-section-title">Handlungsempfehlungen</h2>
+    {% include "documents/partials/_vorgang_recommendations.html" %}
+</section>
+
+<section class="findus-section">
     <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
     <div class="findus-detail-actions">
         <a href="{% url 'documents:task_create' %}" class="btn btn-sm btn-outline-secondary">+ Neue Aufgabe</a>

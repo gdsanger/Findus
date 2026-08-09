@@ -1,0 +1,178 @@
+{% comment %}
+Handlungsempfehlungen je Vorgang (#1093). Ein einziges, in sich
+geschlossenes Fragment: es ist zugleich Anzeige, Poll-Ziel waehrend der
+Generierung und Swap-Ziel der Uebernehmen/Verwerfen-Aktionen -- deshalb
+kein Seiten-Refresh noetig, alles Veraenderliche steht hier drin.
+{% endcomment %}
+<div
+    id="vorgang-recommendations"
+    {% if recommendation_run.is_running %}
+    hx-get="{% url 'documents:vorgang_recommendations' vorgang.pk %}"
+    hx-trigger="every 4s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    {% endif %}
+>
+    <div class="findus-recommendations-head">
+        <div class="findus-recommendations-meta text-muted small">
+            {% if recommendation_run.has_result %}
+            erstellt am {{ recommendation_run.generated_at|date:"d.m.Y H:i" }} ·
+            Basis: {{ recommendation_run.based_on.used_count|default:0 }}
+            {% if recommendation_run.based_on.used_count == 1 %}Dokument{% else %}Dokumente{% endif %}
+            {% if recommendation_run.based_on.truncated %}
+            <span class="text-warning-emphasis">
+                (gekürzt: nur die jüngsten {{ recommendation_run.based_on.used_count }}
+                von {{ recommendation_run.based_on.document_count }} Dokumenten)
+            </span>
+            {% endif %}
+            {% else %}
+            noch nicht erstellt
+            {% endif %}
+        </div>
+        <form
+            method="post"
+            action="{% url 'documents:vorgang_recommendations_generate' vorgang.pk %}"
+            hx-post="{% url 'documents:vorgang_recommendations_generate' vorgang.pk %}"
+            hx-target="#vorgang-recommendations"
+            hx-swap="outerHTML"
+        >
+            {% csrf_token %}
+            <button
+                type="submit"
+                class="btn btn-sm {% if recommendations_stale %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+                {% if recommendation_run.is_running %}disabled{% endif %}
+            >
+                {% if recommendation_run.has_result %}Empfehlungen neu generieren{% else %}Empfehlungen generieren{% endif %}
+            </button>
+        </form>
+    </div>
+
+    {% comment %}
+    Der Disclaimer steht bewusst *vor* jedem Ergebnis und bleibt auch ohne
+    eines stehen: er soll die Erwartung setzen, bevor geklickt wird, nicht
+    erst nachträglich relativieren.
+    {% endcomment %}
+    <p class="findus-ai-disclaimer text-muted small">
+        KI-generierte Vorschläge – keine Rechts-/Steuerberatung. Jeder Schritt ist
+        prüfenswert, nicht verbindlich; im Zweifel eine Fachperson einbeziehen.
+        Es wird nichts automatisch angelegt.
+    </p>
+
+    {% if recommendation_run.is_running %}
+    <p class="findus-recommendations-running text-muted small">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        Empfehlungen werden erstellt …
+    </p>
+    {% endif %}
+
+    {% if recommendation_run.status == 'failed' %}
+    <p class="text-danger small">
+        Empfehlungen konnten nicht erstellt werden{% if recommendation_run.error %}: {{ recommendation_run.error }}{% endif %}
+    </p>
+    {% endif %}
+
+    {% if recommendations_stale %}
+    <p class="findus-recommendations-stale small">
+        Veraltet – die Dokumentbasis dieses Vorgangs hat sich seit der Generierung
+        geändert. Bitte neu generieren.
+    </p>
+    {% endif %}
+
+    {% if recommendations_restricted %}
+    <p class="text-muted">
+        Für diesen Vorgang liegen Handlungsempfehlungen vor, sie fußen aber auf
+        Dokumenten, die für Sie nicht sichtbar sind – daher werden sie hier nicht
+        angezeigt. Sie können die Empfehlungen auf Ihrer eigenen Datenbasis neu
+        generieren.
+    </p>
+    {% elif recommendation_run.has_result %}
+    <div class="findus-card">
+        {% if recommendation_run.situation %}
+        <h3 class="findus-section-subtitle">Lage-Einschätzung</h3>
+        <p class="findus-recommendations-situation">{{ recommendation_run.situation }}</p>
+        {% endif %}
+
+        {% if recommendations %}
+        <h3 class="findus-section-subtitle">Empfohlene nächste Schritte</h3>
+        <ul class="findus-recommendation-list">
+            {% for entry in recommendations %}
+            <li class="findus-recommendation findus-recommendation--{{ entry.item.status }}">
+                <div class="findus-recommendation-head">
+                    <span class="findus-recommendation-title">{{ entry.item.title }}</span>
+                    {% if entry.item.priority %}
+                    <span class="badge text-bg-secondary fw-normal">Priorität {{ entry.item.get_priority_display }}</span>
+                    {% endif %}
+                    {% if entry.item.due_date %}
+                    <span class="badge text-bg-secondary fw-normal">Frist {{ entry.item.due_date|date:"d.m.Y" }}</span>
+                    {% endif %}
+                    {% if entry.item.status != 'open' %}
+                    <span class="badge {% if entry.item.status == 'accepted' %}text-bg-success{% else %}text-bg-secondary{% endif %} fw-normal">
+                        {{ entry.item.get_status_display }}
+                    </span>
+                    {% endif %}
+                </div>
+
+                {% if entry.item.rationale %}
+                <p class="findus-recommendation-rationale">{{ entry.item.rationale }}</p>
+                {% endif %}
+
+                <p class="findus-recommendation-sources small text-muted">
+                    Quellen:
+                    {% for document in entry.sources %}
+                    <a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>{% if not forloop.last %}, {% endif %}
+                    {% empty %}
+                    keine (für Sie sichtbaren) Quell-Dokumente angegeben – bitte selbst prüfen
+                    {% endfor %}
+                </p>
+
+                {% if entry.item.status == 'open' %}
+                <div class="findus-recommendation-actions">
+                    <form
+                        method="post"
+                        action="{% url 'documents:vorgang_recommendation_accept' vorgang.pk entry.item.pk %}"
+                        hx-post="{% url 'documents:vorgang_recommendation_accept' vorgang.pk entry.item.pk %}"
+                        hx-target="#vorgang-recommendations"
+                        hx-swap="outerHTML"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-primary">als Aufgabe übernehmen</button>
+                    </form>
+                    <form
+                        method="post"
+                        action="{% url 'documents:vorgang_recommendation_dismiss' vorgang.pk entry.item.pk %}"
+                        hx-post="{% url 'documents:vorgang_recommendation_dismiss' vorgang.pk entry.item.pk %}"
+                        hx-target="#vorgang-recommendations"
+                        hx-swap="outerHTML"
+                    >
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">verwerfen</button>
+                    </form>
+                </div>
+                {% elif entry.item.task %}
+                <p class="findus-recommendation-actions small">
+                    <a href="{% url 'documents:task_detail' entry.item.task.pk %}">Aufgabe öffnen</a>
+                </p>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% elif not recommendation_run.based_on.used_count %}
+        <p class="text-muted mb-0">
+            Keine Datenbasis – dieser Vorgang enthält (für Sie sichtbar) noch keine
+            Dokumente, die beurteilt werden könnten.
+        </p>
+        {% else %}
+        <p class="text-muted mb-0">
+            Keine Empfehlungen – die KI sieht aus den vorhandenen Zusammenfassungen
+            aktuell keinen konkreten nächsten Schritt.
+        </p>
+        {% endif %}
+    </div>
+    {% elif not recommendation_run.is_running %}
+    <p class="text-muted">
+        Noch keine Handlungsempfehlungen. Auf Knopfdruck beurteilt die KI den
+        gesamten Vorgang anhand der Zusammenfassungen und Key-Facts seiner
+        Dokumente.
+    </p>
+    {% endif %}
+</div>

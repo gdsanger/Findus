@@ -1295,3 +1295,91 @@ a.findus-kpi-card:focus-visible {
         display: none;
     }
 }
+
+/* Handlungsempfehlungen je Vorgang (#1093) --------------------------------*/
+.findus-recommendations-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-3);
+    margin-bottom: var(--findus-space-2);
+}
+
+.findus-recommendations-meta {
+    margin: 0;
+}
+
+.findus-recommendations-head form {
+    margin-left: auto;
+}
+
+.findus-recommendations-running {
+    display: flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-2);
+}
+
+/* Der Veraltet-Hinweis muss auffallen, ohne wie ein Fehler auszusehen --
+   die Basis hat sich nur geändert, das Ergebnis ist weiter lesbar. */
+.findus-recommendations-stale {
+    padding: var(--findus-space-2) var(--findus-space-3);
+    margin-bottom: var(--findus-space-2);
+    background-color: rgba(var(--findus-accent-rgb), 0.12);
+    border: 1px solid rgba(var(--findus-accent-rgb), 0.4);
+    border-radius: var(--findus-radius-sm);
+}
+
+.findus-recommendations-situation {
+    margin-bottom: var(--findus-space-4);
+}
+
+.findus-recommendation-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-3);
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+.findus-recommendation {
+    padding: var(--findus-space-3);
+    background-color: var(--findus-surface-raised);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-sm);
+}
+
+/* Verworfene bleiben stehen (die Entscheidung ist die Information), treten
+   aber optisch zurück. */
+.findus-recommendation--dismissed {
+    opacity: 0.6;
+}
+
+.findus-recommendation-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-2);
+}
+
+.findus-recommendation-title {
+    font-weight: 600;
+}
+
+.findus-recommendation-rationale {
+    margin-bottom: var(--findus-space-2);
+}
+
+.findus-recommendation-sources {
+    margin-bottom: var(--findus-space-2);
+}
+
+.findus-recommendation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin: 0;
+}

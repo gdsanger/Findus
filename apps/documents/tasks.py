@@ -1,6 +1,7 @@
 from .analysis import analyze_document
 from .extraction import extract_document
 from .processing import process_document
+from .recommendations import generate_vorgang_recommendations
 
 
 def extract_document_task(document_id):
@@ -50,3 +51,19 @@ def process_document_task(document_id):
     silently dropping it.
     """
     process_document(document_id)
+
+
+def generate_vorgang_recommendations_task(vorgang_id, user_id):
+    """Django-Q2 worker entry point for the Handlungsempfehlungen (#1093),
+    queued by the Vorgang-Hub's "Empfehlungen generieren"-Button --
+    never by the ingest pipeline, this only ever runs on demand.
+
+    `user_id` travels along because the Datenbasis is `visible_to`-scoped:
+    the worker has no request, so the triggering user is the only thing
+    that says which documents may go into the prompt.
+
+    `generate_vorgang_recommendations()` records its own failures on the
+    run (`status="failed"` + `error`, shown in the panel) and never
+    raises, so there is nothing left for this wrapper to handle.
+    """
+    generate_vorgang_recommendations(vorgang_id, user_id)
