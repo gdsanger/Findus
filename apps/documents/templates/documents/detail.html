@@ -34,6 +34,13 @@
         Original herunterladen
     </a>
     {% endif %}
+    {# Einstieg in den Fokus-Graphen (#1091) mit diesem Dokument als Startknoten. #}
+    <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{% url 'documents:graph' %}?type=document&amp;id={{ document.pk }}"
+    >
+        Im Graph anzeigen
+    </a>
     <form
         method="post"
         action="{% url 'documents:delete' document.pk %}"

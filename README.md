@@ -11,7 +11,8 @@ Build-Plans) — noch keine Fachlogik/Models für Dokumente, Absender, Tags etc.
 
 - **Django** (Python), UI server-rendered mit **HTMX** + **Bootstrap**, beide
   als vendored Static-Assets ausgeliefert (`static/vendor/`) — kein
-  npm/Webpack/Vite.
+  npm/Webpack/Vite. Dasselbe gilt für **Cytoscape.js**, das den Fokus-Graphen
+  unter `/graph` zeichnet.
 - **PostgreSQL + pgvector** als einziger Datenspeicher (`db`-Service nutzt das
   offizielle `pgvector/pgvector`-Image).
 - **Redis** als App-Cache und Broker für **Django-Q2** (Background-Worker,
@@ -88,7 +89,7 @@ apps/accounts/      Custom User-Model (AUTH_USER_MODEL) + Department
 apps/documents/      Kern-App; aktuell nur pgvector-Extension-Migration + HTMX-Demo
 apps/ai/             Platzhalter für die KI-Provider-Schicht (Folge-Issue)
 apps/mcp/            MCP-SSE-Entrypoint + Tools (ping/health)
-templates/, static/  Server-rendered UI, vendored HTMX/Bootstrap
+templates/, static/  Server-rendered UI, vendored HTMX/Bootstrap/Cytoscape
 docker-compose.yml   web, db, redis, worker, mcp, minio
 ```
 

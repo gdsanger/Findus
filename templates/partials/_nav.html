@@ -80,6 +80,14 @@
             Tags
         </a>
     </li>
+    <li>
+        <a
+            href="{% url 'documents:graph' %}"
+            class="findus-nav-link{% if 'graph' in request.resolver_match.url_name %} active{% endif %}"
+        >
+            Netzwerk
+        </a>
+    </li>
 </ul>
 <div class="findus-nav-spacer"></div>
 {% if request.user.is_authenticated %}

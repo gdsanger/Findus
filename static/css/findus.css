@@ -52,6 +52,20 @@
     --findus-accent-contrast-rgb: 30, 31, 34;
     --findus-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 
+    /* Fokus-Graph (#1091): eine Farbe je Knotentyp, plus die beiden
+       Kantensorten. Liegt hier statt in findus-graph.js, weil Cytoscape auf
+       Canvas rendert und kein CSS erbt -- das Skript liest diese Variablen
+       aus, damit Diagramm und Legende dieselbe Quelle haben. Die Töne sind
+       gegen `--findus-bg` auf Kontrast gewählt und zusätzlich über die
+       Knotenform unterscheidbar, damit der Graph nicht allein an der Farbe
+       hängt. */
+    --findus-graph-document: #6ea8fe;
+    --findus-graph-vorgang: #5fc8a4;
+    --findus-graph-tag: #e0a458;
+    --findus-graph-correspondent: #c98fc0;
+    --findus-graph-edge-structure: #7a7f88;
+    --findus-graph-edge-similarity: #9b8ade;
+
     color-scheme: dark;
 }
 
@@ -66,6 +80,14 @@
     --findus-accent-rgb: 179, 93, 61;
     --findus-accent-contrast-rgb: 255, 255, 255;
     --findus-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+
+    /* Dieselben Knoten-/Kantenfarben wie oben, auf hellem Grund abgedunkelt. */
+    --findus-graph-document: #2f6fd0;
+    --findus-graph-vorgang: #1c8264;
+    --findus-graph-tag: #98620d;
+    --findus-graph-correspondent: #8b4a85;
+    --findus-graph-edge-structure: #8b8f96;
+    --findus-graph-edge-similarity: #6c53c4;
 
     color-scheme: light;
 }
@@ -1062,4 +1084,214 @@ a.findus-kpi-card:focus-visible {
 
 .findus-action-status-bar {
     margin-top: var(--findus-space-3);
+}
+
+/* Fokus-Graph (#1091) ------------------------------------------------------*/
+.findus-graph-intro {
+    max-width: 60ch;
+}
+
+.findus-graph-search {
+    max-width: 32rem;
+}
+
+.findus-graph-search-results {
+    max-width: 32rem;
+}
+
+.findus-graph-search-list {
+    list-style: none;
+    margin: var(--findus-space-2) 0 0;
+    padding: 0;
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    overflow: hidden;
+}
+
+.findus-graph-search-hit {
+    display: flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+    padding: var(--findus-space-2) var(--findus-space-3);
+    color: inherit;
+    text-decoration: none;
+    background-color: var(--findus-surface);
+    min-height: var(--findus-touch-target);
+}
+
+.findus-graph-search-hit:hover,
+.findus-graph-search-hit:focus-visible {
+    background-color: var(--findus-surface-raised);
+    color: inherit;
+}
+
+.findus-graph-search-list li + li .findus-graph-search-hit {
+    border-top: 1px solid var(--findus-border);
+}
+
+.findus-graph-search-label {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.findus-graph-search-meta {
+    flex: 0 0 auto;
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-graph-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2) var(--findus-space-5);
+    padding: var(--findus-space-3);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-graph-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    border: 0;
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+}
+
+.findus-graph-toolbar-label {
+    float: none;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    font-size: var(--findus-font-size-sm);
+    color: var(--findus-text-muted);
+}
+
+.findus-graph-toolbar-actions {
+    display: flex;
+    gap: var(--findus-space-2);
+    margin-left: auto;
+}
+
+.findus-graph-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-graph-swatch {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+
+.findus-graph-swatch--document {
+    background-color: var(--findus-graph-document);
+}
+
+.findus-graph-swatch--vorgang {
+    background-color: var(--findus-graph-vorgang);
+    border-radius: var(--findus-radius-sm);
+}
+
+.findus-graph-swatch--tag {
+    background-color: var(--findus-graph-tag);
+    border-radius: 2px;
+    transform: rotate(45deg);
+}
+
+.findus-graph-swatch--correspondent {
+    background-color: var(--findus-graph-correspondent);
+}
+
+.findus-graph-edge-sample {
+    display: inline-block;
+    width: 1.5rem;
+    height: 0;
+    flex: 0 0 auto;
+}
+
+.findus-graph-edge-sample--structure {
+    border-top: 2px solid var(--findus-graph-edge-structure);
+}
+
+.findus-graph-edge-sample--similarity {
+    border-top: 2px dashed var(--findus-graph-edge-similarity);
+}
+
+.findus-graph-status {
+    min-height: 1.2rem;
+    margin: var(--findus-space-2) 0 0;
+}
+
+.findus-graph-stage {
+    position: relative;
+}
+
+/* Feste, viewport-relative Höhe: Cytoscape misst seinen Container beim
+   Initialisieren, ein rein inhaltsgetriebener Container hätte in dem Moment
+   die Höhe 0 und bliebe leer. */
+.findus-graph-canvas {
+    height: clamp(24rem, 62vh, 46rem);
+    width: 100%;
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    overflow: hidden;
+}
+
+.findus-graph-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--findus-space-5);
+    margin: 0;
+    pointer-events: none;
+}
+
+.findus-graph-tooltip {
+    position: absolute;
+    z-index: 5;
+    max-width: 22rem;
+    padding: var(--findus-space-1) var(--findus-space-2);
+    transform: translate(-50%, -180%);
+    background-color: var(--findus-surface-raised);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-sm);
+    box-shadow: var(--findus-shadow);
+    font-size: var(--findus-font-size-sm);
+    pointer-events: none;
+}
+
+.findus-graph-inspector {
+    margin-top: var(--findus-space-3);
+    padding: var(--findus-space-3);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-graph-inspector-meta {
+    margin-bottom: var(--findus-space-2);
+}
+
+@media (max-width: 575.98px) {
+    .findus-graph-toolbar-actions {
+        margin-left: 0;
+    }
+
+    .findus-graph-search-meta {
+        display: none;
+    }
 }
