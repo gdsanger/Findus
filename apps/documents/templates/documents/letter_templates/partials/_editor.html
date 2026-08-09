@@ -7,6 +7,14 @@ müssen beide im selben Ziel liegen.
 
 Gespeichert wird hier nichts: der Entwurf füllt nur Felder, erst der
 Speichern-Button des unteren Formulars schreibt.
+
+`novalidate` am KI-Formular ist Pflicht, nicht kosmetisch: hx-include
+zieht das Speichern-Formular (mit Pflichtfeld `name`) in die
+HTML5-Validierung des auslösenden Formulars hinein. Auf der Neu-Seite
+ist `name` leer, also bricht htmx den Request sonst clientseitig ab
+(`htmx:validation:halted`) -- ganz ohne Log oder Konsolenfehler (#1103).
+`novalidate` am eingebundenen Formular selbst reicht nicht, htmx prüft
+trotzdem alle per hx-include mitgesendeten Felder.
 {% endcomment %}
 <section class="findus-section">
     <h2 class="findus-section-title">Mit KI erstellen</h2>
@@ -20,6 +28,7 @@ Speichern-Button des unteren Formulars schreibt.
         hx-include="#letter-template-form"
         hx-indicator="#letter-template-draft-indicator"
         hx-disabled-elt="find button"
+        novalidate
         hx-on::before-request="document.getElementById('letter-template-draft-transport-error').classList.add('d-none')"
         hx-on::response-error="document.getElementById('letter-template-draft-transport-error').classList.remove('d-none')"
         hx-on::send-error="document.getElementById('letter-template-draft-transport-error').classList.remove('d-none')"

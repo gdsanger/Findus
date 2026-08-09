@@ -148,6 +148,31 @@ class LetterTemplateDetailViewTests(TestCase):
         self.assertContains(response, "Neue Brief-Vorlage")
         self.assertContains(response, "Kategorie")
 
+    def test_ai_panel_form_disables_html5_validation_on_the_create_page(self):
+        """Regressionsguard für #1103: das KI-Panel-Formular schickt das
+        Speichern-Formular per hx-include mit -- inklusive dessen
+        Pflichtfeld `name`. Ist `name` leer (Neu-Seite) und das
+        auslösende Formular nicht per `novalidate` von der HTML5-
+        Validierung ausgenommen, bricht htmx den Request clientseitig ab,
+        bevor überhaupt etwas rausgeht (`htmx:validation:halted`) -- ohne
+        Server-Log, ohne Konsolenfehler. Ein `novalidate` am
+        eingebundenen Formular selbst würde das *nicht* beheben, htmx
+        validiert trotzdem alle mitgesendeten Felder.
+        """
+        response = self.client.get(reverse("documents:letter_template_create"))
+        content = response.content.decode()
+        draft_url = reverse("documents:letter_template_draft")
+
+        ai_form_match = re.search(
+            rf'<form\b[^>]*action="{re.escape(draft_url)}"[^>]*>', content
+        )
+        self.assertIsNotNone(ai_form_match, "KI-Panel-Formular nicht gefunden.")
+        self.assertIn("novalidate", ai_form_match.group(0))
+
+        save_form_match = re.search(r'<form\b[^>]*id="letter-template-form"[^>]*>', content)
+        self.assertIsNotNone(save_form_match, "Speichern-Formular nicht gefunden.")
+        self.assertIn("required", content)
+
     def test_edit_updates_fields_and_layout_without_losing_unknown_keys(self):
         self.template.layout = {"format": "din5008", "kuenftige_option": "bleibt"}
         self.template.save()
