@@ -37,6 +37,26 @@ urlpatterns = [
     path("vorgaenge/<int:pk>/", vorgang_views.vorgang_detail, name="vorgang_detail"),
     path("vorgaenge/<int:pk>/delete/", vorgang_views.vorgang_delete, name="vorgang_delete"),
     path("vorgaenge/<int:pk>/upload/", vorgang_views.vorgang_document_upload, name="vorgang_upload"),
+    path(
+        "vorgaenge/<int:pk>/empfehlungen/",
+        vorgang_views.vorgang_recommendations,
+        name="vorgang_recommendations",
+    ),
+    path(
+        "vorgaenge/<int:pk>/empfehlungen/generieren/",
+        vorgang_views.vorgang_recommendations_generate,
+        name="vorgang_recommendations_generate",
+    ),
+    path(
+        "vorgaenge/<int:pk>/empfehlungen/<int:recommendation_id>/uebernehmen/",
+        vorgang_views.vorgang_recommendation_accept,
+        name="vorgang_recommendation_accept",
+    ),
+    path(
+        "vorgaenge/<int:pk>/empfehlungen/<int:recommendation_id>/verwerfen/",
+        vorgang_views.vorgang_recommendation_dismiss,
+        name="vorgang_recommendation_dismiss",
+    ),
     path("tags/", tag_views.tag_list, name="tag_list"),
     path("tags/create/", tag_views.tag_create, name="tag_create"),
     path("tags/<int:pk>/", tag_views.tag_detail, name="tag_detail"),

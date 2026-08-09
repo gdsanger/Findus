@@ -1,3 +1,4 @@
+import datetime
 import shutil
 import tempfile
 from unittest.mock import patch
@@ -6,10 +7,17 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import Department
 
-from .models import Document, Task, Vorgang
+from .models import (
+    Document,
+    Task,
+    Vorgang,
+    VorgangRecommendation,
+    VorgangRecommendationRun,
+)
 
 User = get_user_model()
 
@@ -516,3 +524,305 @@ class VorgangDocumentUploadViewTests(TestCase):
         self.assertContains(response, "Duplikat")
         existing.refresh_from_db()
         self.assertEqual(list(existing.vorgaenge.all()), [other_vorgang])
+
+
+class VorgangRecommendationViewTests(TestCase):
+    """Covers the "Handlungsempfehlungen"-Panel am Vorgang-Hub (#1093):
+    Generieren auf Knopfdruck (async), Provenienz/Disclaimer in der
+    Anzeige, und die 1-Klick-Übernahme in eine Aufgabe (#1012).
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.vorgang = Vorgang.objects.create(name="Forderung Acme")
+
+        self.document = Document.objects.create(
+            title="Mahnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.document.departments.add(self.dept_a)
+        self.document.vorgaenge.add(self.vorgang)
+
+        self.hidden_document = Document.objects.create(
+            title="Fremdakte", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.hidden_document.departments.add(self.dept_b)
+        self.hidden_document.vorgaenge.add(self.vorgang)
+
+        self.client.force_login(self.user_a)
+
+    def _ready_run(self, **kwargs):
+        run = VorgangRecommendationRun.objects.create(
+            vorgang=self.vorgang,
+            status=VorgangRecommendationRun.Status.READY,
+            situation="Die Forderung ist offen.",
+            generated_at=timezone.now(),
+            based_on={
+                # So, wie ein von `user_a` ausgeloester Lauf es hinterlassen
+                # wuerde: nur dessen sichtbare Dokumente.
+                "document_ids": [self.document.pk],
+                "considered_document_ids": [self.document.pk],
+                "document_count": 1,
+                "used_count": 1,
+                "truncated": False,
+                "latest_document_date": None,
+            },
+            **kwargs,
+        )
+        recommendation = VorgangRecommendation.objects.create(
+            run=run,
+            title="Mahnung fristgerecht beantworten",
+            rationale="Die Frist läuft am 15.09.2026 ab.",
+            due_date=datetime.date(2026, 9, 15),
+            priority=VorgangRecommendation.Priority.HIGH,
+        )
+        recommendation.documents.set([self.document, self.hidden_document])
+        return run, recommendation
+
+    def test_hub_shows_generate_button_and_disclaimer_without_a_run(self):
+        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+
+        self.assertContains(response, "Handlungsempfehlungen")
+        self.assertContains(response, "Empfehlungen generieren")
+        self.assertContains(response, "Noch keine Handlungsempfehlungen")
+        self.assertContains(response, "keine Rechts-/Steuerberatung")
+
+    def test_generate_marks_the_run_running_and_queues_the_worker(self):
+        from apps.documents.tasks import generate_vorgang_recommendations_task
+
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            mock_async_task.return_value = "task-1"
+            response = self.client.post(
+                reverse("documents:vorgang_recommendations_generate", args=[self.vorgang.pk])
+            )
+
+        self.assertEqual(response.status_code, 200)
+        run = VorgangRecommendationRun.objects.get(vorgang=self.vorgang)
+        self.assertEqual(run.status, VorgangRecommendationRun.Status.RUNNING)
+        mock_async_task.assert_called_once_with(
+            generate_vorgang_recommendations_task, self.vorgang.pk, self.user_a.pk
+        )
+        self.assertContains(response, "Empfehlungen werden erstellt")
+
+    def test_generate_get_is_not_allowed(self):
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations_generate", args=[self.vorgang.pk])
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_regenerating_keeps_the_previous_result_visible(self):
+        self._ready_run()
+
+        with patch("django_q.tasks.async_task"):
+            response = self.client.post(
+                reverse("documents:vorgang_recommendations_generate", args=[self.vorgang.pk])
+            )
+
+        self.assertContains(response, "Mahnung fristgerecht beantworten")
+        self.assertContains(response, "Empfehlungen werden erstellt")
+
+    def test_panel_shows_situation_recommendation_and_disclaimer(self):
+        self._ready_run()
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertContains(response, "Die Forderung ist offen.")
+        self.assertContains(response, "Mahnung fristgerecht beantworten")
+        self.assertContains(response, "Die Frist läuft am 15.09.2026 ab.")
+        self.assertContains(response, "keine Rechts-/Steuerberatung")
+        self.assertContains(response, "15.09.2026")
+
+    def test_panel_only_links_sources_the_user_may_see(self):
+        """Eine Quelle, die nach dem Lauf unsichtbar wurde, verschwindet aus
+        der Provenienz-Zeile, statt ihren Titel weiter preiszugeben.
+        """
+        self._ready_run()
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertContains(response, "Mahnung Acme")
+        self.assertNotContains(response, "Fremdakte")
+
+    def test_result_is_withheld_when_the_basis_is_not_visible(self):
+        """Lage/Begruendungen sind aus den Zusammenfassungen der Datenbasis
+        destilliert -- ein Kollege ohne Zugriff auf diese Dokumente bekommt
+        sie deshalb gar nicht erst zu sehen (#1052).
+        """
+        self._ready_run()
+        self.client.force_login(self.user_b)
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertNotContains(response, "Die Forderung ist offen.")
+        self.assertNotContains(response, "Mahnung fristgerecht beantworten")
+        self.assertContains(response, "nicht sichtbar")
+
+    def test_accept_is_refused_when_the_basis_is_not_visible(self):
+        _, recommendation = self._ready_run()
+        self.client.force_login(self.user_b)
+
+        response = self.client.post(
+            reverse(
+                "documents:vorgang_recommendation_accept",
+                args=[self.vorgang.pk, recommendation.pk],
+            )
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(Task.objects.count(), 0)
+
+    def test_panel_reports_a_truncated_basis(self):
+        run, _ = self._ready_run()
+        run.based_on = {**run.based_on, "truncated": True, "document_count": 99, "used_count": 2}
+        run.save(update_fields=["based_on"])
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertContains(response, "gekürzt")
+        self.assertContains(response, "von 99 Dokumenten")
+
+    def test_panel_shows_stale_hint_when_a_document_was_added(self):
+        self._ready_run()
+        added = Document.objects.create(
+            title="Neues Schreiben", visibility=Document.Visibility.DEPARTMENT
+        )
+        added.departments.add(self.dept_a)
+        added.vorgaenge.add(self.vorgang)
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertContains(response, "Veraltet")
+        self.assertContains(response, "Empfehlungen neu generieren")
+
+    def test_panel_shows_a_failed_run(self):
+        VorgangRecommendationRun.objects.create(
+            vorgang=self.vorgang,
+            status=VorgangRecommendationRun.Status.FAILED,
+            error="Provider weg",
+        )
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertContains(response, "konnten nicht erstellt werden")
+        self.assertContains(response, "Provider weg")
+
+    def test_accept_creates_a_task_linked_to_the_visible_sources(self):
+        _, recommendation = self._ready_run()
+
+        response = self.client.post(
+            reverse(
+                "documents:vorgang_recommendation_accept",
+                args=[self.vorgang.pk, recommendation.pk],
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        task = Task.objects.get()
+        self.assertEqual(task.title, "Mahnung fristgerecht beantworten")
+        self.assertIn("Die Frist läuft am 15.09.2026 ab.", task.description)
+        self.assertIn("Forderung Acme", task.description)
+        self.assertEqual(task.due_date, datetime.date(2026, 9, 15))
+        self.assertEqual(task.owner, self.user_a)
+        self.assertEqual(list(task.documents.all()), [self.document])
+        self.assertEqual(list(task.departments.all()), [self.dept_a])
+
+        recommendation.refresh_from_db()
+        self.assertEqual(recommendation.status, VorgangRecommendation.Status.ACCEPTED)
+        self.assertEqual(recommendation.task, task)
+        self.assertContains(response, "Übernommen")
+
+    def test_accepted_task_shows_up_on_the_hub(self):
+        _, recommendation = self._ready_run()
+        self.client.post(
+            reverse(
+                "documents:vorgang_recommendation_accept",
+                args=[self.vorgang.pk, recommendation.pk],
+            )
+        )
+
+        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+
+        self.assertContains(response, "Mahnung fristgerecht beantworten")
+        self.assertEqual(response.context["tasks"].count(), 1)
+
+    def test_accept_is_idempotent(self):
+        _, recommendation = self._ready_run()
+        url = reverse(
+            "documents:vorgang_recommendation_accept", args=[self.vorgang.pk, recommendation.pk]
+        )
+
+        self.client.post(url)
+        self.client.post(url)
+
+        self.assertEqual(Task.objects.count(), 1)
+
+    def test_accept_get_is_not_allowed(self):
+        _, recommendation = self._ready_run()
+
+        response = self.client.get(
+            reverse(
+                "documents:vorgang_recommendation_accept",
+                args=[self.vorgang.pk, recommendation.pk],
+            )
+        )
+
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(Task.objects.count(), 0)
+
+    def test_dismiss_marks_the_recommendation_without_creating_a_task(self):
+        _, recommendation = self._ready_run()
+
+        response = self.client.post(
+            reverse(
+                "documents:vorgang_recommendation_dismiss",
+                args=[self.vorgang.pk, recommendation.pk],
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        recommendation.refresh_from_db()
+        self.assertEqual(recommendation.status, VorgangRecommendation.Status.DISMISSED)
+        self.assertEqual(Task.objects.count(), 0)
+        self.assertContains(response, "Verworfen")
+
+    def test_recommendation_of_another_vorgang_is_not_reachable(self):
+        _, recommendation = self._ready_run()
+        other = Vorgang.objects.create(name="Anderer Vorgang")
+
+        response = self.client.post(
+            reverse(
+                "documents:vorgang_recommendation_accept", args=[other.pk, recommendation.pk]
+            )
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(Task.objects.count(), 0)
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        self.client.logout()
+
+        response = self.client.get(
+            reverse("documents:vorgang_recommendations", args=[self.vorgang.pk])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)

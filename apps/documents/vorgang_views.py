@@ -3,17 +3,25 @@ Vorgang, and a hub page that reuses the existing filtered document list
 (`apps.documents.views.filtered_documents` / `_document_list.html`)
 scoped to that Vorgang, plus its linked tasks -- deliberately no second
 document-list implementation.
+
+Since #1093 the hub also carries the "Handlungsempfehlungen" panel: an
+on-demand KI-Beurteilung of the whole Vorgang (see
+`apps.documents.recommendations`), whose single-recommendation actions
+("als Aufgabe übernehmen"/"verwerfen") live here as well.
 """
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from .forms import VorgangForm
-from .models import Document, Tag, Task, Vorgang
+from .models import Document, Tag, Task, Vorgang, VorgangRecommendation
+from .recommendations import is_stale_for, start_recommendation_run
+from .task_views import task_departments_and_visibility
 from .views import (
     DOCUMENTS_PAGE_SIZE,
     PENDING_STATUSES,
@@ -166,6 +174,8 @@ def vorgang_detail(request, pk):
 
     if request.htmx:
         return render(request, "documents/partials/_document_list.html", context)
+
+    context.update(_recommendations_context(request.user, vorgang))
     return render(request, "documents/vorgaenge/detail.html", context)
 
 
@@ -188,3 +198,201 @@ def vorgang_document_upload(request, pk):
     ]
 
     return _upload_response(request, results)
+
+
+# -- Handlungsempfehlungen (#1093) -----------------------------------------
+
+
+def _basis_is_visible(user, run):
+    """Darf `user` das gespeicherte Ergebnis ueberhaupt sehen? (#1052)
+
+    Der Lauf haengt am Vorgang, nicht am Nutzer -- er wird also auch dem
+    Kollegen angezeigt, der den Hub spaeter oeffnet. Lage-Einschaetzung und
+    Begruendungen sind aber aus den Zusammenfassungen der Datenbasis
+    destilliert: waere darunter ein Dokument, das dieser Nutzer nicht
+    oeffnen darf, wuerde der Fliesstext genau das preisgeben, was das
+    Sichtbarkeitsmodell verhindern soll. Ein reines Filtern der
+    Quellen-Links reicht dafuer nicht -- der Text bliebe stehen.
+
+    In der Praxis (eine Abteilung, ein Bestand) trifft das nie zu; wenn
+    doch, bleibt der Weg offen, sich die Empfehlungen selbst auf der
+    eigenen, engeren Datenbasis zu generieren.
+    """
+    basis_ids = set(run.based_on.get("document_ids") or [])
+    if not basis_ids:
+        return True
+    visible_count = (
+        Document.objects.visible_to(user).filter(pk__in=basis_ids).distinct().count()
+    )
+    return visible_count == len(basis_ids)
+
+
+def _recommendations_context(user, vorgang):
+    """Panel-Kontext: der (einzige) Lauf des Vorgangs plus je Empfehlung
+    ihre *sichtbaren* Quell-Dokumente.
+
+    Die Quellen werden hier noch einmal gegen `visible_to` gefiltert, nicht
+    nur bei der Generierung: ein Dokument kann nach dem Lauf privat
+    gestellt oder einer anderen Abteilung zugeordnet worden sein, und dann
+    darf sein Titel hier nicht weiter auftauchen.
+    """
+    # `getattr` mit Default: der OneToOne-Zugriff wirft
+    # `RelatedObjectDoesNotExist` (ein `AttributeError`), solange fuer
+    # diesen Vorgang noch nie generiert wurde.
+    run = getattr(vorgang, "recommendation_run", None)
+    recommendations = []
+    restricted = run is not None and not _basis_is_visible(user, run)
+
+    if run is not None and not restricted:
+        visible_ids = set(
+            Document.objects.visible_to(user)
+            .filter(vorgang_recommendations__run=run)
+            .values_list("pk", flat=True)
+        )
+        recommendations = [
+            {
+                "item": recommendation,
+                "sources": [
+                    document
+                    for document in recommendation.documents.all()
+                    if document.pk in visible_ids
+                ],
+            }
+            for recommendation in run.recommendations.prefetch_related("documents")
+        ]
+
+    return {
+        "vorgang": vorgang,
+        "recommendation_run": run,
+        "recommendations": recommendations,
+        "recommendations_restricted": restricted,
+        "recommendations_stale": is_stale_for(run, user),
+    }
+
+
+def _render_recommendations(request, vorgang):
+    return render(
+        request,
+        "documents/partials/_vorgang_recommendations.html",
+        _recommendations_context(request.user, vorgang),
+    )
+
+
+@login_required
+def vorgang_recommendations(request, pk):
+    """Poll-/Anzeige-Ziel des Empfehlungs-Panels (#1093): solange der Lauf
+    `running` ist, holt sich das eingeschwenkte Fragment selbst wieder ab
+    (`hx-trigger="every ...s"`), analog zu `document_analysis_status`
+    (#1063). Ein Seiten-Refresh am Ende braucht es hier nicht -- alles,
+    was sich aendert, steht in diesem Panel.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+    return _render_recommendations(request, vorgang)
+
+
+@login_required
+@require_POST
+def vorgang_recommendations_generate(request, pk):
+    """"Empfehlungen generieren"/"neu generieren" -- laeuft async ueber den
+    Django-Q-Worker, genau ein `generate()`-Call pro Klick.
+
+    `request.user.pk` geht mit in den Job: die Datenbasis ist
+    `visible_to`-gescoped und der Worker hat keinen Request, aus dem er
+    das ableiten koennte.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+    start_recommendation_run(vorgang)
+
+    from django_q.tasks import async_task
+
+    from .tasks import generate_vorgang_recommendations_task
+
+    async_task(generate_vorgang_recommendations_task, vorgang.pk, request.user.pk)
+
+    return _render_recommendations(request, vorgang)
+
+
+def _recommendation_task_description(recommendation, vorgang):
+    """Begruendung + Vorgang-Kontext als Aufgaben-Beschreibung.
+
+    Der Disclaimer wandert bewusst mit in die Aufgabe: sie wird spaeter
+    ohne das Panel drumherum gelesen, und dann darf ihr Ursprung als
+    *pruefenswerter* KI-Vorschlag nicht verloren gegangen sein.
+    """
+    parts = []
+    if recommendation.rationale.strip():
+        parts.append(recommendation.rationale.strip())
+    parts.append(
+        f"Aus KI-Handlungsempfehlung zum Vorgang „{vorgang.name}“ – "
+        "bitte fachlich prüfen, keine Rechts-/Steuerberatung."
+    )
+    return "\n\n".join(parts)
+
+
+@login_required
+@require_POST
+def vorgang_recommendation_accept(request, pk, recommendation_id):
+    """1-Klick "als Aufgabe übernehmen" (#1093 -> #1012): Titel =
+    Empfehlung, Beschreibung = Begruendung, `due_date` = vorgeschlagene
+    Frist, verknuepft mit den Quell-Dokumenten.
+
+    Verknuepft werden nur die fuer *diesen* Nutzer sichtbaren Quellen
+    (#1052) -- dieselbe Regel wie `task_views._set_task_documents`: eine
+    Aufgabe darf kein Dokument anhaengen, das ihr Ersteller nicht sehen
+    darf. Ueber genau diese Verknuepfung taucht die Aufgabe auch in
+    "Verknuepfte Aufgaben" am Hub auf (Task <-> Document <-> Vorgang);
+    die Liste dort zieht erst beim naechsten Seitenaufbau nach, das Panel
+    verlinkt die neue Aufgabe deshalb direkt.
+
+    Nur eine offene Empfehlung ist uebernehmbar -- ein zweiter Klick (oder
+    ein zweiter Tab) darf nicht dieselbe Aufgabe ein zweites Mal anlegen.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+    recommendation = get_object_or_404(
+        VorgangRecommendation, pk=recommendation_id, run__vorgang=vorgang
+    )
+    if not _basis_is_visible(request.user, recommendation.run):
+        raise Http404
+
+    if recommendation.status == VorgangRecommendation.Status.OPEN:
+        departments, visibility = task_departments_and_visibility(request.user)
+        task = Task.objects.create(
+            title=recommendation.title[:255],
+            description=_recommendation_task_description(recommendation, vorgang),
+            due_date=recommendation.due_date,
+            owner=request.user,
+            visibility=visibility,
+        )
+        task.departments.set(departments)
+        task.documents.set(
+            Document.objects.visible_to(request.user).filter(
+                vorgang_recommendations=recommendation
+            )
+        )
+        recommendation.task = task
+        recommendation.status = VorgangRecommendation.Status.ACCEPTED
+        recommendation.save(update_fields=["task", "status", "updated_at"])
+
+    return _render_recommendations(request, vorgang)
+
+
+@login_required
+@require_POST
+def vorgang_recommendation_dismiss(request, pk, recommendation_id):
+    """"Verwerfen": die Empfehlung bleibt als getroffene Entscheidung
+    stehen (im Panel abgeblendet), statt zu verschwinden -- sonst waere
+    beim naechsten Blick nicht mehr erkennbar, dass sie schon beurteilt
+    wurde.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+    recommendation = get_object_or_404(
+        VorgangRecommendation, pk=recommendation_id, run__vorgang=vorgang
+    )
+    if not _basis_is_visible(request.user, recommendation.run):
+        raise Http404
+
+    if recommendation.status == VorgangRecommendation.Status.OPEN:
+        recommendation.status = VorgangRecommendation.Status.DISMISSED
+        recommendation.save(update_fields=["status", "updated_at"])
+
+    return _render_recommendations(request, vorgang)
