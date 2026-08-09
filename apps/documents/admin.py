@@ -6,6 +6,7 @@ from .models import (
     Correspondent,
     Document,
     DocumentLink,
+    LetterDraft,
     LetterTemplate,
     LetterTemplatePlaceholder,
     Tag,
@@ -222,6 +223,34 @@ class LetterTemplateAdmin(admin.ModelAdmin):
     autocomplete_fields = ("owner",)
     filter_horizontal = ("departments",)
     inlines = [LetterTemplatePlaceholderInline]
+
+
+@admin.register(LetterDraft)
+class LetterDraftAdmin(admin.ModelAdmin):
+    """Brief-Entwürfe (#1095) -- zum Nachsehen, nicht zum Schreiben.
+
+    Der Entwurfsweg ist der Review-Ablauf in der App (generieren, prüfen,
+    freigeben); hier soll nur nachvollziehbar sein, was ein Lauf ergeben
+    hat. Deshalb sind Status, Rendering-Ergebnis und das abgelegte
+    Dokument schreibgeschützt -- ein im Admin auf „abgelegt" gedrehter
+    Status hätte kein Dokument hinter sich.
+    """
+
+    list_display = ("__str__", "template_name", "status", "recipient", "vorgang", "created_at")
+    list_filter = ("status", "visibility")
+    search_fields = ("subject", "body_text", "template_name")
+    autocomplete_fields = ("owner",)
+    filter_horizontal = ("departments",)
+    readonly_fields = (
+        "status",
+        "error",
+        "placeholder_values",
+        "docx_file",
+        "pdf_file",
+        "document",
+        "ai_model",
+        "ai_model_version",
+    )
 
 
 @admin.register(TaskTemplate)
