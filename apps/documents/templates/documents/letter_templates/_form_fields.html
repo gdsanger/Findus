@@ -1,0 +1,74 @@
+<div class="findus-task-form-section">
+    <div class="findus-task-form-row">
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
+            {{ form.name }}
+            {% if form.name.errors %}<div class="text-danger small">{{ form.name.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.category.id_for_label }}">{{ form.category.label }}</label>
+            {{ form.category }}
+            <datalist id="letter-template-categories">
+                {% for suggestion in category_suggestions %}
+                <option value="{{ suggestion }}"></option>
+                {% endfor %}
+            </datalist>
+            {% if form.category.errors %}<div class="text-danger small">{{ form.category.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.logo.id_for_label }}">{{ form.logo.label }}</label>
+            {{ form.logo }}
+            {% if form.logo.errors %}<div class="text-danger small">{{ form.logo.errors|striptags }}</div>{% endif %}
+        </div>
+    </div>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.description.id_for_label }}">{{ form.description.label }}</label>
+        {{ form.description }}
+        {% if form.description.errors %}<div class="text-danger small">{{ form.description.errors|striptags }}</div>{% endif %}
+    </div>
+</div>
+
+<div class="findus-task-form-section">
+    <h3 class="findus-letter-subheading">Anleitung</h3>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.instructions.id_for_label }}">{{ form.instructions.label }}</label>
+        {{ form.instructions }}
+        <div class="form-text">
+            Der „Skill-Body“ dieser Vorlage: Ton, Aufbau, Vorgaben – was rein muss und was
+            nicht. Platzhalter unten als
+            <code>{% verbatim %}{{schluessel}}{% endverbatim %}</code> referenzieren.
+        </div>
+        {% if form.instructions.errors %}<div class="text-danger small">{{ form.instructions.errors|striptags }}</div>{% endif %}
+    </div>
+</div>
+
+<div class="findus-task-form-section">
+    <h3 class="findus-letter-subheading">Layout</h3>
+    <p class="text-muted small mb-0">
+        Grundlage ist ein deutsches Geschäftsbrief-Layout (Absender-/Empfängerblock, Datum,
+        Betreff, Text, Signatur). Hier überschreibt diese Vorlage einzelne Teile davon.
+    </p>
+    <div class="findus-task-form-row">
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.layout_date_place.id_for_label }}">{{ form.layout_date_place.label }}</label>
+            {{ form.layout_date_place }}
+            {% if form.layout_date_place.errors %}<div class="text-danger small">{{ form.layout_date_place.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.layout_closing.id_for_label }}">{{ form.layout_closing.label }}</label>
+            {{ form.layout_closing }}
+            {% if form.layout_closing.errors %}<div class="text-danger small">{{ form.layout_closing.errors|striptags }}</div>{% endif %}
+        </div>
+    </div>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.layout_letterhead.id_for_label }}">{{ form.layout_letterhead.label }}</label>
+        {{ form.layout_letterhead }}
+        <div class="form-text">{{ form.layout_letterhead.help_text }}</div>
+        {% if form.layout_letterhead.errors %}<div class="text-danger small">{{ form.layout_letterhead.errors|striptags }}</div>{% endif %}
+    </div>
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ form.signature.id_for_label }}">{{ form.signature.label }}</label>
+        {{ form.signature }}
+        {% if form.signature.errors %}<div class="text-danger small">{{ form.signature.errors|striptags }}</div>{% endif %}
+    </div>
+</div>

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Neue Brief-Vorlage – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Neue Brief-Vorlage" %}
+
+<section class="findus-section">
+    <form method="post" enctype="multipart/form-data" class="findus-card findus-task-form">
+        {% csrf_token %}
+        {% include "documents/letter_templates/_form_fields.html" %}
+        <p class="text-muted small mb-0">
+            Die Platzhalter (Daten-Bindungen) werden nach dem Anlegen auf der Vorlagen-Seite gepflegt.
+        </p>
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Anlegen</button>
+            <a href="{% url 'documents:letter_template_list' %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

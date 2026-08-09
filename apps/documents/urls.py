@@ -4,6 +4,7 @@ from . import (
     correspondent_views,
     dashboard_views,
     graph_views,
+    letter_template_views,
     tag_views,
     task_template_views,
     task_views,
@@ -188,5 +189,41 @@ urlpatterns = [
         "task-templates/<int:pk>/items/<int:item_id>/delete/",
         task_template_views.task_template_item_delete,
         name="task_template_item_delete",
+    ),
+    path("brief-vorlagen/", letter_template_views.letter_template_list, name="letter_template_list"),
+    path(
+        "brief-vorlagen/create/",
+        letter_template_views.letter_template_create,
+        name="letter_template_create",
+    ),
+    path(
+        "brief-vorlagen/<int:pk>/",
+        letter_template_views.letter_template_detail,
+        name="letter_template_detail",
+    ),
+    path(
+        "brief-vorlagen/<int:pk>/delete/",
+        letter_template_views.letter_template_delete,
+        name="letter_template_delete",
+    ),
+    path(
+        "brief-vorlagen/<int:pk>/platzhalter/add/",
+        letter_template_views.letter_template_placeholder_add,
+        name="letter_template_placeholder_add",
+    ),
+    path(
+        "brief-vorlagen/<int:pk>/platzhalter/<int:placeholder_id>/update/",
+        letter_template_views.letter_template_placeholder_update,
+        name="letter_template_placeholder_update",
+    ),
+    path(
+        "brief-vorlagen/<int:pk>/platzhalter/<int:placeholder_id>/move/<str:direction>/",
+        letter_template_views.letter_template_placeholder_move,
+        name="letter_template_placeholder_move",
+    ),
+    path(
+        "brief-vorlagen/<int:pk>/platzhalter/<int:placeholder_id>/delete/",
+        letter_template_views.letter_template_placeholder_delete,
+        name="letter_template_placeholder_delete",
     ),
 ]

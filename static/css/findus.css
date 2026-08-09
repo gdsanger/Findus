@@ -1383,3 +1383,51 @@ a.findus-kpi-card:focus-visible {
     gap: var(--findus-space-2);
     margin: 0;
 }
+
+/* Brief-Vorlagen (#1094) ---------------------------------------------------*/
+.findus-letter-subheading {
+    font-size: var(--findus-font-size-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--findus-text-muted);
+    margin: 0;
+}
+
+.findus-letter-instructions {
+    font-family: var(--bs-font-monospace);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-letter-placeholder-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+}
+
+.findus-letter-placeholder-fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    flex: 1 1 24rem;
+}
+
+.findus-letter-placeholder-fields .form-control,
+.findus-letter-placeholder-fields .form-select {
+    flex: 1 1 8rem;
+    width: auto;
+}
+
+.findus-letter-placeholder-key {
+    font-family: var(--bs-font-monospace);
+}
+
+.findus-letter-placeholder-hint {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-2);
+    margin-top: var(--findus-space-1);
+    font-size: var(--findus-font-size-sm);
+}

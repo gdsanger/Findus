@@ -10,6 +10,8 @@ from pgvector.django import HnswIndex, VectorField
 
 from apps.accounts.models import Department
 
+from .letter_bindings import source_label, validate_source
+
 _HEX_COLOR_VALIDATOR = RegexValidator(
     regex=r"^#[0-9a-fA-F]{6}$", message="Farbe muss ein Hex-Code sein, z. B. #a1b2c3."
 )
@@ -889,6 +891,183 @@ class TaskTemplateItem(models.Model):
 
     def __str__(self):
         return self.text
+
+
+DEFAULT_LETTER_LAYOUT = {
+    # Deutscher Geschäftsbrief (DIN-5008-nah) als v1-Grundlayout -- die
+    # Werte hier sind das, was jede Vorlage erbt, solange sie nichts
+    # überschreibt. Bewusst ein JSON-Feld und keine einzelnen Spalten:
+    # das Layout wächst mit dem Renderer (#4b), und jede neue
+    # Layout-Option wäre sonst eine weitere Migration.
+    "format": "din5008",
+    "letterhead": "",
+    "date_place": "",
+    "closing": "Mit freundlichen Grüßen",
+    "show_sender_block": True,
+    "show_recipient_block": True,
+    "show_date": True,
+    "show_subject": True,
+}
+
+
+def default_letter_layout():
+    """Callable statt Dict-Literal als `default` -- ein geteiltes Dict wäre
+    ein veränderlicher Default, den sich alle Zeilen teilen.
+    """
+    return dict(DEFAULT_LETTER_LAYOUT)
+
+
+class LetterTemplateQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """Dasselbe zweistufige Sichtbarkeitsmodell wie bei
+        `TaskTemplate.visible_to` -- eine Brief-Vorlage trägt Anleitung,
+        Signatur und Absenderbezug, gehört also in denselben
+        Abteilungs-/Privat-Scope wie alles andere.
+        """
+        if user.is_superuser:
+            return self
+        return self.filter(
+            models.Q(
+                visibility=LetterTemplate.Visibility.DEPARTMENT,
+                departments__in=user.departments.all(),
+            )
+            | models.Q(
+                visibility=LetterTemplate.Visibility.PRIVATE,
+                owner=user,
+            )
+        ).distinct()
+
+
+class LetterTemplate(TimeStampedModel):
+    """Vorlage für ein Schreiben (#1094) -- im Kern ein kleiner „Skill":
+    **Anleitung** (wie schreibe ich diese Art Brief) + **Daten-Bindungen**
+    (welcher Wert kommt woher, siehe `LetterTemplatePlaceholder`) +
+    **Layout** (wie das fertige Schreiben aussieht).
+
+    Nicht zu verwechseln mit `TaskTemplate` (#1037): das ist eine
+    Aufgaben-Vorlage (Checkliste, Frist-Offset), hier geht es um
+    Schriftstücke.
+
+    `instructions` ist bewusst freier Markdown-Text und kein Feld-Baukasten:
+    er ist die KI-Anleitung für die Erzeugung in #4b (Ton, Struktur, was
+    rein muss und was nicht) -- was sich in Formularfelder pressen ließe,
+    wäre genau die Nuance, die einen brauchbaren Brief ausmacht.
+
+    Erzeugt hier noch nichts: Ausgabe/Rendering (Word/PDF) ist #4b.
+    """
+
+    class Visibility(models.TextChoices):
+        DEPARTMENT = "department", "Abteilung"
+        PRIVATE = "private", "Privat"
+
+    # Freitext statt `choices`: die Kategorien im Konzept ("Antwortschreiben",
+    # "Widerspruch", "Kündigung", "Anschreiben") sind Beispiele, keine
+    # abschließende Liste -- die Vorschlagsliste steht als `datalist` im
+    # Formular, ohne eigene Kategorien zu verbieten.
+    CATEGORY_SUGGESTIONS = (
+        "Antwortschreiben",
+        "Widerspruch",
+        "Kündigung",
+        "Anschreiben",
+        "Mahnung",
+    )
+
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    category = models.CharField(max_length=100, blank=True, db_index=True)
+    instructions = models.TextField(blank=True)
+
+    layout = models.JSONField(default=default_letter_layout, blank=True)
+    signature = models.TextField(blank=True)
+    logo = models.ImageField(upload_to="letter_templates/logos/", blank=True)
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_letter_templates",
+    )
+    departments = models.ManyToManyField(
+        Department, blank=True, related_name="letter_templates"
+    )
+    visibility = models.CharField(
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.DEPARTMENT,
+    )
+
+    objects = LetterTemplateQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["category", "name"]
+        verbose_name = "Brief-Vorlage"
+        verbose_name_plural = "Brief-Vorlagen"
+
+    def __str__(self):
+        return self.name
+
+    def layout_value(self, key):
+        """Layout-Wert mit Rückfall auf das Grundlayout -- eine Vorlage, die
+        vor einer neuen Layout-Option angelegt wurde, hat deren Schlüssel
+        schlicht nicht im JSON.
+        """
+        return (self.layout or {}).get(key, DEFAULT_LETTER_LAYOUT.get(key))
+
+
+class LetterTemplatePlaceholder(models.Model):
+    """Eine Daten-Bindung: „dieser Platzhalter kommt aus jener Quelle" (#1094).
+
+    Ein eigenes Modell statt einer JSON-Liste am `LetterTemplate`, weil die
+    Bindungen sortierbar, einzeln editierbar und -- vor allem -- gegen die
+    Quellen-Registry (`apps.documents.letter_bindings`) validierbar sein
+    müssen; in einem JSON-Blob wäre jede Quelle ein ungeprüfter String.
+
+    `source` ist genau deshalb auch **ohne** `choices`: die gültigen Werte
+    stehen in der Registry, damit eine später ergänzte Quelle (etwa eine
+    externe API als weiterer Namespace) keine Migration braucht.
+    """
+
+    KEY_VALIDATOR = RegexValidator(
+        regex=r"^[a-z][a-z0-9_]*$",
+        message=(
+            "Schlüssel: nur Kleinbuchstaben, Ziffern und Unterstrich, "
+            "beginnend mit einem Buchstaben (z. B. empfaenger_adresse)."
+        ),
+    )
+
+    template = models.ForeignKey(
+        LetterTemplate, on_delete=models.CASCADE, related_name="placeholders"
+    )
+    key = models.CharField(max_length=64, validators=[KEY_VALIDATOR])
+    label = models.CharField(max_length=255, blank=True)
+    source = models.CharField(max_length=100, validators=[validate_source])
+    required = models.BooleanField(default=False)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["template_id", "order", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["template", "key"], name="unique_letter_placeholder_key"
+            ),
+        ]
+        verbose_name = "Platzhalter"
+        verbose_name_plural = "Platzhalter"
+
+    def __str__(self):
+        return f"{{{{{self.key}}}}} <- {self.source}"
+
+    @property
+    def source_label(self):
+        """„Gruppe · Feld" für die Anzeige -- die Auflösung der Quelle
+        gehört der Registry, nicht dem Template.
+        """
+        return source_label(self.source)
+
+    @property
+    def display_label(self):
+        return self.label or self.key
 
 
 class VorgangRecommendationRun(TimeStampedModel):
