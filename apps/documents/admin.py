@@ -6,6 +6,7 @@ from .models import (
     Correspondent,
     Document,
     DocumentLink,
+    DocumentReference,
     LetterDraft,
     LetterTemplate,
     LetterTemplatePlaceholder,
@@ -81,6 +82,22 @@ class VorgangSuggestionInline(admin.TabularInline):
         return False
 
 
+class DocumentReferenceInline(admin.TabularInline):
+    """Kennungen/Referenznummern eines Dokuments (#1099) -- hier
+    editierbar, anders als die KI-Vorschläge oben.
+
+    `value_normalized` bleibt schreibgeschützt: das ist der
+    Matching-Schlüssel, den `DocumentReference.save()` aus `value_raw`
+    ableitet. Von Hand gesetzt könnte er stillschweigend von der
+    Schreibweise abweichen, gegen die er vergleichen soll.
+    """
+
+    model = DocumentReference
+    fields = ("type", "value_raw", "value_normalized", "role", "source")
+    readonly_fields = ("value_normalized",)
+    extra = 0
+
+
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
     list_display = (
@@ -108,7 +125,13 @@ class DocumentAdmin(admin.ModelAdmin):
     autocomplete_fields = ("correspondent", "owner", "parent", "vorgaenge", "tags")
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
-    inlines = [ChunkInline, DocumentTaskInline, TagSuggestionInline, VorgangSuggestionInline]
+    inlines = [
+        DocumentReferenceInline,
+        ChunkInline,
+        DocumentTaskInline,
+        TagSuggestionInline,
+        VorgangSuggestionInline,
+    ]
 
 
 @admin.register(DocumentLink)
