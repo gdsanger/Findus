@@ -101,7 +101,7 @@ def _build_ollama(config: dict, common: dict) -> OllamaProvider:
 
 
 def _build_fake_embedding(config: dict, common: dict) -> FakeEmbeddingProvider:
-    return FakeEmbeddingProvider()
+    return FakeEmbeddingProvider(dimensions=settings.FINDUS_EMBEDDING_DIMENSIONS)
 
 
 def _build_fake_generation(config: dict, common: dict) -> FakeGenerationProvider:
