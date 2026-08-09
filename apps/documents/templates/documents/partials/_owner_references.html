@@ -1,0 +1,72 @@
+{% comment %}
+Kennungen eines Vorgangs bzw. Kontakts (#1100) -- ein Partial für beide
+Hubs, gesteuert über die URL-Namen im Kontext (siehe
+`apps.documents.reference_views.owner_references_context`).
+
+Anders als am Dokument (#1099) ist eine Zeile hier nicht editierbar,
+sondern nur anlegbar/entfernbar: die Schreibweise am Dokument ist eine
+Korrektur an dem, was dort steht -- die Kennung des Vorgangs ist entweder
+seine oder eben nicht. "Ändern" wäre hier bloß Löschen und Neuanlegen mit
+Zwischenschritt.
+
+Die Herkunft steht als Badge daran, aber ohne Link auf das Quell-Dokument:
+Vorgang und Kontakt sind nicht nach Sichtbarkeit gefiltert, ein Titel aus
+einem fremden Bestand darf hier also nicht auftauchen.
+{% endcomment %}
+{% if owner_reference_error %}
+<p class="text-danger small">{{ owner_reference_error }}</p>
+{% endif %}
+
+{% if owner_references %}
+<ul class="findus-detail-links">
+    {% for reference in owner_references %}
+    <li class="findus-reference-item">
+        <span class="badge text-bg-primary">{{ reference.get_type_display }}</span>
+        <span class="findus-reference-group-value">{{ reference.value_raw }}</span>
+        <span class="badge text-bg-light" title="Herkunft dieser Kennung">
+            {{ reference.get_source_display }}
+        </span>
+        <form
+            method="post"
+            action="{% url owner_reference_delete_url_name owner_reference_owner_pk reference.pk %}"
+            hx-post="{% url owner_reference_delete_url_name owner_reference_owner_pk reference.pk %}"
+            hx-target="#{{ owner_reference_block_id }}"
+            hx-swap="innerHTML"
+            class="d-inline"
+        >
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Entfernen</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">
+    Noch keine Kennungen hinterlegt – sie entstehen von selbst, sobald ein
+    Dokument mit passender Kennung zugeordnet wird, und lassen sich hier
+    von Hand ergänzen.
+</p>
+{% endif %}
+
+<div class="findus-quick-create" id="{{ owner_reference_block_id }}-create">
+    <select name="type" class="form-select form-select-sm" aria-label="Art der neuen Kennung">
+        {% for value, label in owner_reference_type_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+    </select>
+    <input
+        type="text"
+        name="value"
+        class="form-control form-control-sm"
+        placeholder="Kennung, z. B. 123/45"
+        aria-label="Neue Kennung"
+    >
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        hx-post="{% url owner_reference_create_url_name owner_reference_owner_pk %}"
+        hx-include="#{{ owner_reference_block_id }}-create"
+        hx-target="#{{ owner_reference_block_id }}"
+        hx-swap="innerHTML"
+    >+ Kennung hinzufügen</button>
+</div>

@@ -14,6 +14,7 @@ from django.views.decorators.http import require_POST
 
 from .forms import CorrespondentForm
 from .models import Correspondent, Document, Tag, Task, Vorgang
+from .reference_views import owner_references_context
 from .views import (
     DOCUMENTS_PAGE_SIZE,
     PENDING_STATUSES,
@@ -159,6 +160,8 @@ def correspondent_detail(request, pk):
 
     if request.htmx:
         return render(request, "documents/partials/_document_list.html", context)
+
+    context.update(owner_references_context(correspondent))
     return render(request, "documents/correspondents/detail.html", context)
 
 

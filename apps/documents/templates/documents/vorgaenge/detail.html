@@ -96,6 +96,16 @@
 </section>
 
 <section class="findus-section">
+    <h2 class="findus-section-title">Kennungen</h2>
+    {# Die fallbezogenen Kennungen dieses Vorgangs (#1100) -- Grundlage
+       dafür, dass ein neues Dokument mit derselben Nummer hier
+       vorgeschlagen wird. #}
+    <div id="vorgang-references">
+        {% include "documents/partials/_owner_references.html" %}
+    </div>
+</section>
+
+<section class="findus-section">
     <h2 class="findus-section-title">Handlungsempfehlungen</h2>
     {% include "documents/partials/_vorgang_recommendations.html" %}
 </section>
