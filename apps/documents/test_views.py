@@ -120,7 +120,9 @@ class DocumentListViewTests(TestCase):
         Document.objects.create_child(self.own_doc, title="Anhang.pdf")
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:home"), HTTP_HX_REQUEST="true")
+        response = self.client.get(
+            reverse("documents:home"), {"view": ""}, HTTP_HX_REQUEST="true"
+        )
 
         self.assertEqual(response.content.count(b"<tr>"), 2)
 
@@ -395,9 +397,19 @@ class DocumentTimelineViewTests(TestCase):
         )
         self.undated_doc.departments.add(self.dept)
 
-    def test_list_view_is_default(self):
+    def test_timeline_view_is_default(self):
+        """#1092: Timeline is the default now that #1087's toggle exists --
+        no `view` param at all (fresh visit, no stored/explicit choice).
+        """
         self.client.force_login(self.user)
         response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus-timeline\"")
+        self.assertNotContains(response, "<table")
+
+    def test_list_view_stays_reachable_via_explicit_param(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"), {"view": ""})
 
         self.assertContains(response, "<table")
         self.assertNotContains(response, "findus-timeline\"")
