@@ -8,11 +8,17 @@ schlicht: derselbe Aufruf noch einmal, mit dem angeklickten Knoten als
 Fokus. Damit bleibt die Datenmenge pro Request konstant, egal wie groß das
 Archiv ist.
 
-Zwei Kantensorten, im Frontend optisch getrennt:
+Drei Kantensorten, im Frontend optisch getrennt:
 
 * **Struktur** -- die gepflegten Zuordnungen (Dokument→Kontakt/Vorgang/Tag)
   plus die manuellen Querverweise zwischen Dokumenten (`DocumentLink`,
   #1088).
+* **Kennung** -- Dokument↔Dokument über eine gemeinsame, exakt gleiche
+  Referenznummer (#1099, `apps.documents.references`). Bewusst als
+  eigene, *starke* Kante: das ist kein Ähnlichkeitswert, sondern
+  Gleichheit -- zwei Schreiben mit demselben Aktenzeichen gehören
+  zusammen, und das soll im Graphen anders aussehen als "liegt nah
+  beieinander".
 * **Ähnlichkeit** -- Dokument↔Dokument aus der Embedding-kNN. Die läuft
   über dieselbe `DocumentRetrievalService.similar_documents()` wie der
   "Ähnliche Dokumente"-Block des Details (#1088), inklusive dessen
@@ -35,6 +41,7 @@ from django.db.models.functions import Coalesce, TruncDate
 from django.urls import reverse
 
 from .models import Correspondent, Document, DocumentLink, Tag, Vorgang
+from .references import shared_reference_matches
 from .retrieval import DocumentRetrievalService
 
 DOCUMENT = "document"
@@ -51,6 +58,7 @@ NODE_TYPE_LABELS = {
 }
 
 STRUCTURE = "structure"
+REFERENCE = "reference"
 SIMILARITY = "similarity"
 
 
@@ -170,13 +178,18 @@ class GraphService:
         linked_ids, more = self._append_document_links(document, focus, nodes, edges)
         truncated = truncated or more
 
+        reference_ids, more = self._append_reference_edges(
+            document, nodes, edges, exclude_ids=linked_ids
+        )
+        truncated = truncated or more
+
         if include_similarity:
-            # Ausgeschlossen wird, was schon als Querverweis dransteht:
-            # dieselbe Beziehung zweimal (durchgezogen *und* gestrichelt)
-            # zwischen denselben zwei Knoten wäre nur Rauschen -- die
-            # gepflegte Kante gewinnt.
+            # Ausgeschlossen wird, was schon als Querverweis oder gemeinsame
+            # Kennung dransteht: dieselbe Beziehung zweimal (durchgezogen
+            # *und* gestrichelt) zwischen denselben zwei Knoten wäre nur
+            # Rauschen -- die härtere Aussage gewinnt.
             hits = DocumentRetrievalService(self.user).similar_documents(
-                document, exclude_ids=linked_ids
+                document, exclude_ids=[*linked_ids, *reference_ids]
             )
             for hit in hits:
                 nodes.append(_document_node(hit.document))
@@ -223,6 +236,40 @@ class GraphService:
                 )
             )
         return linked_ids, more
+
+    def _append_reference_edges(self, document, nodes, edges, *, exclude_ids):
+        """Gemeinsame Kennungen (#1099) als starke Dokument↔Dokument-Kanten.
+
+        Die Gegenseite kommt aus `shared_reference_matches()` und ist
+        damit schon durch `visible_to` gescoped. Paare, die ohnehin einen
+        manuellen Querverweis haben, bleiben draußen -- "gehört zusammen"
+        steht dort bereits, eine zweite Kante dazwischen wäre dieselbe
+        Aussage doppelt.
+
+        Beschriftet mit Art *und* Wert der Kennung ("Aktenzeichen 123/45"):
+        die Kante ist nur so viel wert wie ihre Begründung, und die soll
+        man am Graphen ablesen können, ohne beide Dokumente zu öffnen.
+        """
+        excluded = set(exclude_ids)
+        matches = [
+            (other, reference)
+            for other, reference in shared_reference_matches(self.user, document)
+            if other.pk not in excluded
+        ]
+        rows, more = matches[: self.limit], len(matches) > self.limit
+
+        reference_ids = []
+        for other, reference in rows:
+            reference_ids.append(other.pk)
+            nodes.append(_document_node(other))
+            edges.append(
+                _reference_edge(
+                    node_id(DOCUMENT, document.pk),
+                    node_id(DOCUMENT, other.pk),
+                    f"{reference.get_type_display()} {reference.value_raw}",
+                )
+            )
+        return reference_ids, more
 
     def _document_list_neighborhood(self, focus, documents, edge_label) -> dict:
         """Nachbarschaft von Vorgang/Tag/Kontakt: die zugeordneten Dokumente.
@@ -338,6 +385,27 @@ def _structure_edge(source: str, target: str, label: str) -> dict:
         "source": source,
         "target": target,
         "kind": STRUCTURE,
+        "label": label,
+    }
+
+
+def _reference_edge(source: str, target: str, label: str) -> dict:
+    """Ungerichtet wie die Ähnlichkeitskante, deshalb dieselbe kanonisch
+    sortierte ID: "A und B teilen Kennung X" ist von beiden Enden aus
+    dieselbe Aussage und darf beim Aufklappen beider Seiten nicht doppelt
+    im Graphen landen.
+
+    Die ID trägt bewusst *nicht* die Kennung selbst: teilen zwei Dokumente
+    mehrere Kennungen, ist das eine Verbindung mit mehreren Gründen, keine
+    mehrfache Verbindung (`shared_reference_matches` liefert deshalb je
+    Gegenstelle nur ein Paar).
+    """
+    first, second = sorted((source, target))
+    return {
+        "id": f"{REFERENCE}|{first}|{second}",
+        "source": first,
+        "target": second,
+        "kind": REFERENCE,
         "label": label,
     }
 

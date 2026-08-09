@@ -16,7 +16,16 @@ from django.urls import reverse
 from apps.accounts.models import Department
 from apps.ai.providers.base import EmbeddingResult
 
-from .models import Chunk, Correspondent, Document, Tag, Vorgang, link_documents
+from .models import (
+    Chunk,
+    Correspondent,
+    Document,
+    DocumentReference,
+    Tag,
+    Vorgang,
+    link_documents,
+)
+from .references import set_reference
 
 User = get_user_model()
 
@@ -274,6 +283,72 @@ class GraphViewTests(TestCase):
             self._neighbors("vorgang", self.vorgang.pk)
 
         self.assertEqual(len(large.captured_queries), len(small.captured_queries))
+
+    # -- Nachbarschaft: gemeinsame Kennungen ---------------------------------
+
+    def _with_aktenzeichen(self, document, value="123/45"):
+        return set_reference(
+            document,
+            reference_type=DocumentReference.Type.AKTENZEICHEN,
+            value=value,
+        )
+
+    def test_shared_reference_becomes_its_own_strong_edge(self):
+        partner = self._document("Gleiches Aktenzeichen", self.dept_a)
+        self._with_aktenzeichen(self.document)
+        self._with_aktenzeichen(partner)
+
+        payload = self._neighbors("document", self.document.pk)
+
+        reference_edges = [
+            edge for edge in payload["edges"] if edge["kind"] == "reference"
+        ]
+        self.assertEqual(len(reference_edges), 1)
+        self.assertIn(
+            f"document:{partner.pk}",
+            {reference_edges[0]["source"], reference_edges[0]["target"]},
+        )
+        # Die Kennung selbst ist die Begründung der Kante und steht dran.
+        self.assertIn("123/45", reference_edges[0]["label"])
+
+    def test_reference_edge_has_the_same_id_from_both_ends(self):
+        partner = self._document("Gleiches Aktenzeichen", self.dept_a)
+        self._with_aktenzeichen(self.document)
+        self._with_aktenzeichen(partner)
+
+        from_here = self._neighbors("document", self.document.pk)
+        from_there = self._neighbors("document", partner.pk)
+
+        self.assertEqual(
+            [edge["id"] for edge in from_here["edges"] if edge["kind"] == "reference"],
+            [edge["id"] for edge in from_there["edges"] if edge["kind"] == "reference"],
+        )
+
+    def test_reference_never_crosses_the_visibility_boundary(self):
+        self._with_aktenzeichen(self.document)
+        self._with_aktenzeichen(self.foreign_document)
+
+        payload = self._neighbors("document", self.document.pk)
+
+        self.assertEqual(
+            [edge for edge in payload["edges"] if edge["kind"] == "reference"], []
+        )
+
+    def test_shared_reference_replaces_the_similarity_edge(self):
+        """Exakt schlägt ähnlich: dieselbe Beziehung nicht zweimal, und
+        wenn doch, dann als die härtere Aussage.
+        """
+        partner = self._document("Gleiches Aktenzeichen", self.dept_a)
+        _add_chunk(self.document, vector=_one_hot(0))
+        _add_chunk(partner, vector=_one_hot(0))
+        self._with_aktenzeichen(self.document)
+        self._with_aktenzeichen(partner)
+
+        payload = self._neighbors("document", self.document.pk, similarity="1")
+
+        kinds = {edge["kind"] for edge in payload["edges"]}
+        self.assertIn("reference", kinds)
+        self.assertNotIn("similarity", kinds)
 
     # -- Nachbarschaft: Ähnlichkeit ------------------------------------------
 

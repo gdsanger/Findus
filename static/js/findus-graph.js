@@ -53,6 +53,7 @@
         tag: themeColor("--findus-graph-tag", "#d9a75f"),
         correspondent: themeColor("--findus-graph-correspondent", "#c98fc0"),
         structure: themeColor("--findus-graph-edge-structure", "#6b6f76"),
+        reference: themeColor("--findus-graph-edge-reference", "#d98b5f"),
         similarity: themeColor("--findus-graph-edge-similarity", "#8f7fd1"),
         text: themeColor("--findus-text", "#e8e6e2"),
         muted: themeColor("--findus-text-muted", "#a3a19d"),
@@ -116,6 +117,24 @@
                     width: 1.5,
                     "line-color": palette.structure,
                     opacity: 0.85
+                }
+            },
+            {
+                /* Gemeinsame Kennung (#1099): kräftiger und durchgezogen --
+                   ein exakter Treffer ist eine härtere Aussage als jede
+                   Ähnlichkeit und darf im Graphen nicht wie eine aussehen.
+                   Beschriftet mit der Kennung selbst, denn sie ist die
+                   Begründung der Kante. */
+                selector: 'edge[kind="reference"]',
+                style: {
+                    "line-color": palette.reference,
+                    width: 3,
+                    label: "data(label)",
+                    "font-size": "9px",
+                    color: palette.muted,
+                    "text-background-color": palette.surface,
+                    "text-background-opacity": 0.7,
+                    "text-background-padding": "1px"
                 }
             },
             {

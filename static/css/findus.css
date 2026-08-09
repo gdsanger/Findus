@@ -52,8 +52,8 @@
     --findus-accent-contrast-rgb: 30, 31, 34;
     --findus-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 
-    /* Fokus-Graph (#1091): eine Farbe je Knotentyp, plus die beiden
-       Kantensorten. Liegt hier statt in findus-graph.js, weil Cytoscape auf
+    /* Fokus-Graph (#1091): eine Farbe je Knotentyp, plus die drei
+       Kantensorten (Struktur, gemeinsame Kennung #1099, Ähnlichkeit). Liegt hier statt in findus-graph.js, weil Cytoscape auf
        Canvas rendert und kein CSS erbt -- das Skript liest diese Variablen
        aus, damit Diagramm und Legende dieselbe Quelle haben. Die Töne sind
        gegen `--findus-bg` auf Kontrast gewählt und zusätzlich über die
@@ -64,6 +64,7 @@
     --findus-graph-tag: #e0a458;
     --findus-graph-correspondent: #c98fc0;
     --findus-graph-edge-structure: #7a7f88;
+    --findus-graph-edge-reference: #d98b5f;
     --findus-graph-edge-similarity: #9b8ade;
 
     color-scheme: dark;
@@ -87,6 +88,7 @@
     --findus-graph-tag: #98620d;
     --findus-graph-correspondent: #8b4a85;
     --findus-graph-edge-structure: #8b8f96;
+    --findus-graph-edge-reference: #b35d3d;
     --findus-graph-edge-similarity: #6c53c4;
 
     color-scheme: light;
@@ -1284,6 +1286,12 @@ a.findus-kpi-card:focus-visible {
 
 .findus-graph-edge-sample--structure {
     border-top: 2px solid var(--findus-graph-edge-structure);
+}
+
+.findus-graph-edge-sample--reference {
+    /* Kräftiger und durchgezogen: gemeinsame Kennung ist eine harte
+       Aussage (#1099), keine geschätzte Nähe. */
+    border-top: 3px solid var(--findus-graph-edge-reference);
 }
 
 .findus-graph-edge-sample--similarity {
