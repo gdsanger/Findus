@@ -20,6 +20,9 @@ Speichern-Button des unteren Formulars schreibt.
         hx-include="#letter-template-form"
         hx-indicator="#letter-template-draft-indicator"
         hx-disabled-elt="find button"
+        hx-on::before-request="document.getElementById('letter-template-draft-transport-error').classList.add('d-none')"
+        hx-on::response-error="document.getElementById('letter-template-draft-transport-error').classList.remove('d-none')"
+        hx-on::send-error="document.getElementById('letter-template-draft-transport-error').classList.remove('d-none')"
     >
         {% csrf_token %}
         <input type="hidden" name="template_pk" value="{{ template.pk|default_if_none:'' }}">
@@ -66,6 +69,20 @@ Speichern-Button des unteren Formulars schreibt.
             Der Entwurf konnte nicht erstellt werden: {{ draft_error }}
         </div>
         {% endif %}
+
+        {% comment %}
+        Fängt alles ab, was `draft_error` nicht zeigt, weil es den View-Code
+        nie erreicht (CSRF-Ablehnung, Netzwerkfehler) oder ihn mit einer
+        unerwarteten Exception verlässt: ohne das bliebe ein Fehlschlag hier
+        ein stilles Nichts -- der Klick scheint ins Leere zu gehen, obwohl
+        ein Request raus- und eine Fehlerantwort reinkam (#1102). Kein
+        Swap-Ziel (der Fehler-Response wird von htmx gar nicht erst
+        eingesetzt), deshalb per JS statt per Server-Render.
+        {% endcomment %}
+        <div id="letter-template-draft-transport-error" class="alert alert-danger py-2 px-3 small mb-0 d-none" role="alert">
+            Der Entwurf konnte nicht erstellt werden: Der Server hat nicht wie erwartet
+            geantwortet. Bitte kurz warten und erneut versuchen.
+        </div>
 
         {% if draft %}
         <div class="alert alert-success py-2 px-3 small mb-0" role="status">

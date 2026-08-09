@@ -372,6 +372,33 @@ class LetterTemplateDraftViewTests(TestCase):
         self.assertFalse(LetterTemplate.objects.exists())
         self.assertFalse(LetterTemplatePlaceholder.objects.exists())
 
+    def test_incoming_request_is_logged_even_before_the_ai_call(self):
+        """Regressionsguard für #1102: kommt der Klick clientseitig nie an
+        (oder scheitert vor dem KI-Call), war das Log bislang komplett leer
+        -- "kommt nichts an" ließ sich so nicht von einem stillen Erfolg
+        unterscheiden.
+        """
+        with self.assertLogs(
+            "apps.documents.letter_template_views", level="INFO"
+        ) as logs:
+            self._draft({"intent": "Widerspruch gegen Inkasso"})
+
+        self.assertTrue(
+            any("KI-Entwurf für Brief-Vorlage angefragt" in message for message in logs.output)
+        )
+
+    def test_response_carries_a_client_side_fallback_for_transport_errors(self):
+        """`draft_error` deckt nur Fehler ab, die den View-Code erreichen und
+        dort als `LetterTemplateDraftError` landen. CSRF-Ablehnung,
+        Netzwerkfehler oder eine unerwartete Exception zeigen sich htmx
+        gegenüber als Nicht-2xx-Antwort, auf die es *nicht* swapt -- ohne
+        client-seitiges Gegenstück bliebe das ein stilles Nichts (#1102).
+        """
+        response, _ = self._draft({"intent": "Widerspruch gegen Inkasso"})
+
+        self.assertContains(response, 'id="letter-template-draft-transport-error"')
+        self.assertContains(response, "hx-on::response-error")
+
     def test_draft_keeps_values_the_user_already_typed(self):
         response, _ = self._draft(
             {
