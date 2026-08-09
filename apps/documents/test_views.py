@@ -18,12 +18,14 @@ from .models import (
     Chunk,
     Correspondent,
     Document,
+    DocumentLink,
     SuggestionStatus,
     Tag,
     TagSuggestion,
     Task,
     Vorgang,
     VorgangSuggestion,
+    link_documents,
 )
 
 User = get_user_model()
@@ -1956,6 +1958,218 @@ class DocumentSuggestionActionTests(TestCase):
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class DocumentRelatedViewTests(TestCase):
+    """Covers the "Ähnliche Dokumente"-Block (#1088): automatische Treffer
+    aus der Embedding-Ähnlichkeit plus manuelle Querverweise
+    (`DocumentLink`), beides `visible_to`-gescoped.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = self._document("Rechnung Acme")
+        self._add_chunk(self.doc, _one_hot(0))
+
+    def _document(self, title, *, dept=None):
+        document = Document.objects.create(
+            title=title, visibility=Document.Visibility.DEPARTMENT
+        )
+        document.departments.add(dept or self.dept_a)
+        return document
+
+    def _add_chunk(self, document, vector):
+        return Chunk.objects.create(
+            document=document,
+            position=0,
+            content="chunk text",
+            embedding=vector,
+            embedding_model="stub",
+            embedding_model_version="1",
+        )
+
+    def _related(self, document=None):
+        return self.client.get(
+            reverse("documents:related", args=[(document or self.doc).id])
+        )
+
+    def test_detail_page_lazy_loads_the_block(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Ähnliche Dokumente")
+        self.assertContains(response, reverse("documents:related", args=[self.doc.id]))
+
+    def test_similar_document_is_listed_with_score_and_link(self):
+        similar = self._document("Rechnung Acme (Nachtrag)")
+        self._add_chunk(similar, _one_hot(0))
+
+        self.client.force_login(self.user_a)
+        response = self._related()
+
+        self.assertContains(response, "Rechnung Acme (Nachtrag)")
+        self.assertContains(response, reverse("documents:detail", args=[similar.id]))
+        self.assertContains(response, "100%")
+
+    def test_document_below_threshold_is_not_listed(self):
+        unrelated = self._document("Völlig anderes Thema")
+        self._add_chunk(unrelated, _one_hot(1))
+
+        self.client.force_login(self.user_a)
+        response = self._related()
+
+        # Nur die Trefferliste ist leer -- in der Auswahlliste für einen
+        # manuellen Querverweis darf das Dokument sehr wohl stehen.
+        self.assertNotContains(
+            response, reverse("documents:detail", args=[unrelated.id])
+        )
+        self.assertContains(response, "Keine ähnlichen Dokumente")
+
+    def test_document_outside_visibility_is_not_listed(self):
+        foreign = self._document("Fremdes Dokument", dept=self.dept_b)
+        self._add_chunk(foreign, _one_hot(0))
+
+        self.client.force_login(self.user_a)
+        response = self._related()
+
+        self.assertNotContains(response, "Fremdes Dokument")
+
+    def test_unindexed_document_shows_a_hint_instead_of_an_empty_list(self):
+        unindexed = self._document("Noch nicht verarbeitet")
+
+        self.client.force_login(self.user_a)
+        response = self._related(unindexed)
+
+        self.assertContains(response, "Noch nicht indiziert")
+
+    def test_related_view_outside_visibility_returns_404(self):
+        foreign = self._document("Fremdes Dokument", dept=self.dept_b)
+
+        self.client.force_login(self.user_a)
+
+        self.assertEqual(self._related(foreign).status_code, 404)
+
+    def test_manual_link_is_created_and_shown_from_both_sides(self):
+        other = self._document("Gehört dazu")
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_create", args=[self.doc.id]),
+            {"target": other.id, "note": "gehört zu"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Gehört dazu")
+        self.assertEqual(DocumentLink.objects.count(), 1)
+        # Ungerichtet: derselbe Verweis steht auch im Detail des anderen
+        # Dokuments, ohne dass eine zweite Zeile angelegt wurde.
+        self.assertContains(self._related(other), "Rechnung Acme")
+
+    def test_linking_the_same_pair_twice_does_not_create_a_second_link(self):
+        other = self._document("Gehört dazu")
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:link_create", args=[self.doc.id]), {"target": other.id}
+        )
+        self.client.post(
+            reverse("documents:link_create", args=[other.id]), {"target": self.doc.id}
+        )
+
+        self.assertEqual(DocumentLink.objects.count(), 1)
+
+    def test_linked_document_is_not_repeated_as_a_similarity_hit(self):
+        similar = self._document("Rechnung Acme (Nachtrag)")
+        self._add_chunk(similar, _one_hot(0))
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_create", args=[self.doc.id]), {"target": similar.id}
+        )
+
+        self.assertEqual(response.content.count("Rechnung Acme (Nachtrag)".encode()), 1)
+
+    def test_link_to_document_outside_visibility_is_rejected(self):
+        foreign = self._document("Fremdes Dokument", dept=self.dept_b)
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_create", args=[self.doc.id]), {"target": foreign.id}
+        )
+
+        self.assertEqual(DocumentLink.objects.count(), 0)
+        self.assertNotContains(response, "Fremdes Dokument")
+        self.assertContains(response, "Bitte ein Dokument zum Verknüpfen auswählen.")
+
+    def test_link_to_itself_is_rejected(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_create", args=[self.doc.id]), {"target": self.doc.id}
+        )
+
+        self.assertEqual(DocumentLink.objects.count(), 0)
+        self.assertContains(response, "nicht mit sich selbst")
+
+    def test_link_without_target_shows_an_error(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_create", args=[self.doc.id]), {"target": ""}
+        )
+
+        self.assertEqual(DocumentLink.objects.count(), 0)
+        self.assertContains(response, "Bitte ein Dokument zum Verknüpfen auswählen.")
+
+    def test_link_can_be_removed_again(self):
+        other = self._document("Gehört dazu")
+        link, _created = link_documents(self.doc, other, created_by=self.user_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_delete", args=[self.doc.id, link.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(DocumentLink.objects.count(), 0)
+
+    def test_link_of_another_document_cannot_be_removed_through_this_document(self):
+        first = self._document("Erstes")
+        second = self._document("Zweites")
+        link, _created = link_documents(first, second, created_by=self.user_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:link_delete", args=[self.doc.id, link.id])
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(DocumentLink.objects.count(), 1)
+
+    def test_link_to_document_outside_visibility_is_not_shown(self):
+        """Ein Querverweis auf ein Dokument, das der Nutzer nicht sehen darf
+        (z. B. weil sich der Scope später geändert hat), verschwindet still
+        aus dem Block, statt dessen Titel zu leaken.
+        """
+        foreign = self._document("Fremdes Dokument", dept=self.dept_b)
+        link_documents(self.doc, foreign, created_by=self.user_b)
+
+        self.client.force_login(self.user_a)
+        response = self._related()
+
+        self.assertNotContains(response, "Fremdes Dokument")
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self._related()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+
 class DocumentUploadViewTests(TestCase):
     """Covers the UI upload (#1019): files go through the same ingest
     contract (`apps.ingest.service.ingest_file`) as the folder/mail

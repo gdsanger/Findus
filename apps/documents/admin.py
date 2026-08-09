@@ -5,6 +5,7 @@ from .models import (
     Chunk,
     Correspondent,
     Document,
+    DocumentLink,
     Tag,
     TagSuggestion,
     Task,
@@ -103,6 +104,21 @@ class DocumentAdmin(admin.ModelAdmin):
     filter_horizontal = ("departments",)
     readonly_fields = ("processing_error", "extraction_method")
     inlines = [ChunkInline, DocumentTaskInline, TagSuggestionInline, VorgangSuggestionInline]
+
+
+@admin.register(DocumentLink)
+class DocumentLinkAdmin(admin.ModelAdmin):
+    """Manuelle Querverweise (#1088) -- angelegt werden sie im
+    Dokument-Detail; hier stehen sie nur zum Nachsehen/Aufräumen.
+
+    Beim Anlegen von Hand gilt dieselbe kanonische Ordnung wie in
+    `link_documents()` (`document_a` vor `document_b`, nach ID) -- sonst
+    weist der DB-Check-Constraint die Zeile ab.
+    """
+
+    list_display = ("document_a", "document_b", "note", "created_by", "created_at")
+    search_fields = ("document_a__title", "document_b__title", "note")
+    autocomplete_fields = ("document_a", "document_b", "created_by")
 
 
 @admin.register(Correspondent)

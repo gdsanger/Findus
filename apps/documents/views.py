@@ -15,7 +15,16 @@ from apps.ingest.service import ingest_file
 
 from .analysis import analyze_and_finalize
 from .forms import TaskForm
-from .models import Correspondent, Document, SuggestionStatus, Tag, Task, Vorgang
+from .models import (
+    Correspondent,
+    Document,
+    DocumentLink,
+    SuggestionStatus,
+    Tag,
+    Task,
+    Vorgang,
+    link_documents,
+)
 from .retrieval import DocumentRetrievalService
 from .task_views import task_departments_and_visibility
 
@@ -308,6 +317,125 @@ def _children_context(user, document):
             "correspondent"
         ),
     }
+
+
+def _related_context(user, document, *, link_error=None):
+    """Der "Ähnliche Dokumente"-Block des Details (#1088): manuell gesetzte
+    Querverweise (`DocumentLink`) und automatische Ähnlichkeits-Treffer in
+    einem gemeinsamen, im Template gekennzeichneten Block.
+
+    Beide Seiten laufen durch `visible_to`: die Ähnlichkeit über den
+    `DocumentRetrievalService`, die Querverweise über das `in_bulk` auf
+    `visible_documents` -- ein Link auf ein Dokument, das der Nutzer nicht
+    sehen darf, verschwindet damit still, statt dessen Titel zu leaken.
+    Bereits verknüpfte Dokumente fliegen aus der Ähnlichkeitsliste, damit
+    derselbe Treffer nicht zweimal im Block steht.
+    """
+    visible_documents = Document.objects.visible_to(user).select_related("correspondent")
+
+    links = list(DocumentLink.objects.for_document(document))
+    linked_by_id = visible_documents.in_bulk(
+        [link.other_document_id(document) for link in links]
+    )
+    linked_documents = [
+        {"link": link, "document": linked_by_id[link.other_document_id(document)]}
+        for link in links
+        if link.other_document_id(document) in linked_by_id
+    ]
+
+    similar_hits = DocumentRetrievalService(user).similar_documents(
+        document, exclude_ids=linked_by_id.keys()
+    )
+
+    return {
+        "document": document,
+        "linked_documents": linked_documents,
+        "similar_hits": similar_hits,
+        # Ohne Chunks gibt es kein Embedding und damit keine Ähnlichkeit --
+        # das ist ein anderer Zustand als "nichts über dem Schwellwert" und
+        # verdient im Template einen eigenen Hinweis.
+        "document_is_indexed": document.chunks.exists(),
+        "similarity_min_score_percent": round(
+            settings.FINDUS_SIMILAR_DOCUMENTS_MIN_SCORE * 100
+        ),
+        "link_candidates": visible_documents.exclude(
+            pk__in=[document.pk, *linked_by_id]
+        ).order_by("-created_at")[: settings.FINDUS_DOCUMENT_LINK_PICKER_LIMIT],
+        "link_error": link_error,
+    }
+
+
+@login_required
+def document_related(request, pk):
+    """Render the related-documents block on its own (#1088).
+
+    Das Detail lädt den Block per HTMX nach (`hx-trigger="load"`), statt
+    ihn synchron mitzurendern: die kNN-Query ist zwar billig, aber sie ist
+    Beiwerk -- Titel, Zusammenfassung und Original sollen nicht auf sie
+    warten. Derselbe Endpunkt ist auch das Swap-Ziel nach dem Anlegen/
+    Löschen eines Querverweises.
+    """
+    document = _visible_document(request.user, pk)
+    return render(
+        request,
+        "documents/partials/_detail_related.html",
+        _related_context(request.user, document),
+    )
+
+
+@login_required
+@require_POST
+def document_link_create(request, pk):
+    """Verknüpfe dieses Dokument mit einem zweiten (#1088, "gehört zu").
+
+    Das Ziel wird erneut durch `visible_to` gezogen, nicht nur aus dem POST
+    übernommen: die Auswahlliste ist zwar schon gescoped, aber eine
+    handgeschriebene ID darf keinen Verweis auf ein fremdes Dokument
+    anlegen können (und über den Block dessen Titel zurückspielen).
+    """
+    document = _visible_document(request.user, pk)
+    target_id = request.POST.get("target", "").strip()
+    target = (
+        Document.objects.visible_to(request.user).filter(pk=target_id).first()
+        if target_id.isdigit()
+        else None
+    )
+
+    link_error = None
+    if target is None:
+        link_error = "Bitte ein Dokument zum Verknüpfen auswählen."
+    elif target.pk == document.pk:
+        link_error = "Ein Dokument kann nicht mit sich selbst verknüpft werden."
+    else:
+        link_documents(
+            document,
+            target,
+            created_by=request.user,
+            note=request.POST.get("note", "").strip()[:255],
+        )
+
+    return render(
+        request,
+        "documents/partials/_detail_related.html",
+        _related_context(request.user, document, link_error=link_error),
+    )
+
+
+@login_required
+@require_POST
+def document_link_delete(request, pk, link_id):
+    """Remove a manual Querverweis (#1088) -- gescoped über `for_document`,
+    damit die ID aus der URL nur einen Link lösen kann, der dieses (für den
+    Nutzer sichtbare) Dokument auch wirklich betrifft.
+    """
+    document = _visible_document(request.user, pk)
+    link = get_object_or_404(DocumentLink.objects.for_document(document), pk=link_id)
+    link.delete()
+    return render(
+        request,
+        "documents/partials/_detail_related.html",
+        _related_context(request.user, document),
+    )
 
 
 @login_required

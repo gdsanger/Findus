@@ -272,6 +272,30 @@ FINDUS_CHUNK_OVERLAP_TOKENS = int(env("FINDUS_CHUNK_OVERLAP_TOKENS", "50"))
 FINDUS_CHUNK_EMBEDDING_BATCH_SIZE = int(env("FINDUS_CHUNK_EMBEDDING_BATCH_SIZE", "64"))
 
 # --------------------------------------------------------------------------
+# Ähnliche Dokumente (#1088, apps.documents.retrieval.similar_documents):
+# reine Vektor-Ähnlichkeit über die vorhandenen Chunk-Embeddings, kein
+# zusätzlicher LLM-Call. LIMIT ist das Cap N pro Dokument-Detail,
+# MIN_SCORE der Relevanz-Schwellwert (Kosinus-Ähnlichkeit, 1.0 =
+# identische Richtung) -- lieber ein leerer Block als eine Liste
+# beliebiger Dokumente, deshalb bewusst eher streng. CANDIDATE_CHUNKS
+# begrenzt, wie viele Chunk-Zeilen die kNN-Query überhaupt liefert, bevor
+# auf Dokument-Ebene aggregiert wird: ein Dokument kann mehrere Chunks
+# unter den besten Treffern haben, deshalb deutlich mehr als LIMIT.
+# --------------------------------------------------------------------------
+FINDUS_SIMILAR_DOCUMENTS_LIMIT = int(env("FINDUS_SIMILAR_DOCUMENTS_LIMIT", "5"))
+FINDUS_SIMILAR_DOCUMENTS_MIN_SCORE = float(env("FINDUS_SIMILAR_DOCUMENTS_MIN_SCORE", "0.7"))
+FINDUS_SIMILAR_DOCUMENTS_CANDIDATE_CHUNKS = int(
+    env("FINDUS_SIMILAR_DOCUMENTS_CANDIDATE_CHUNKS", "200")
+)
+
+# Auswahlliste für den manuellen Querverweis (#1088) im Dokument-Detail:
+# die zuletzt erfassten N sichtbaren Dokumente. Begrenzt, weil ein
+# gewachsenes Archiv sonst tausende <option>s in jede Detailseite
+# rendern würde -- ältere Dokumente werden stattdessen über den
+# "Verknüpfen"-Button an einem Ähnlichkeits-Treffer verlinkt.
+FINDUS_DOCUMENT_LINK_PICKER_LIMIT = int(env("FINDUS_DOCUMENT_LINK_PICKER_LIMIT", "200"))
+
+# --------------------------------------------------------------------------
 # KI-Analyse (apps.documents.analysis, #1020): ein `generate()`-Call pro
 # Dokument auf dem bereits extrahierten Text (kostenbewusst -- kein
 # zusätzlicher Vision-Call). MAX_CHARS begrenzt den Prompt bei sehr langen

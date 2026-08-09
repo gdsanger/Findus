@@ -145,6 +145,166 @@ class DocumentRetrievalSearchTests(TestCase):
         self.assertEqual(len(hits), 2)
 
 
+class SimilarDocumentsTests(TestCase):
+    """Covers "Ähnliche Dokumente" (#1088): Aggregation auf Dokument-Ebene,
+    Selbst-/Baum-Ausschluss, Schwellwert, Cap N -- und vor allem, dass die
+    Ähnlichkeit nicht an `visible_to` vorbeiläuft.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.source = self._document("Quelle", dept=self.dept_a)
+        _add_chunk(self.source, position=0, vector=_one_hot(0))
+
+    def _document(self, title, *, dept=None, **fields):
+        document = Document.objects.create(
+            title=title, visibility=Document.Visibility.DEPARTMENT, **fields
+        )
+        document.departments.add(dept or self.dept_a)
+        return document
+
+    def _service(self, user):
+        return DocumentRetrievalService(user)
+
+    def test_ranks_by_similarity_and_excludes_the_document_itself(self):
+        near = self._document("Nah")
+        _add_chunk(near, position=0, vector=_one_hot(0))
+        far = self._document("Weiter weg")
+        _add_chunk(far, position=0, vector=[0.8, 0.6] + [0.0] * (DIMENSIONS - 2))
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual([hit.document for hit in hits], [near, far])
+        self.assertGreater(hits[0].score, hits[1].score)
+        self.assertNotIn(self.source, [hit.document for hit in hits])
+
+    def test_uses_mean_of_own_chunks_as_representative_embedding(self):
+        """Ein einzelner Boilerplate-Chunk darf den Vergleich nicht
+        dominieren: die Quelle hat je einen Chunk in Richtung 0 und 1, ein
+        Dokument genau auf der Winkelhalbierenden ist dem *Gesamtdokument*
+        ähnlicher als eines, das nur einen der beiden Chunks trifft.
+        """
+        _add_chunk(self.source, position=1, vector=_one_hot(1))
+
+        both = self._document("Beide Themen")
+        _add_chunk(both, position=0, vector=[0.5, 0.5] + [0.0] * (DIMENSIONS - 2))
+        one_only = self._document("Nur ein Thema")
+        _add_chunk(one_only, position=0, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual([hit.document for hit in hits], [both, one_only])
+
+    def test_aggregates_multiple_chunks_of_one_document_into_one_hit(self):
+        multi = self._document("Mehrere Chunks")
+        _add_chunk(multi, position=0, vector=_one_hot(0))
+        _add_chunk(multi, position=1, vector=_one_hot(0))
+        _add_chunk(multi, position=2, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual([hit.document for hit in hits], [multi])
+
+    def test_documents_below_the_threshold_are_dropped(self):
+        orthogonal = self._document("Anderes Thema")
+        _add_chunk(orthogonal, position=0, vector=_one_hot(1))
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual(hits, [])
+
+    def test_respects_the_cap(self):
+        for index in range(4):
+            document = self._document(f"Ähnlich {index}")
+            _add_chunk(document, position=0, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(
+            self.source, limit=2, min_score=0.5
+        )
+
+        self.assertEqual(len(hits), 2)
+
+    def test_does_not_leak_documents_outside_the_visibility_scope(self):
+        """Die zentrale ACL-Garantie, hier für die Ähnlichkeit: ein perfekt
+        passendes Dokument einer fremden Abteilung darf im Block nicht
+        auftauchen.
+        """
+        foreign = self._document("Fremde Abteilung", dept=self.dept_b)
+        _add_chunk(foreign, position=0, vector=_one_hot(0))
+        private = Document.objects.create(
+            title="Privat", visibility=Document.Visibility.PRIVATE, owner=self.user_b
+        )
+        _add_chunk(private, position=0, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual(hits, [])
+
+    def test_excludes_parent_and_children_of_the_document(self):
+        """Leitdokument und Unterdokumente (#1069) stehen im Detail schon in
+        ihrem eigenen Block -- als "ähnlich" wären sie reine Wiederholung.
+        """
+        parent = self._document("Leitdokument")
+        _add_chunk(parent, position=0, vector=_one_hot(0))
+        self.source.parent = parent
+        self.source.save(update_fields=["parent"])
+
+        child = Document.objects.create_child(self.source, title="Anhang")
+        _add_chunk(child, position=0, vector=_one_hot(0))
+        grandchild = Document.objects.create_child(child, title="Anhang im Anhang")
+        _add_chunk(grandchild, position=0, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual(hits, [])
+
+    def test_explicitly_excluded_ids_are_dropped(self):
+        already_linked = self._document("Schon verknüpft")
+        _add_chunk(already_linked, position=0, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(
+            self.source, min_score=0.5, exclude_ids=[already_linked.pk]
+        )
+
+        self.assertEqual(hits, [])
+
+    def test_document_without_embedding_has_no_similar_documents(self):
+        unindexed = self._document("Noch nicht indiziert")
+        other = self._document("Irgendein Dokument")
+        _add_chunk(other, position=0, vector=_one_hot(0))
+
+        hits = self._service(self.user_a).similar_documents(unindexed, min_score=0.5)
+
+        self.assertEqual(hits, [])
+
+    def test_ignores_chunks_embedded_with_another_model(self):
+        """Vektoren verschiedener Embedding-Modelle sind nicht vergleichbar
+        (Architektur.md, "Lock-in-Hedges") -- ein halb durchgelaufener
+        Re-Index darf keine Zufalls-Treffer produzieren.
+        """
+        other_model = self._document("Anderes Embedding-Modell")
+        Chunk.objects.create(
+            document=other_model,
+            position=0,
+            content="chunk text",
+            embedding=_one_hot(0),
+            embedding_model="other-model",
+            embedding_model_version="1",
+        )
+
+        hits = self._service(self.user_a).similar_documents(self.source, min_score=0.5)
+
+        self.assertEqual(hits, [])
+
+
 class DocumentRetrievalListTests(TestCase):
     def setUp(self):
         self.dept_a = Department.objects.create(name="Dept A")
