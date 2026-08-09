@@ -1451,3 +1451,13 @@ a.findus-kpi-card:focus-visible {
     align-items: center;
     gap: var(--findus-space-2);
 }
+
+/* KI-Brief aus einer Vorlage (#1095) ------------------------------------- */
+.findus-letter-body {
+    /* Der Brieftext wird hier gelesen und redigiert, nicht nur eingetippt --
+       Monospace hielte die Zeilen zwar sauber untereinander, macht deutschen
+       Fliesstext aber schlechter lesbar. Stattdessen eine ruhige Zeilenhoehe
+       und begrenzte Zeilenlaenge wie im fertigen Brief. */
+    line-height: 1.6;
+    max-width: 60rem;
+}
