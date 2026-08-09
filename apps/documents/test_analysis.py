@@ -7,7 +7,15 @@ from apps.ai.providers import GenerationResult
 from apps.ai.providers.fake import FakeGenerationProvider
 
 from .analysis import analyze_document
-from .models import Correspondent, Document, SuggestionStatus, Tag, Vorgang
+from .models import (
+    Correspondent,
+    Document,
+    DocumentReference,
+    SuggestionStatus,
+    Tag,
+    Vorgang,
+)
+from .references import set_reference
 
 _REPLY_WITH_RECIPIENT = json.dumps(
     {
@@ -598,3 +606,156 @@ class DocumentDirectionTests(TestCase):
 
         self.assertEqual(result.direction, Document.Direction.INTERN)
         self.assertIsNone(result.correspondent)
+
+
+class DocumentReferenceExtractionTests(TestCase):
+    """Kennungen aus derselben Analyse-Antwort (#1099) -- eine Liste, kein
+
+    Einzelfeld, und ein Re-Run darf die Handarbeit des Nutzers nicht
+    wegräumen.
+    """
+
+    def _provider(self, references):
+        reply = json.dumps(
+            {
+                "title": "Mahnung",
+                "summary": "Mahnung zur Forderung.",
+                "key_facts": {},
+                "references": references,
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        return FakeGenerationProvider(model="fake-generate", version="1", reply=reply)
+
+    def test_extracts_multiple_typed_references(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [
+                    {"type": "aktenzeichen", "value": "Az. 123/45", "role": "deren"},
+                    {"type": "forderungsnummer", "value": "F-9988", "role": ""},
+                ]
+            ),
+        )
+
+        references = list(document.references.order_by("type"))
+        self.assertEqual(len(references), 2)
+        aktenzeichen = document.references.get(type=DocumentReference.Type.AKTENZEICHEN)
+        self.assertEqual(aktenzeichen.value_raw, "Az. 123/45")
+        self.assertEqual(aktenzeichen.value_normalized, "123/45")
+        self.assertEqual(aktenzeichen.role, DocumentReference.Role.THEIRS)
+        self.assertEqual(aktenzeichen.source, DocumentReference.Source.AI)
+
+    def test_unknown_type_and_role_are_not_guessed(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [{"type": "mondzahl", "value": "42", "role": "vielleicht"}]
+            ),
+        )
+
+        reference = document.references.get()
+        self.assertEqual(reference.type, DocumentReference.Type.SONSTIGE)
+        self.assertEqual(reference.role, "")
+
+    def test_valueless_and_malformed_entries_are_skipped(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [
+                    {"type": "aktenzeichen", "value": "  "},
+                    "kein objekt",
+                    {"type": "aktenzeichen", "value": "123/45"},
+                ]
+            ),
+        )
+
+        self.assertEqual(document.references.count(), 1)
+
+    def test_duplicate_reference_in_one_reply_is_stored_once(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [
+                    {"type": "aktenzeichen", "value": "Az. 123/45"},
+                    {"type": "aktenzeichen", "value": "123 / 45"},
+                ]
+            ),
+        )
+
+        self.assertEqual(document.references.count(), 1)
+
+    @override_settings(FINDUS_ANALYSIS_MAX_REFERENCES=2)
+    def test_runaway_reply_is_capped(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [{"type": "sonstige", "value": f"NR-{index}"} for index in range(10)]
+            ),
+        )
+
+        self.assertEqual(document.references.count(), 2)
+
+    def test_reanalysis_replaces_ai_references_but_keeps_manual_ones(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [{"type": "aktenzeichen", "value": "123/45"}]
+            ),
+        )
+        set_reference(
+            document,
+            reference_type=DocumentReference.Type.KUNDENNUMMER,
+            value="4711",
+        )
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [{"type": "aktenzeichen", "value": "999/99"}]
+            ),
+        )
+
+        values = set(document.references.values_list("value_normalized", flat=True))
+        self.assertEqual(values, {"999/99", "4711"})
+
+    def test_ai_does_not_duplicate_a_manually_added_reference(self):
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+        set_reference(
+            document,
+            reference_type=DocumentReference.Type.AKTENZEICHEN,
+            value="123/45",
+        )
+
+        analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                [{"type": "aktenzeichen", "value": "Az. 123 / 45"}]
+            ),
+        )
+
+        reference = document.references.get()
+        self.assertEqual(reference.source, DocumentReference.Source.MANUAL)
+
+    def test_prompt_names_the_available_reference_types(self):
+        provider = self._provider([])
+        document = Document.objects.create(title="mahnung.pdf", text_content="Inhalt")
+
+        analyze_document(document.id, generation_provider=provider)
+
+        system_message = provider.calls[0][0]
+        self.assertIn('"references"', system_message.content)
+        self.assertIn("aktenzeichen", system_message.content)
+        self.assertIn("forderungsnummer", system_message.content)

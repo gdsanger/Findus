@@ -295,6 +295,14 @@ FINDUS_SIMILAR_DOCUMENTS_CANDIDATE_CHUNKS = int(
 # "Verknüpfen"-Button an einem Ähnlichkeits-Treffer verlinkt.
 FINDUS_DOCUMENT_LINK_PICKER_LIMIT = int(env("FINDUS_DOCUMENT_LINK_PICKER_LIMIT", "200"))
 
+# Verwandte Dokumente über gemeinsame Kennungen (#1099,
+# apps.documents.references): Cap je Kennung im Dokument-Detail. Anders
+# als bei der Ähnlichkeit ist das *kein* Relevanz-Schwellwert -- ein
+# exakter Treffer ist immer relevant -- sondern nur eine Anzeigegrenze für
+# den Ausreißer (eine IBAN kann an hunderten Rechnungen hängen). Was
+# abgeschnitten wurde, sagt der Block, statt es zu verschweigen.
+FINDUS_REFERENCE_MATCH_LIMIT = int(env("FINDUS_REFERENCE_MATCH_LIMIT", "20"))
+
 # Fokus-Graph (#1091, apps.documents.graph): Cap für die Nachbarn *einer*
 # Expansion und je Kantengruppe -- ein Vorgang mit 400 Dokumenten soll
 # beim Aufklappen keine unlesbare Wolke erzeugen. Was abgeschnitten wurde,
@@ -320,6 +328,13 @@ FINDUS_ANALYSIS_MAX_CHARS = int(env("FINDUS_ANALYSIS_MAX_CHARS", "12000"))
 # aufblaeht -- is_self-Kontakte gehen dabei immer zuerst rein (siehe
 # apps.documents.analysis._correspondent_context_lines).
 FINDUS_ANALYSIS_MAX_CONTACTS = int(env("FINDUS_ANALYSIS_MAX_CONTACTS", "200"))
+
+# Kennungen je Dokument aus der Analyse (#1099): Obergrenze an
+# `DocumentReference`-Zeilen, die *ein* Analyse-Lauf anlegen darf. Ein
+# Dokument trägt realistisch eine Handvoll Kennungen -- das Cap fängt die
+# ausufernde Modellantwort ab, die jede Ziffernfolge im Text für eine
+# Referenznummer hält, statt sie ins Archiv zu schreiben.
+FINDUS_ANALYSIS_MAX_REFERENCES = int(env("FINDUS_ANALYSIS_MAX_REFERENCES", "12"))
 
 # --------------------------------------------------------------------------
 # Handlungsempfehlungen je Vorgang (#1093,

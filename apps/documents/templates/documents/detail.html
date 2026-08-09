@@ -183,6 +183,17 @@ Template-Engine den DoesNotExist (silent_variable_failure).
 </section>
 
 <section class="findus-section">
+    <h2 class="findus-section-title">Kennungen &amp; Referenznummern</h2>
+    {# Anders als der Ähnlichkeits-Block (#1088) direkt mitgerendert: der
+       Match läuft über den Index auf (type, value_normalized) und ist
+       damit ein gewöhnlicher Lookup, kein kNN, das den Seitenaufbau
+       aufhalten würde. #}
+    <div id="document-references">
+        {% include "documents/partials/_detail_references.html" %}
+    </div>
+</section>
+
+<section class="findus-section">
     <h2 class="findus-section-title">Ähnliche Dokumente</h2>
     {# Nachgeladen (#1088): die kNN-Query ist Beiwerk und soll den Aufbau
        von Titel/Zusammenfassung/Original nicht aufhalten. #}

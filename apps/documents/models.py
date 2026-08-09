@@ -1,4 +1,5 @@
 import mimetypes
+import re
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -713,6 +714,159 @@ def link_documents(first, second, *, created_by=None, note=""):
         document_b=document_b,
         defaults={"created_by": created_by, "note": note},
     )
+
+
+# Wegwerf-Präfixe vor dem eigentlichen Wert einer Kennung (#1099): "AZ",
+# "Aktenzeichen:", "Kd.-Nr.", "IBAN" … Dokumente schreiben dieselbe Nummer
+# mal mit, mal ohne Beschriftung ("Az. 123/45" vs. "123/45"), und die KI
+# liefert mal so, mal so -- ohne das Abschneiden wären das zwei
+# verschiedene Matching-Schlüssel für dieselbe Kennung.
+_REFERENCE_LABEL_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"aktenzeichen|az|gesch(?:ae|ä)ftszeichen|gz"
+    r"|ihr\s*zeichen|unser\s*zeichen|zeichen"
+    r"|kunden(?:nummer|nr)|kd\s*\.?\s*-?\s*nr"
+    r"|rechnungs(?:nummer|nr)|re\s*\.?\s*-?\s*nr"
+    r"|beleg(?:nummer|nr)|vertrags(?:nummer|nr)|forderungs(?:nummer|nr)"
+    r"|iban|nummer|nr"
+    # Nach der Beschriftung muss ein Trenner stehen -- sonst würde "AZUBI"
+    # zu "UBI" gekürzt, weil "AZ" zufällig am Anfang steht.
+    r")(?:\s*[.:\-–]\s*|\s+)",
+    re.IGNORECASE,
+)
+
+
+def normalize_reference_value(value: str) -> str:
+    """Matching-Schlüssel einer Kennung (#1099): Beschriftung ab, alle
+    Leerzeichen raus, Großschreibung.
+
+    Bewusst *typunabhängig* und rein textuell -- eine Kennung ist ein
+    Fremdformat (Gericht, Inkassobüro, Stadtwerke), dessen Aufbau Findus
+    nicht kennt und nicht validieren kann. Was hier passiert, ist deshalb
+    nur das Einebnen der Schreibvarianten, an denen ein exakter Vergleich
+    sonst scheitert: "AZ 123/45", "Az. 123 / 45" und "123/45" ergeben
+    denselben Schlüssel, "DE02 1203 0000 0000 2020 51" dieselbe IBAN wie
+    ohne Leerzeichen. Trennzeichen *innerhalb* des Werts (/, -, .) bleiben
+    stehen -- sie gehören zur Kennung, nicht zur Formatierung.
+
+    `value_raw` behält daneben immer die Schreibweise aus dem Dokument:
+    angezeigt wird, was dort steht, verglichen wird dieser Schlüssel.
+    """
+    text = (value or "").strip()
+    if not text:
+        return ""
+    without_prefix = _REFERENCE_LABEL_PREFIX_RE.sub("", text, count=1)
+    # Ein Wert, der *nur* aus der Beschriftung besteht, ist keine Kennung --
+    # dann lieber das Original behalten als einen leeren Schlüssel.
+    if without_prefix.strip():
+        text = without_prefix
+    return re.sub(r"\s+", "", text).upper()
+
+
+class DocumentReference(TimeStampedModel):
+    """Eine typisierte Kennung/Referenznummer eines Dokuments (#1099):
+    Aktenzeichen, Forderungs-/Kunden-/Belegnummer, IBAN, „Ihr/Unser
+    Zeichen" …
+
+    Warum eigene Zeilen statt eines Felds an `Document`: ein Schreiben
+    trägt regelmäßig *mehrere* Kennungen gleichzeitig (Aktenzeichen **und**
+    Forderungsnummer **und** Kundennummer), und jede davon ist für sich ein
+    Verknüpfungspunkt. Ein Einzelfeld müsste sich für eine entscheiden.
+
+    Warum überhaupt strukturiert statt „im Embedding mitgewichtet": „AZ
+    123/45" geht in einem Vektor im Rauschen unter -- Ähnlichkeit erkennt
+    Kennungen schlicht nicht. Ein gemeinsames Aktenzeichen ist dagegen ein
+    nahezu sicherer Zusammenhang. Deshalb der exakte Vergleich über
+    `(type, value_normalized)` (Index) als bewusst eigenes, *präzises*
+    Signal neben der semantischen Ähnlichkeit (#1088) -- beide ergänzen
+    sich, keines ersetzt das andere.
+    """
+
+    class Type(models.TextChoices):
+        """Erweiterbar gehalten: die Liste deckt ab, was in Post von
+        Behörden, Inkasso, Versorgern und Rechnungsstellern regelmäßig
+        auftaucht; `SONSTIGE` fängt den Rest auf, damit eine unbekannte
+        Kennungsart nicht verloren geht, nur weil sie hier noch fehlt.
+        """
+
+        AKTENZEICHEN = "aktenzeichen", "Aktenzeichen"
+        FORDERUNGSNUMMER = "forderungsnummer", "Forderungsnummer"
+        KUNDENNUMMER = "kundennummer", "Kundennummer"
+        BELEGNUMMER = "belegnummer", "Belegnummer"
+        RECHNUNGSNUMMER = "rechnungsnummer", "Rechnungsnummer"
+        VERTRAGSNUMMER = "vertragsnummer", "Vertragsnummer"
+        IBAN = "iban", "IBAN"
+        IHR_ZEICHEN = "ihr_zeichen", "Ihr Zeichen"
+        UNSER_ZEICHEN = "unser_zeichen", "Unser Zeichen"
+        SONSTIGE = "sonstige", "Sonstige"
+
+    class Role(models.TextChoices):
+        """Wessen Kennung ist das -- unsere oder die der Gegenstelle?
+
+        Löst die im Dokument stehende Beschriftung in eine *absolute*
+        Sicht auf: „Ihr Zeichen" in einem eingehenden Brief meint unsere
+        Kennung (`deins`), „Unser Zeichen" die des Absenders (`deren`) --
+        bei einem Ausgangsschreiben genau andersherum. Ohne diese
+        Auflösung stünde in zwei Dokumenten derselben Korrespondenz
+        dieselbe Nummer einmal als „Ihr" und einmal als „Unser Zeichen",
+        ohne dass irgendwo steht, wem sie gehört.
+
+        Optional: ist die Zuordnung nicht sicher, bleibt das Feld leer
+        statt geraten.
+        """
+
+        MINE = "deins", "Unsere Kennung"
+        THEIRS = "deren", "Kennung der Gegenstelle"
+
+    class Source(models.TextChoices):
+        """Woher die Zeile stammt. Trennt die (fehlbare) KI-Extraktion von
+        dem, was jemand von Hand nachgetragen oder korrigiert hat -- eine
+        erneute Analyse ersetzt nur ihre eigenen Zeilen und fasst manuelle
+        nicht an, dasselbe „Nutzerentscheidung schlägt Automatik"-Prinzip
+        wie bei `TagSuggestion`/`Document.document_date`.
+        """
+
+        AI = "ki", "KI-Analyse"
+        MANUAL = "manuell", "Manuell"
+
+    document = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="references"
+    )
+    type = models.CharField(max_length=30, choices=Type.choices)
+    value_raw = models.CharField(max_length=255)
+    value_normalized = models.CharField(max_length=255)
+    role = models.CharField(max_length=10, choices=Role.choices, blank=True, default="")
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.AI)
+
+    class Meta:
+        ordering = ["type", "value_normalized", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "type", "value_normalized"],
+                name="unique_document_reference",
+            ),
+        ]
+        indexes = [
+            # Der Index, der den exakten Match trägt: „welche Dokumente
+            # haben dieselbe Kennung" ist genau ein Lookup auf diesem Paar.
+            models.Index(
+                fields=["type", "value_normalized"], name="document_reference_idx"
+            ),
+        ]
+        verbose_name = "Kennung"
+        verbose_name_plural = "Kennungen"
+
+    def __str__(self):
+        return f"{self.get_type_display()}: {self.value_raw}"
+
+    def save(self, *args, **kwargs):
+        """`value_normalized` immer aus `value_raw` ableiten, wenn er fehlt
+        -- der Matching-Schlüssel darf nicht davon abhängen, ob ein
+        Aufrufer daran gedacht hat, ihn zu setzen.
+        """
+        if not self.value_normalized:
+            self.value_normalized = normalize_reference_value(self.value_raw)
+        super().save(*args, **kwargs)
 
 
 class TaskQuerySet(models.QuerySet):

@@ -1,0 +1,134 @@
+{% comment %}
+Kennungen/Referenznummern (#1099). Oben die Kennungen dieses Dokuments --
+jede Zeile ist gleich das Korrektur-Formular, weil die KI-Extraktion nicht
+perfekt ist und ein falsch gelesenes Aktenzeichen sonst den exakten Match
+verhindert. Darunter die Dokumente, die dieselbe Kennung tragen, bewusst
+*je Kennung gruppiert*: die Kennung ist die Begründung der Verknüpfung und
+gehört deshalb sichtbar über die Treffer, nicht in eine flache Liste.
+{% endcomment %}
+{% if reference_error %}
+<p class="text-danger small">{{ reference_error }}</p>
+{% endif %}
+
+{% if references %}
+<ul class="findus-detail-links">
+    {% for reference in references %}
+    <li class="findus-reference-item">
+        <form
+            class="findus-reference-form"
+            method="post"
+            action="{% url 'documents:reference_update' document.pk reference.pk %}"
+            hx-post="{% url 'documents:reference_update' document.pk reference.pk %}"
+            hx-target="#document-references"
+            hx-swap="innerHTML"
+        >
+            {% csrf_token %}
+            <select name="type" class="form-select form-select-sm" aria-label="Art der Kennung">
+                {% for value, label in reference_type_choices %}
+                <option value="{{ value }}" {% if value == reference.type %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <input
+                type="text"
+                name="value"
+                class="form-control form-control-sm"
+                value="{{ reference.value_raw }}"
+                aria-label="Kennung"
+            >
+            <select name="role" class="form-select form-select-sm" aria-label="Wem gehört die Kennung">
+                <option value="">Zuordnung offen</option>
+                {% for value, label in reference_role_choices %}
+                <option value="{{ value }}" {% if value == reference.role %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Speichern</button>
+            <span class="badge text-bg-light" title="Herkunft dieser Kennung">
+                {{ reference.get_source_display }}
+            </span>
+        </form>
+        <form
+            method="post"
+            action="{% url 'documents:reference_delete' document.pk reference.pk %}"
+            hx-post="{% url 'documents:reference_delete' document.pk reference.pk %}"
+            hx-target="#document-references"
+            hx-swap="innerHTML"
+            class="d-inline"
+        >
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Löschen</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">
+    Keine Kennungen erfasst – die KI-Analyse hat keine gefunden, oder das
+    Dokument trägt keine. Unten von Hand nachtragbar.
+</p>
+{% endif %}
+
+<div class="findus-quick-create" id="document-reference-create">
+    <select name="type" class="form-select form-select-sm" aria-label="Art der neuen Kennung">
+        {% for value, label in reference_type_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+    </select>
+    <input
+        type="text"
+        name="value"
+        class="form-control form-control-sm"
+        placeholder="Kennung, z. B. 123/45"
+        aria-label="Neue Kennung"
+    >
+    <select name="role" class="form-select form-select-sm" aria-label="Wem gehört die neue Kennung">
+        <option value="">Zuordnung offen</option>
+        {% for value, label in reference_role_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+    </select>
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        hx-post="{% url 'documents:reference_create' document.pk %}"
+        hx-include="#document-reference-create"
+        hx-target="#document-references"
+        hx-swap="innerHTML"
+    >+ Kennung hinzufügen</button>
+</div>
+
+<h3 class="findus-section-subtitle">Verwandte Dokumente über gemeinsame Kennungen</h3>
+{% if reference_groups %}
+{% for group in reference_groups %}
+<div class="findus-reference-group">
+    <p class="findus-reference-group-title">
+        <span class="badge text-bg-primary">{{ group.reference.get_type_display }}</span>
+        <span class="findus-reference-group-value">{{ group.reference.value_raw }}</span>
+    </p>
+    {% if group.documents %}
+    <ul class="findus-detail-links">
+        {% for related in group.documents %}
+        <li class="findus-related-item">
+            <div class="findus-related-main">
+                <a href="{% url 'documents:detail' related.pk %}">{{ related.title }}</a>
+                <div class="findus-related-meta">
+                    <span>{{ related.correspondent.name|default:"—" }}</span>
+                    <span>{{ related.display_date|date:"d.m.Y" }}{% if related.display_date_is_upload_fallback %} (Upload){% endif %}</span>
+                </div>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% if group.truncated %}
+    <p class="text-muted small">Weitere Dokumente mit dieser Kennung wurden nicht angezeigt.</p>
+    {% endif %}
+    {% else %}
+    <p class="text-muted small">Kein weiteres Dokument mit dieser Kennung.</p>
+    {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p class="text-muted">
+    Ohne erfasste Kennung gibt es hier nichts zu verknüpfen – exakte
+    Treffer entstehen nur über eine gemeinsame Kennung.
+</p>
+{% endif %}

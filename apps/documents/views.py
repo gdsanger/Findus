@@ -19,12 +19,15 @@ from .models import (
     Correspondent,
     Document,
     DocumentLink,
+    DocumentReference,
     SuggestionStatus,
     Tag,
     Task,
     Vorgang,
     link_documents,
+    normalize_reference_value,
 )
+from .references import set_reference, shared_reference_groups
 from .retrieval import DocumentRetrievalService
 from .task_views import task_departments_and_visibility
 
@@ -438,6 +441,121 @@ def document_link_delete(request, pk, link_id):
     )
 
 
+def _references_context(user, document, *, reference_error=None):
+    """Der Kennungen-Block des Details (#1099): die typisierten Kennungen
+    dieses Dokuments (KI-extrahiert und von Hand gepflegt, gemeinsam
+    editierbar) plus die je Kennung gruppierten Dokumente, die exakt
+    dieselbe tragen.
+
+    Beides in *einem* Kontext/Partial, weil das eine das andere erzeugt:
+    wer eine Kennung korrigiert, muss die daraus folgenden Verknüpfungen
+    sofort sehen -- eine getrennt nachzuladende Trefferliste stünde nach
+    jeder Korrektur veraltet daneben.
+    """
+    return {
+        "document": document,
+        "references": list(document.references.all()),
+        "reference_groups": shared_reference_groups(user, document),
+        "reference_type_choices": DocumentReference.Type.choices,
+        "reference_role_choices": DocumentReference.Role.choices,
+        "reference_error": reference_error,
+    }
+
+
+@login_required
+def document_references(request, pk):
+    """Render the Kennungen block on its own (#1099) -- Swap-Ziel nach
+    jedem Anlegen/Ändern/Löschen einer Kennung.
+    """
+    document = _visible_document(request.user, pk)
+    return render(
+        request,
+        "documents/partials/_detail_references.html",
+        _references_context(request.user, document),
+    )
+
+
+@login_required
+@require_POST
+def document_reference_create(request, pk):
+    """Kennung von Hand nachtragen (#1099).
+
+    Die Extraktion ist nicht perfekt -- eine übersehene oder falsch
+    gelesene Nummer muss nachtragbar sein, sonst hängt der exakte Match an
+    der Tagesform des Modells. Angelegt wird als `Source.MANUAL`, damit
+    ein späterer Analyse-Lauf die Zeile nicht wieder wegräumt.
+    """
+    document = _visible_document(request.user, pk)
+    reference = set_reference(
+        document,
+        reference_type=request.POST.get("type", ""),
+        value=request.POST.get("value", ""),
+        role=request.POST.get("role", ""),
+    )
+    reference_error = None if reference is not None else "Bitte eine Kennung eingeben."
+    return render(
+        request,
+        "documents/partials/_detail_references.html",
+        _references_context(request.user, document, reference_error=reference_error),
+    )
+
+
+@login_required
+@require_POST
+def document_reference_update(request, pk, reference_id):
+    """Eine Kennung korrigieren (#1099) -- Typ, Wert und Rolle.
+
+    Umgesetzt als Löschen+Neuanlegen über `set_reference()` statt als
+    In-Place-Edit: der korrigierte Wert kann auf eine bereits vorhandene
+    Kennung desselben Dokuments fallen (z. B. beim Tippfehler-Fix), und
+    ein blindes `save()` liefe dann in die UniqueConstraint. So endet
+    derselbe Fall in genau einer Zeile.
+
+    Ein leerer Wert ändert nichts, statt die Zeile stillschweigend zu
+    entfernen -- Löschen ist ein eigener, bestätigter Knopf, kein
+    Nebeneffekt eines versehentlich geleerten Feldes.
+
+    Die korrigierte Zeile gilt danach als manuell gepflegt, auch wenn sie
+    aus der KI-Analyse stammte -- eine Korrektur, die der nächste
+    Analyse-Lauf überschreibt, wäre keine.
+    """
+    document = _visible_document(request.user, pk)
+    reference = get_object_or_404(document.references, pk=reference_id)
+    reference_error = None
+    if normalize_reference_value(request.POST.get("value", "")):
+        reference.delete()
+        set_reference(
+            document,
+            reference_type=request.POST.get("type", reference.type),
+            value=request.POST.get("value", ""),
+            role=request.POST.get("role", ""),
+        )
+    else:
+        reference_error = "Bitte eine Kennung eingeben."
+    return render(
+        request,
+        "documents/partials/_detail_references.html",
+        _references_context(request.user, document, reference_error=reference_error),
+    )
+
+
+@login_required
+@require_POST
+def document_reference_delete(request, pk, reference_id):
+    """Eine Kennung löschen (#1099) -- gescoped über die Reverse-Relation,
+    damit eine ID aus der URL nur eine Kennung dieses (sichtbaren)
+    Dokuments treffen kann.
+    """
+    document = _visible_document(request.user, pk)
+    reference = get_object_or_404(document.references, pk=reference_id)
+    reference.delete()
+    return render(
+        request,
+        "documents/partials/_detail_references.html",
+        _references_context(request.user, document),
+    )
+
+
 @login_required
 def document_detail(request, pk):
     document = _visible_document(request.user, pk)
@@ -447,6 +565,7 @@ def document_detail(request, pk):
         **_document_tasks_context(request.user, document),
         **_analysis_status_context(document),
         **_children_context(request.user, document),
+        **_references_context(request.user, document),
         # Direktzugriff auf ein Unterdokument zeigt den Elternkontext
         # (#1069) -- aber nur, wenn das Leitdokument auch sichtbar ist:
         # der Scope eines Kindes ist überschreibbar, ein sichtbares Kind
