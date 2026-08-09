@@ -27,6 +27,14 @@
         >
             Bearbeiten
         </button>
+        {# Zweiter Einstieg in den Brief-Assistenten (#1095) -- ohne
+           Bezugsdokument, dafür mit dem Vorgang als Kontext. #}
+        <a
+            class="btn btn-sm btn-outline-secondary"
+            href="{% url 'documents:letter_draft_start' %}?vorgang={{ vorgang.pk }}"
+        >
+            Schreiben erstellen
+        </a>
         {# Fokus-Graph (#1091) mit diesem Vorgang als Startknoten. #}
         <a
             class="btn btn-sm btn-outline-secondary"

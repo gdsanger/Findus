@@ -42,15 +42,11 @@ from django.core.exceptions import ValidationError
 
 from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
 
-from .letter_bindings import source_choices, source_label, validate_source
+from .letter_bindings import MANUAL_SOURCE, source_choices, source_label, validate_source
 from .models import LetterTemplate, LetterTemplatePlaceholder
 from .text_sanitize import clean_json
 
 logger = logging.getLogger(__name__)
-
-# Die Rückfall-Quelle für alles, was sich nicht binden lässt: „beim
-# Erzeugen des Schreibens vom Nutzer ausfüllen lassen".
-MANUAL_SOURCE = "manual"
 
 # Was `_to_draft` aus der Antwort liest. Fehlt einer davon, wiederholt
 # `generate_json` den Call, statt uns ein leeres Ergebnis unterzuschieben.

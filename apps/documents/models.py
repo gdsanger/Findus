@@ -215,10 +215,21 @@ class Document(TimeStampedModel):
         VISION = "vision", "Vision AI"
 
     class Source(models.TextChoices):
+        """Woher die Datei kam. `generiert_brief` ist der einzige Wert, den
+        Findus selbst erzeugt (#1095): ein aus einer Brief-Vorlage
+        generiertes, vom Nutzer freigegebenes Schreiben. Bewusst ein
+        eigener Wert und kein `upload`: die Herkunft "das haben wir hier
+        geschrieben" ist etwas anderes als "jemand hat eine Datei
+        hochgeladen" -- danach lässt sich filtern, und die Pipeline
+        behandelt es anders (keine Extraktion/KI-Analyse, die Werte sind
+        bekannt).
+        """
+
         UPLOAD = "upload", "Upload"
         MAIL = "mail", "E-Mail"
         FOLDER = "folder", "Ordner-Überwachung"
         API = "api", "API"
+        GENERATED_LETTER = "generiert_brief", "Generiert (Brief)"
 
     class Direction(models.TextChoices):
         """Ging das Dokument an mich (Eingang) oder kam es von mir
@@ -1068,6 +1079,199 @@ class LetterTemplatePlaceholder(models.Model):
     @property
     def display_label(self):
         return self.label or self.key
+
+
+class LetterDraftQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """Dasselbe zweistufige Sichtbarkeitsmodell wie überall sonst
+        (#1052). Ein Entwurf trägt den Brieftext *und* die aus dem
+        beantworteten Dokument gezogenen Werte -- er gehört damit in
+        denselben Abteilungs-/Privat-Scope wie das Dokument, aus dem er
+        entstanden ist.
+        """
+        if user.is_superuser:
+            return self
+        return self.filter(
+            models.Q(
+                visibility=LetterDraft.Visibility.DEPARTMENT,
+                departments__in=user.departments.all(),
+            )
+            | models.Q(
+                visibility=LetterDraft.Visibility.PRIVATE,
+                owner=user,
+            )
+        ).distinct()
+
+
+class LetterDraft(TimeStampedModel):
+    """Ein KI-Brief-Entwurf aus einer Brief-Vorlage (#1095) -- Werkbank
+    zwischen „Vorlage gewählt" und „Dokument am Vorgang".
+
+    Review-first: hier entsteht *nichts* Endgültiges. Der Entwurf hält den
+    generierten Text (editierbar), die daraus gerenderten Dateien (Word als
+    editierbarer Master, PDF als Druck-/Sende-Artefakt) und erst nach
+    ausdrücklicher Freigabe die Verknüpfung auf das daraus abgelegte
+    `Document`. Bis dahin ist der Entwurf kein Dokument, taucht in keiner
+    Dokumentliste auf und wird nirgendwohin verschickt (Versand ist #5).
+
+    Warum ein eigenes Modell und nicht gleich ein `Document` im Status
+    „Entwurf": ein Dokument ist in Findus überall die abgelegte Wahrheit
+    (Suche, Vorgang, Graph, Empfehlungen). Ein halbfertiger Brief, der noch
+    dreimal umformuliert wird, hätte in all diesen Ansichten nichts zu
+    suchen -- und ein zusätzlicher Entwurfs-Status müsste in jeder einzelnen
+    Query mitgedacht werden.
+
+    Snapshot-Prinzip: `layout`, `signature`, `sender_block`,
+    `recipient_block` und `letter_date` werden beim Anlegen aus Vorlage und
+    Kontakten *kopiert*, nicht bei jedem Rendern neu gelesen. Ein Brief, der
+    vor drei Wochen entworfen wurde, darf sich nicht ändern, nur weil
+    jemand die Vorlage angefasst oder die Adresse eines Kontakts korrigiert
+    hat -- und er muss auch dann noch renderbar sein, wenn die Vorlage
+    gelöscht wurde.
+    """
+
+    class Visibility(models.TextChoices):
+        DEPARTMENT = "department", "Abteilung"
+        PRIVATE = "private", "Privat"
+
+    class Status(models.TextChoices):
+        RUNNING = "running", "Wird erstellt"
+        READY = "ready", "Entwurf bereit"
+        FAILED = "failed", "Fehlgeschlagen"
+        FINALIZED = "finalized", "Abgelegt"
+
+    template = models.ForeignKey(
+        LetterTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="drafts",
+    )
+    # Name der Vorlage zum Zeitpunkt der Erzeugung -- damit der Entwurf auch
+    # nach dem Löschen der Vorlage noch sagen kann, woraus er entstand.
+    template_name = models.CharField(max_length=255, blank=True)
+
+    source_document = models.ForeignKey(
+        Document,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="letter_drafts",
+    )
+    vorgang = models.ForeignKey(
+        Vorgang,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="letter_drafts",
+    )
+    recipient = models.ForeignKey(
+        Correspondent,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="letter_drafts_received",
+    )
+    sender = models.ForeignKey(
+        Correspondent,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="letter_drafts_sent",
+    )
+
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.RUNNING
+    )
+    error = models.TextField(blank=True)
+
+    subject = models.CharField(max_length=255, blank=True)
+    body_text = models.TextField(blank=True)
+    # Freie Zusatzhinweise des Nutzers für die Generierung (Schwerpunkt,
+    # persönlicher Schreibstil) -- Prompt-Material, kein Briefinhalt.
+    notes = models.TextField(blank=True)
+
+    letter_date = models.DateField(null=True, blank=True)
+    sender_block = models.TextField(blank=True)
+    recipient_block = models.TextField(blank=True)
+    signature = models.TextField(blank=True)
+    layout = models.JSONField(default=dict, blank=True)
+
+    # Was die Bindungen (#1094) ergeben haben, plus die manuell
+    # nachgetragenen Werte -- getrennt gehalten: `manual_values` ist
+    # Nutzereingabe (überlebt ein „neu generieren"), `placeholder_values`
+    # ist das aufgelöste Gesamtergebnis, das in den Prompt ging.
+    manual_values = models.JSONField(default=dict, blank=True)
+    placeholder_values = models.JSONField(default=dict, blank=True)
+
+    docx_file = models.FileField(upload_to="letters/%Y/%m/", blank=True)
+    pdf_file = models.FileField(upload_to="letters/%Y/%m/", blank=True)
+
+    # Erst mit der Freigabe gesetzt: das abgelegte Dokument am Vorgang.
+    document = models.OneToOneField(
+        Document,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="letter_draft",
+    )
+
+    ai_model = models.CharField(max_length=100, blank=True)
+    ai_model_version = models.CharField(max_length=50, blank=True)
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_letter_drafts",
+    )
+    departments = models.ManyToManyField(
+        Department, blank=True, related_name="letter_drafts"
+    )
+    visibility = models.CharField(
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.DEPARTMENT,
+    )
+
+    objects = LetterDraftQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Brief-Entwurf"
+        verbose_name_plural = "Brief-Entwürfe"
+
+    def __str__(self):
+        return self.subject or f"Brief-Entwurf {self.pk}"
+
+    @property
+    def is_running(self):
+        return self.status == self.Status.RUNNING
+
+    @property
+    def is_finalized(self):
+        return self.status == self.Status.FINALIZED
+
+    @property
+    def is_editable(self):
+        """Solange nichts abgelegt ist und gerade nichts läuft, gehört der
+        Text dem Nutzer -- auch nach einem fehlgeschlagenen KI-Lauf, denn
+        dann darf er ihn selbst schreiben, statt in einer Sackgasse zu
+        stehen.
+        """
+        return self.status in (self.Status.READY, self.Status.FAILED)
+
+    @property
+    def has_files(self):
+        return bool(self.docx_file) and bool(self.pdf_file)
+
+    def layout_value(self, key):
+        """Layout-Wert aus dem Snapshot, mit Rückfall auf das Grundlayout --
+        derselbe Vertrag wie `LetterTemplate.layout_value`, nur eben gegen
+        die eingefrorene Kopie.
+        """
+        return (self.layout or {}).get(key, DEFAULT_LETTER_LAYOUT.get(key))
 
 
 class VorgangRecommendationRun(TimeStampedModel):

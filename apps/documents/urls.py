@@ -5,6 +5,7 @@ from . import (
     dashboard_views,
     graph_views,
     letter_template_views,
+    letter_views,
     tag_views,
     task_template_views,
     task_views,
@@ -190,6 +191,25 @@ urlpatterns = [
         task_template_views.task_template_item_delete,
         name="task_template_item_delete",
     ),
+    # Brief-Entwürfe (#1095): der Erzeugungs-/Review-Weg. Bewusst eigene
+    # URLs unter /briefe/ statt unter /documents/: bis zur Freigabe ist ein
+    # Entwurf kein Dokument.
+    path("briefe/neu/", letter_views.letter_draft_start, name="letter_draft_start"),
+    path("briefe/<int:pk>/", letter_views.letter_draft_detail, name="letter_draft_detail"),
+    path("briefe/<int:pk>/panel/", letter_views.letter_draft_panel, name="letter_draft_panel"),
+    path("briefe/<int:pk>/aktualisieren/", letter_views.letter_draft_update, name="letter_draft_update"),
+    path(
+        "briefe/<int:pk>/neu-generieren/",
+        letter_views.letter_draft_regenerate,
+        name="letter_draft_regenerate",
+    ),
+    path(
+        "briefe/<int:pk>/download/<str:fmt>/",
+        letter_views.letter_draft_download,
+        name="letter_draft_download",
+    ),
+    path("briefe/<int:pk>/freigeben/", letter_views.letter_draft_finalize, name="letter_draft_finalize"),
+    path("briefe/<int:pk>/verwerfen/", letter_views.letter_draft_delete, name="letter_draft_delete"),
     path("brief-vorlagen/", letter_template_views.letter_template_list, name="letter_template_list"),
     path(
         "brief-vorlagen/create/",

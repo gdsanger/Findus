@@ -379,6 +379,25 @@ FINDUS_LETTER_TEMPLATE_DRAFT_MAX_OUTPUT_TOKENS = int(
 )
 
 # --------------------------------------------------------------------------
+# KI-Brief aus einer Vorlage (#1095, apps.documents.letter_generation): ein
+# `generate()`-Call pro Entwurf, async im Worker. CONTEXT_MAX_CHARS
+# begrenzt, wie viel vom beantworteten Dokument mitgeht -- normalerweise
+# dessen KI-Zusammenfassung (#1020), ersatzweise ein Ausschnitt des
+# extrahierten Texts, wenn es noch keine gibt. MAX_OUTPUT_TOKENS deckt
+# Betreff plus Brieftext; ein einseitiger Geschäftsbrief liegt deutlich
+# darunter, aber ein abgeschnittener Brief wäre schlimmer als ein paar
+# ungenutzte Tokens -- reicht es doch nicht, wiederholt `generate_json`
+# den Call mit dem doppelten Budget, statt abgeschnittenes JSON zu flicken
+# (#1096).
+#
+# Word (python-docx) und PDF (fpdf2) werden beide direkt gerendert, es gibt
+# also KEINE Konverter-Systemabhängigkeit (kein LibreOffice headless) --
+# siehe apps.documents.letter_render.
+# --------------------------------------------------------------------------
+FINDUS_LETTER_CONTEXT_MAX_CHARS = int(env("FINDUS_LETTER_CONTEXT_MAX_CHARS", "4000"))
+FINDUS_LETTER_MAX_OUTPUT_TOKENS = int(env("FINDUS_LETTER_MAX_OUTPUT_TOKENS", "3000"))
+
+# --------------------------------------------------------------------------
 # Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
 # -> vision, cheapest usable stage wins. A page only escalates to the next
 # (more expensive) stage when the current one produced fewer than

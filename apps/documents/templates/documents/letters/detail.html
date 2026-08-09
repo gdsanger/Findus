@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ draft.subject|default:"Brief-Entwurf" }} – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Brief-Entwurf" %}
+
+<p class="text-muted small">
+    Vorlage: {% if draft.template %}<a href="{% url 'documents:letter_template_detail' draft.template.pk %}">{{ draft.template_name }}</a>{% else %}{{ draft.template_name|default:"—" }}{% endif %}
+    {% if source_document %}
+    · Antwort auf <a href="{% url 'documents:detail' source_document.pk %}">{{ source_document.title }}</a>
+    {% endif %}
+    {% if draft.vorgang %}
+    · Vorgang <a href="{% url 'documents:vorgang_detail' draft.vorgang.pk %}">{{ draft.vorgang.name }}</a>
+    {% endif %}
+</p>
+
+{% include "documents/letters/partials/_draft_panel.html" %}
+{% endblock %}

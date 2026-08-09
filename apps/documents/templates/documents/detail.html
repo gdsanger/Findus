@@ -34,6 +34,14 @@
         Original herunterladen
     </a>
     {% endif %}
+    {# Hauptweg in den Brief-Assistenten (#1095): dieses Dokument ist der
+       Kontext des Antwortschreibens (Kontakt, Vorgang, Key-Facts). #}
+    <a
+        class="btn btn-sm btn-outline-primary"
+        href="{% url 'documents:letter_draft_start' %}?document={{ document.pk }}"
+    >
+        Antwortschreiben erstellen
+    </a>
     {# Einstieg in den Fokus-Graphen (#1091) mit diesem Dokument als Startknoten. #}
     <a
         class="btn btn-sm btn-outline-secondary"
@@ -52,6 +60,25 @@
     </form>
     {% include "documents/partials/_detail_analysis_status.html" %}
 </section>
+
+{% comment %}
+Ein aus einer Brief-Vorlage erzeugtes Dokument (#1095) ist das PDF. Der
+editierbare Word-Master bleibt am Entwurf -- hier verlinkt, damit „beide
+Formate herunterladbar" auch von der Dokumentseite aus gilt.
+`document.letter_draft` ist ein Reverse-OneToOne: fehlt er, schluckt die
+Template-Engine den DoesNotExist (silent_variable_failure).
+{% endcomment %}
+{% if document.letter_draft %}
+<section class="findus-section findus-detail-actions">
+    <span class="badge text-bg-info">Aus Brief-Vorlage erzeugt</span>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_download' document.letter_draft.pk 'docx' %}">
+        Word-Master herunterladen
+    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_detail' document.letter_draft.pk %}">
+        Entwurf ansehen
+    </a>
+</section>
+{% endif %}
 
 <div id="document-original-preview"></div>
 
