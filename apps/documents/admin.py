@@ -6,6 +6,8 @@ from .models import (
     Correspondent,
     Document,
     DocumentLink,
+    LetterTemplate,
+    LetterTemplatePlaceholder,
     Tag,
     TagSuggestion,
     Task,
@@ -196,6 +198,30 @@ class TaskTemplateItemInline(admin.TabularInline):
     model = TaskTemplateItem
     fields = ("text", "order")
     extra = 0
+
+
+class LetterTemplatePlaceholderInline(admin.TabularInline):
+    """Die Daten-Bindungen einer Brief-Vorlage (#1094).
+
+    `source` wird vom Model-Validator gegen die Quellen-Registry
+    (`apps.documents.letter_bindings`) geprüft -- auch hier im Admin, wo
+    das Feld als freies Textfeld erscheint, weil die gültigen Werte
+    bewusst nicht als `choices` am Model stehen.
+    """
+
+    model = LetterTemplatePlaceholder
+    fields = ("order", "key", "label", "source", "required")
+    extra = 0
+
+
+@admin.register(LetterTemplate)
+class LetterTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "category", "visibility", "updated_at")
+    list_filter = ("category", "visibility", "departments")
+    search_fields = ("name", "description", "category", "instructions")
+    autocomplete_fields = ("owner",)
+    filter_horizontal = ("departments",)
+    inlines = [LetterTemplatePlaceholderInline]
 
 
 @admin.register(TaskTemplate)
