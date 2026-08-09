@@ -1022,7 +1022,10 @@ body {
 
 /* Original-Vorschau Slide-Over (#1036) ------------------------------------*/
 .findus-preview-offcanvas {
-    position: relative;
+    /* Kein eigenes position: relative -- .offcanvas liefert bereits
+       position: fixed (#1107), das reicht als Containing Block fuer den
+       absolut positionierten Resize-Handle und haelt zugleich das
+       rechts angedockte Docking-Layout von Bootstrap intakt. */
     width: min(90vw, 56rem);
     background-color: var(--findus-surface);
     border-left: 1px solid var(--findus-border);
