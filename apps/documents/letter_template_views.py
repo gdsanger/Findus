@@ -190,8 +190,18 @@ def letter_template_draft(request):
     Bestellte), Name/Kategorie/Beschreibung nur dort gesetzt, wo noch
     nichts steht.
     """
-    template = None
     template_pk = (request.POST.get("template_pk") or "").strip()
+    # Der auffälligste Fehlerfall dieses Endpunkts ist gar keiner, den eine
+    # Exception zeigen würde: kommt der Klick clientseitig nie an, bleibt das
+    # Log sonst komplett leer und "kommt nichts an" ist von hier aus nicht
+    # von einem stillen Erfolg zu unterscheiden (#1102).
+    logger.info(
+        "KI-Entwurf für Brief-Vorlage angefragt (user=%s, template_pk=%s)",
+        request.user,
+        template_pk or "-",
+    )
+
+    template = None
     if template_pk.isdigit():
         template = _visible_template(request.user, template_pk)
 
