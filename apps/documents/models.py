@@ -595,6 +595,102 @@ class Chunk(TimeStampedModel):
         return f"Chunk {self.position} of {self.document_id}"
 
 
+class DocumentLinkQuerySet(models.QuerySet):
+    def for_document(self, document):
+        """Every link touching `document`, regardless of which side it sits
+        on -- the pair is stored canonically (see `DocumentLink`), so a
+        caller must never assume "its" document is `document_a`.
+        """
+        return self.filter(
+            models.Q(document_a=document) | models.Q(document_b=document)
+        )
+
+
+class DocumentLink(TimeStampedModel):
+    """Ein manuell gesetzter Querverweis zwischen zwei Dokumenten (#1088) --
+    "gehört zu", ohne Richtung.
+
+    Ergänzt die automatischen Ähnlichkeits-Treffer
+    (`DocumentRetrievalService.similar_documents`) im selben Block des
+    Dokument-Details: was die Vektor-Ähnlichkeit nicht findet (anderes
+    Thema, andere Sprache, kein Textbezug), trägt der Nutzer hier von Hand
+    nach.
+
+    Bewusst *ungerichtet*: "A gehört zu B" heißt immer auch "B gehört zu
+    A", und eine zweite Zeile für die Gegenrichtung wäre dieselbe Aussage
+    doppelt. Erzwungen wird das über die kanonische Speicherung
+    `document_a_id < document_b_id` (`link_documents()` sortiert das Paar)
+    -- so deckt die UniqueConstraint beide Richtungen ab, statt A→B und
+    B→A als zwei "verschiedene" Links durchzulassen. Dieselbe Bedingung
+    schließt den Selbstverweis A↝A gleich mit aus.
+
+    Nicht zu verwechseln mit `Document.parent` (#1069): dort hängt ein
+    Unterdokument *in* seinem Leitdokument (geerbter Scope, Kaskaden-Löschung,
+    eigener Detail-Block), hier stehen zwei eigenständige Dokumente
+    gleichberechtigt nebeneinander.
+    """
+
+    document_a = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="links_as_a"
+    )
+    document_b = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="links_as_b"
+    )
+    note = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_document_links",
+    )
+
+    objects = DocumentLinkQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document_a", "document_b"], name="unique_document_link"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(document_a__lt=models.F("document_b")),
+                name="document_link_canonical_pair",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Link {self.document_a_id} <-> {self.document_b_id}"
+
+    def other_document_id(self, document):
+        """The id of the *other* end seen from `document` -- what the detail
+        page actually wants to show.
+        """
+        return (
+            self.document_b_id
+            if self.document_a_id == document.pk
+            else self.document_a_id
+        )
+
+
+def link_documents(first, second, *, created_by=None, note=""):
+    """Create (or return) the undirected link between two documents.
+
+    Normalises the pair to `document_a_id < document_b_id` before hitting
+    the DB, which is what makes the UniqueConstraint symmetric -- linking
+    B to A after A to B is a no-op instead of a second row. Returns
+    `(link, created)` like `get_or_create`.
+    """
+    if first.pk == second.pk:
+        raise ValidationError("Ein Dokument kann nicht mit sich selbst verknüpft werden.")
+    document_a, document_b = sorted((first, second), key=lambda document: document.pk)
+    return DocumentLink.objects.get_or_create(
+        document_a=document_a,
+        document_b=document_b,
+        defaults={"created_by": created_by, "note": note},
+    )
+
+
 class TaskQuerySet(models.QuerySet):
     def visible_to(self, user):
         """Same two-level visibility model as `DocumentQuerySet.visible_to`
