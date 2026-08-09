@@ -84,8 +84,10 @@
 
 <section class="findus-section">
     <h2 class="findus-section-title">Kennungen</h2>
-    {# Die parteibezogenen Kennungen dieses Kontakts (#1100): Kundennummer,
-       IBAN -- sie sagen "derselbe Kontakt", nicht "dieselbe Angelegenheit". #}
+    {% comment %}
+    Die parteibezogenen Kennungen dieses Kontakts (#1100): Kundennummer,
+    IBAN -- sie sagen "derselbe Kontakt", nicht "dieselbe Angelegenheit".
+    {% endcomment %}
     <div id="correspondent-references">
         {% include "documents/partials/_owner_references.html" %}
     </div>

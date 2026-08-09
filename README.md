@@ -93,6 +93,20 @@ templates/, static/  Server-rendered UI, vendored HTMX/Bootstrap/Cytoscape
 docker-compose.yml   web, db, redis, worker, mcp, minio
 ```
 
+## Template-Konventionen
+
+Djangos `{# … #}`-Syntax funktioniert nur **einzeilig** — enthält der
+Kommentar einen Zeilenumbruch, wird er nicht entfernt, sondern als
+Klartext gerendert. Deshalb gilt:
+
+- Mehrzeilige Erläuterungen im Template ausschließlich mit
+  `{% comment %} … {% endcomment %}`.
+- `{# … #}` nur für einzeilige Kommentare verwenden.
+
+Ein Regressionstest (`apps/documents/tests_template_comment_lint.py`)
+durchsucht alle `templates/`-Verzeichnisse nach mehrzeiligen `{# … #}`-
+Blöcken und schlägt fehl, falls einer auftaucht.
+
 ## Lokale Entwicklung ohne Docker
 
 Voraussetzung: lokale PostgreSQL-Instanz **mit installierter pgvector-

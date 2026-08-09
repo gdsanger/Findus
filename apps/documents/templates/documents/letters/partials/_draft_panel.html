@@ -22,8 +22,10 @@ Verschickt wird gar nichts (das ist #5).
         Freigegeben und als Dokument abgelegt:
         <a href="{% url 'documents:detail' draft.document.pk %}">{{ draft.document.title }}</a>
         {% else %}
-        {# Das abgelegte Dokument wurde später gelöscht (FK on_delete=SET_NULL) --
-           der Entwurf bleibt als Beleg stehen, hat aber nichts mehr zu verlinken. #}
+        {% comment %}
+        Das abgelegte Dokument wurde später gelöscht (FK on_delete=SET_NULL) --
+        der Entwurf bleibt als Beleg stehen, hat aber nichts mehr zu verlinken.
+        {% endcomment %}
         Freigegeben – das daraus abgelegte Dokument wurde inzwischen gelöscht.
         {% endif %}
     </div>
