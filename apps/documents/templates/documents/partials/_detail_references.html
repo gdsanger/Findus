@@ -96,6 +96,45 @@ gehört deshalb sichtbar über die Treffer, nicht in eine flache Liste.
     >+ Kennung hinzufügen</button>
 </div>
 
+{% comment %}
+Zuordnungs-Vorschläge (#1100): eine Kennung dieses Dokuments steht auch am
+Vorgang/Kontakt -- also gehört es vermutlich dorthin. Bewusst ein
+Vorschlag mit einem Klick statt einer stillen Zuordnung: der Match ist
+exakt, die Kennung selbst aber ein Fremdformat aus einer fehlbaren
+Extraktion. Die Begründung ("wegen Aktenzeichen 123/45") steht mit im
+Chip, damit die Entscheidung nicht auf Vertrauen hinausläuft.
+{% endcomment %}
+{% if reference_suggestions %}
+<h3 class="findus-section-subtitle">Zuordnungs-Vorschläge</h3>
+<ul class="findus-detail-links">
+    {% for suggestion in reference_suggestions %}
+    <li class="findus-reference-item">
+        <span>
+            Gehört vermutlich zu {{ suggestion.scope_label }}
+            {% if suggestion.scope == "vorgang" %}
+            <a href="{% url 'documents:vorgang_detail' suggestion.target.pk %}">{{ suggestion.target.name }}</a>
+            {% else %}
+            <a href="{% url 'documents:correspondent_detail' suggestion.target.pk %}">{{ suggestion.target.name }}</a>
+            {% endif %}
+            – wegen {{ suggestion.reference.get_type_display }}
+            <span class="findus-reference-group-value">{{ suggestion.reference.value_raw }}</span>
+        </span>
+        <form
+            method="post"
+            action="{% url 'documents:reference_assign' document.pk suggestion.scope suggestion.target.pk %}"
+            hx-post="{% url 'documents:reference_assign' document.pk suggestion.scope suggestion.target.pk %}"
+            hx-target="#document-references"
+            hx-swap="innerHTML"
+            class="d-inline"
+        >
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-primary">→ zuordnen</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
 <h3 class="findus-section-subtitle">Verwandte Dokumente über gemeinsame Kennungen</h3>
 {% if reference_groups %}
 {% for group in reference_groups %}

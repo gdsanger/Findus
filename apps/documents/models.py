@@ -869,6 +869,134 @@ class DocumentReference(TimeStampedModel):
         super().save(*args, **kwargs)
 
 
+class OwnerReference(TimeStampedModel):
+    """Gemeinsame Basis der Kennungen, die einem *Ziel* gehören (#1100):
+    dem Vorgang seine fallbezogenen, dem Kontakt seine parteibezogenen.
+
+    `DocumentReference` (#1099) sagt „in diesem Schreiben steht diese
+    Nummer" -- hier steht „diese Nummer *ist* die dieses Vorgangs/dieses
+    Kontakts". Erst dadurch bekommt eine Kennung ein Zuhause und ein neues
+    Dokument ein Ziel: der Abgleich läuft gegen diese Zeilen, nicht mehr
+    nur Dokument gegen Dokument.
+
+    Bewusst dieselben `type`-Choices und derselbe `value_normalized`
+    -Schlüssel wie am Dokument: der Match ist genau die Gleichheit von
+    `(type, value_normalized)` über beide Tabellen hinweg. Zwei
+    unterschiedliche Normalisierungen hier und dort hießen: der Abgleich
+    findet nichts, ohne dass irgendwo ein Fehler sichtbar würde.
+
+    Keine `role`: ob eine Nummer im Brief als „Ihr" oder „Unser Zeichen"
+    stand, ist eine Eigenschaft des einzelnen Schreibens. Der Vorgang hat
+    schlicht sein Aktenzeichen.
+    """
+
+    class Source(models.TextChoices):
+        """Von Hand gepflegt oder aus einem zugeordneten Dokument gelernt.
+
+        Trennt die Nutzerentscheidung von der Automatik -- dasselbe
+        Prinzip wie `DocumentReference.Source`, nur mit anderer
+        Gegenseite: hier ist die automatische Quelle nicht die KI, sondern
+        die Zuordnung eines Dokuments, dessen Kennungen der Vorgang/Kontakt
+        damit übernimmt.
+        """
+
+        MANUAL = "manuell", "Manuell"
+        LEARNED = "gelernt", "Aus Dokument gelernt"
+
+    type = models.CharField(max_length=30, choices=DocumentReference.Type.choices)
+    value_raw = models.CharField(max_length=255)
+    value_normalized = models.CharField(max_length=255)
+    source = models.CharField(
+        max_length=10, choices=Source.choices, default=Source.MANUAL
+    )
+    # Aus welchem Dokument gelernt -- die Herkunft, an der die
+    # Sichtbarkeits-Prüfung des Zuordnungs-Vorschlags hängt (siehe
+    # `apps.documents.reference_matching`): eine Kennung, die aus einem für
+    # mich unsichtbaren Dokument stammt, darf mir keinen Vorschlag
+    # erzeugen. `SET_NULL` statt `CASCADE`: löscht jemand das Schreiben,
+    # aus dem der Vorgang sein Aktenzeichen gelernt hat, bleibt das
+    # Aktenzeichen trotzdem seins -- die Zeile verliert nur ihre Herkunft
+    # und zählt danach wie eine von Hand gepflegte.
+    learned_from = models.ForeignKey(
+        Document,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        abstract = True
+        ordering = ["type", "value_normalized", "pk"]
+
+    def __str__(self):
+        return f"{self.get_type_display()}: {self.value_raw}"
+
+    def save(self, *args, **kwargs):
+        if not self.value_normalized:
+            self.value_normalized = normalize_reference_value(self.value_raw)
+        super().save(*args, **kwargs)
+
+
+class VorgangReference(OwnerReference):
+    """Eine fallbezogene Kennung dieses Vorgangs (#1100) -- sein
+    Aktenzeichen, seine Forderungs-/Vertrags-/Rechnungsnummer.
+    """
+
+    vorgang = models.ForeignKey(
+        Vorgang, on_delete=models.CASCADE, related_name="references"
+    )
+
+    class Meta(OwnerReference.Meta):
+        abstract = False
+        constraints = [
+            models.UniqueConstraint(
+                fields=["vorgang", "type", "value_normalized"],
+                name="unique_vorgang_reference",
+            ),
+        ]
+        indexes = [
+            # Trägt die Vorschlags-Richtung: „welcher Vorgang hat diese
+            # Kennung" ist genau ein Lookup auf diesem Paar -- dasselbe
+            # Index-Paar wie am Dokument, weil dieselbe Frage gestellt wird.
+            models.Index(
+                fields=["type", "value_normalized"], name="vorgang_reference_idx"
+            ),
+        ]
+        verbose_name = "Vorgang-Kennung"
+        verbose_name_plural = "Vorgang-Kennungen"
+
+
+class CorrespondentReference(OwnerReference):
+    """Eine parteibezogene Kennung dieses Kontakts (#1100) --
+    Kundennummer, IBAN.
+
+    Getrennt vom Vorgang, weil eine Kundennummer über Jahre in völlig
+    verschiedenen Vorgängen auftaucht: sie sagt „derselbe Kontakt", nicht
+    „dieselbe Angelegenheit" (Typ->Scope-Mapping, #1099).
+    """
+
+    correspondent = models.ForeignKey(
+        Correspondent, on_delete=models.CASCADE, related_name="references"
+    )
+
+    class Meta(OwnerReference.Meta):
+        abstract = False
+        constraints = [
+            models.UniqueConstraint(
+                fields=["correspondent", "type", "value_normalized"],
+                name="unique_correspondent_reference",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["type", "value_normalized"], name="correspondent_ref_idx"
+            ),
+        ]
+        verbose_name = "Kontakt-Kennung"
+        verbose_name_plural = "Kontakt-Kennungen"
+
+
 class TaskQuerySet(models.QuerySet):
     def visible_to(self, user):
         """Same two-level visibility model as `DocumentQuerySet.visible_to`

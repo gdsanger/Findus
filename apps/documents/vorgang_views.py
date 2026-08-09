@@ -21,6 +21,7 @@ from django.views.decorators.http import require_POST
 from .forms import VorgangForm
 from .models import Document, Tag, Task, Vorgang, VorgangRecommendation
 from .recommendations import is_stale_for, start_recommendation_run
+from .reference_views import owner_references_context
 from .task_views import task_departments_and_visibility
 from .views import (
     DOCUMENTS_PAGE_SIZE,
@@ -176,6 +177,7 @@ def vorgang_detail(request, pk):
         return render(request, "documents/partials/_document_list.html", context)
 
     context.update(_recommendations_context(request.user, vorgang))
+    context.update(owner_references_context(vorgang))
     return render(request, "documents/vorgaenge/detail.html", context)
 
 

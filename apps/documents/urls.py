@@ -6,6 +6,7 @@ from . import (
     graph_views,
     letter_template_views,
     letter_views,
+    reference_views,
     tag_views,
     task_template_views,
     task_views,
@@ -34,11 +35,41 @@ urlpatterns = [
         correspondent_views.correspondent_document_upload,
         name="correspondent_upload",
     ),
+    path(
+        "correspondents/<int:pk>/kennungen/",
+        reference_views.correspondent_references,
+        name="correspondent_references",
+    ),
+    path(
+        "correspondents/<int:pk>/kennungen/create/",
+        reference_views.correspondent_reference_create,
+        name="correspondent_reference_create",
+    ),
+    path(
+        "correspondents/<int:pk>/kennungen/<int:reference_id>/delete/",
+        reference_views.correspondent_reference_delete,
+        name="correspondent_reference_delete",
+    ),
     path("vorgaenge/", vorgang_views.vorgang_list, name="vorgang_list"),
     path("vorgaenge/create/", vorgang_views.vorgang_create, name="vorgang_create"),
     path("vorgaenge/<int:pk>/", vorgang_views.vorgang_detail, name="vorgang_detail"),
     path("vorgaenge/<int:pk>/delete/", vorgang_views.vorgang_delete, name="vorgang_delete"),
     path("vorgaenge/<int:pk>/upload/", vorgang_views.vorgang_document_upload, name="vorgang_upload"),
+    path(
+        "vorgaenge/<int:pk>/kennungen/",
+        reference_views.vorgang_references,
+        name="vorgang_references",
+    ),
+    path(
+        "vorgaenge/<int:pk>/kennungen/create/",
+        reference_views.vorgang_reference_create,
+        name="vorgang_reference_create",
+    ),
+    path(
+        "vorgaenge/<int:pk>/kennungen/<int:reference_id>/delete/",
+        reference_views.vorgang_reference_delete,
+        name="vorgang_reference_delete",
+    ),
     path(
         "vorgaenge/<int:pk>/empfehlungen/",
         vorgang_views.vorgang_recommendations,
@@ -95,6 +126,11 @@ urlpatterns = [
         "documents/<int:pk>/references/<int:reference_id>/delete/",
         views.document_reference_delete,
         name="reference_delete",
+    ),
+    path(
+        "documents/<int:pk>/references/assign/<str:scope>/<int:target_id>/",
+        views.document_reference_assign,
+        name="reference_assign",
     ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path(

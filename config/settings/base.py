@@ -303,6 +303,23 @@ FINDUS_DOCUMENT_LINK_PICKER_LIMIT = int(env("FINDUS_DOCUMENT_LINK_PICKER_LIMIT",
 # abgeschnitten wurde, sagt der Block, statt es zu verschweigen.
 FINDUS_REFERENCE_MATCH_LIMIT = int(env("FINDUS_REFERENCE_MATCH_LIMIT", "20"))
 
+# Auto-Zuordnung über Kennungen (#1100, apps.documents.reference_matching).
+# Default aus: der Regelfall bleibt der Vorschlag mit einem Klick. Eine
+# still danebengegangene Auto-Zuordnung fällt niemandem auf -- das Dokument
+# liegt ja irgendwo --, während ein unzugeordnetes Dokument sichtbar
+# offen ist. Wer den Schalter umlegt, kauft Bequemlichkeit gegen genau
+# dieses Risiko.
+FINDUS_REFERENCE_AUTO_ASSIGN = env_bool("FINDUS_REFERENCE_AUTO_ASSIGN", False)
+
+# Welche Kennungsarten für die Auto-Zuordnung als "stark" gelten: der Wert
+# identifiziert die Gegenseite für sich allein, ohne dass man den
+# Nummernkreis dahinter kennen muss. Rechnungs-/Belegnummern stehen
+# bewusst nicht drin -- "2024/17" vergibt jeder Rechnungssteller einmal im
+# Jahr, und ein Zahlendreher träfe damit die falsche Akte.
+FINDUS_REFERENCE_AUTO_ASSIGN_TYPES = env_list(
+    "FINDUS_REFERENCE_AUTO_ASSIGN_TYPES", "aktenzeichen,iban"
+)
+
 # Fokus-Graph (#1091, apps.documents.graph): Cap für die Nachbarn *einer*
 # Expansion und je Kantengruppe -- ein Vorgang mit 400 Dokumenten soll
 # beim Aufklappen keine unlesbare Wolke erzeugen. Was abgeschnitten wurde,
