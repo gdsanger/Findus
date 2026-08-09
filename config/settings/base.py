@@ -453,6 +453,29 @@ FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS = float(
 FINDUS_MAIL_BODY_MIN_WORDS = int(env("FINDUS_MAIL_BODY_MIN_WORDS", "8"))
 
 # --------------------------------------------------------------------------
+# Mail-Ingest: Grampf-Filter fuer Anhaenge (#1081). Typische Signatur-/Deko-
+# Bilder (LinkedIn/Instagram/Facebook-Logos, winzige Inline-Grafiken,
+# Tracking-Pixel) sollen gar nicht erst als Unterdokumente entstehen.
+# Sicherheitsnetz: es werden ausschliesslich *Bilder* (content_type image/*)
+# verworfen -- PDFs/Office/echte Belege nie. Greift in IMAP- und Graph-Pfad
+# (siehe apps.ingest.attachment_filter), Schwellen hier justierbar, `ENABLED`
+# schaltet den Filter komplett ab (dann bleibt alles wie vor #1081).
+#   - inline/`cid:`-referenzierte Bilder werden immer verworfen,
+#   - Bilder unter MIN_IMAGE_BYTES ebenso (0 = Groessen-Check aus),
+#   - Bilder kleiner als MIN_IMAGE_DIMENSION px (Breite oder Hoehe) ebenso;
+#     das faengt auch 1px-Tracking-Pixel (0 = Masse-Check aus).
+# --------------------------------------------------------------------------
+FINDUS_INGEST_ATTACHMENT_FILTER_ENABLED = env_bool(
+    "FINDUS_INGEST_ATTACHMENT_FILTER_ENABLED", True
+)
+FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES = int(
+    env("FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_BYTES", str(20 * 1024))
+)
+FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION = int(
+    env("FINDUS_INGEST_ATTACHMENT_MIN_IMAGE_DIMENSION", "200")
+)
+
+# --------------------------------------------------------------------------
 # Ingest: Mail-Trigger-Intervall der django-q2-Schedule "mail-ingest" (#1060,
 # siehe apps.ingest.schedules) -- unabhängig von
 # FINDUS_INGEST_MAIL_POLL_INTERVAL_SECONDS oben, das den Poll-Abstand des

@@ -158,6 +158,8 @@ def _collect_attachments(mailbox, token, message) -> list[MailAttachment]:
                 fileobj=BytesIO(base64.b64decode(content)),
                 filename=attachment.get("name") or "attachment",
                 content_type=attachment.get("contentType", ""),
+                content_id=attachment.get("contentId") or "",
+                inline=bool(attachment.get("isInline")),
             )
         )
     return attachments
