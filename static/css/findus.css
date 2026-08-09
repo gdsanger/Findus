@@ -462,6 +462,143 @@ body {
     margin-top: var(--findus-space-4);
 }
 
+/* Liste/Timeline-Umschalter (#1087) ----------------------------------------*/
+.findus-view-toggle .findus-view-toggle-btn {
+    color: var(--findus-text-muted);
+    border-color: var(--findus-border);
+}
+
+.findus-view-toggle .findus-view-toggle-btn.active {
+    color: var(--findus-accent-contrast);
+    background-color: var(--findus-accent);
+    border-color: var(--findus-accent);
+}
+
+/* Timeline-Ansicht (#1087) -- Dokumente nach Monat/Jahr gruppiert, mit einer
+   dezenten Zeitleiste links der Einträge. Teilt sich Card-/Badge-Look mit
+   der Listenansicht (gleiche Variablen), damit beide Modi wie ein
+   durchgängiges System wirken. */
+.findus-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-5);
+}
+
+.findus-timeline-group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-3);
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+}
+
+.findus-timeline-group-header::-webkit-details-marker {
+    display: none;
+}
+
+.findus-timeline-group-header::before {
+    content: "▸";
+    color: var(--findus-text-muted);
+    transition: transform var(--findus-transition-fast);
+}
+
+.findus-timeline-group[open] > .findus-timeline-group-header::before {
+    transform: rotate(90deg);
+}
+
+.findus-timeline-items {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-3);
+    margin: 0;
+    padding: 0 0 0 var(--findus-space-5);
+    list-style: none;
+}
+
+/* Die Zeitleiste selbst: eine durchgehende Linie hinter den Markern,
+   `::before` statt eines echten Elements, damit sie mit der Liste mitwächst
+   ohne eigene Höhe pflegen zu müssen. */
+.findus-timeline-items::before {
+    content: "";
+    position: absolute;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    left: 0.3125rem;
+    width: 2px;
+    background-color: var(--findus-border);
+}
+
+.findus-timeline-item {
+    position: relative;
+}
+
+.findus-timeline-marker {
+    position: absolute;
+    top: 0.6rem;
+    left: calc(-1 * var(--findus-space-5) + 0.0625rem);
+    width: 0.625rem;
+    height: 0.625rem;
+    background-color: var(--findus-accent);
+    border: 2px solid var(--findus-bg);
+    border-radius: 50%;
+}
+
+.findus-timeline-item-card {
+    padding: var(--findus-space-3) var(--findus-space-4);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-timeline-item-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--findus-space-2);
+}
+
+.findus-timeline-item-title {
+    font-weight: 600;
+}
+
+.findus-timeline-item-date {
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+    white-space: nowrap;
+}
+
+.findus-timeline-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-top: var(--findus-space-2);
+}
+
+.findus-timeline-item-correspondent {
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+    margin-right: auto;
+}
+
+@media (max-width: 768px) {
+    .findus-timeline-items {
+        padding-left: var(--findus-space-4);
+    }
+
+    .findus-timeline-marker {
+        left: calc(-1 * var(--findus-space-4) + 0.0625rem);
+    }
+
+    .findus-timeline-item-correspondent {
+        margin-right: 0;
+    }
+}
+
 /* Semantic search results ---------------------------------------------- */
 .findus-search-results {
     display: flex;

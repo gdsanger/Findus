@@ -248,6 +248,21 @@ class VorgangDetailViewTests(TestCase):
 
         self.assertContains(response, "Belege einreichen")
 
+    def test_document_list_offers_timeline_view(self):
+        """The Vorgang hub reuses the shared document-list block (#1087) --
+
+        the Timeline view is available here too, still scoped to this
+        Vorgang, without a second document-list implementation.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:vorgang_detail", args=[self.vorgang.pk]), {"view": "timeline"}
+        )
+
+        self.assertContains(response, "findus-timeline\"")
+        self.assertContains(response, "Rechnung Acme")
+        self.assertNotContains(response, "Anderer Vorgang")
+
     def test_new_task_action_links_to_task_create(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))

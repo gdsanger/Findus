@@ -115,6 +115,7 @@ def tag_detail(request, pk):
             "vorgang": request.GET.get("vorgang", ""),
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
+            "view": request.GET.get("view", "").strip(),
         },
     }
 

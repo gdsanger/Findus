@@ -8,6 +8,48 @@
     hx-target="this"
     {% endif %}
 >
+{% if selected.view == "timeline" %}
+<div class="findus-timeline">
+    {% regroup page_obj by display_date_month_label as month_groups %}
+    {% for group in month_groups %}
+    <details class="findus-timeline-group" open>
+        <summary class="findus-timeline-group-header">
+            <span class="findus-timeline-group-title">{{ group.grouper }}</span>
+            <span class="badge text-bg-secondary fw-normal">{{ group.list|length }}</span>
+        </summary>
+        <ul class="findus-timeline-items">
+            {% for document in group.list %}
+            <li class="findus-timeline-item">
+                <span class="findus-timeline-marker" aria-hidden="true"></span>
+                <div class="findus-timeline-item-card">
+                    <div class="findus-timeline-item-main">
+                        <span class="findus-timeline-item-title">
+                            {% include "documents/partials/_document_title_link.html" %}
+                        </span>
+                        <span class="findus-timeline-item-date">
+                            {{ document.display_date|date:"d.m.Y" }}
+                            {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
+                        </span>
+                    </div>
+                    <div class="findus-timeline-item-meta">
+                        <span class="findus-timeline-item-correspondent">{{ document.correspondent.name|default:"—" }}</span>
+                        <span class="badge {{ document.direction|direction_badge_class }}">
+                            {{ document.get_direction_display }}
+                        </span>
+                        <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
+                            {{ document.get_processing_status_display }}
+                        </span>
+                        {% include "documents/partials/_action_status_control.html" %}
+                        {% include "documents/partials/_document_delete_button.html" %}
+                    </div>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endfor %}
+</div>
+{% else %}
 <div class="findus-card table-responsive p-0">
     <table class="table table-hover align-middle mb-0">
         <thead>
@@ -24,23 +66,7 @@
         <tbody>
             {% for document in page_obj %}
             <tr>
-                <td>
-                    {% if document.children.all %}
-                    <details class="findus-document-children">
-                        <summary><a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a></summary>
-                        <ul class="findus-document-children-list">
-                            {% for child in document.children.all %}
-                            <li>
-                                <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
-                                {% if child.child_role %}<span class="badge text-bg-light text-muted">{{ child.get_child_role_display }}</span>{% endif %}
-                            </li>
-                            {% endfor %}
-                        </ul>
-                    </details>
-                    {% else %}
-                    <a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>
-                    {% endif %}
-                </td>
+                <td>{% include "documents/partials/_document_title_link.html" %}</td>
                 <td>{{ document.correspondent.name|default:"—" }}</td>
                 <td>
                     <span class="badge {{ document.direction|direction_badge_class }}">
@@ -60,21 +86,14 @@
                     {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
                 </td>
                 <td class="text-end">
-                    <form
-                        method="post"
-                        action="{% url 'documents:delete' document.pk %}"
-                        class="d-inline"
-                        onsubmit="return confirm('Dokument „{{ document.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
-                    >
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
-                    </form>
+                    {% include "documents/partials/_document_delete_button.html" %}
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+{% endif %}
 
 {% if page_obj.paginator.num_pages > 1 %}
 <nav aria-label="Seiten" class="findus-pagination">

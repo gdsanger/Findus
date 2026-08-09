@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
+from django.utils.formats import date_format
 from pgvector.django import HnswIndex, VectorField
 
 from apps.accounts.models import Department
@@ -449,6 +450,16 @@ class Document(TimeStampedModel):
         distinguishable from an actually recognised Dokumentdatum.
         """
         return self.document_date is None
+
+    @property
+    def display_date_month_label(self):
+        """Monat/Jahr-Überschrift für die Timeline-Ansicht (#1087), z. B.
+
+        "August 2026" -- ein einfacher Property statt eines Template-Filters,
+        weil Djangos `{% regroup %}`-Tag nur nach einem Attribut gruppieren
+        kann, nicht nach einem gefilterten Ausdruck.
+        """
+        return date_format(self.display_date, "F Y")
 
     @property
     def is_mail_body(self):

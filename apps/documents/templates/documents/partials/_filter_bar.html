@@ -81,6 +81,24 @@
             {% endfor %}
         </select>
     </div>
+    <div class="findus-filter-field">
+        <span class="form-label d-block">Ansicht</span>
+        <div class="btn-group btn-group-sm findus-view-toggle" role="group" aria-label="Ansicht wählen">
+            <input type="hidden" name="view" id="filter-view" value="{{ selected.view }}">
+            <button
+                type="button"
+                class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view != "timeline" %} active{% endif %}"
+                data-view-value=""
+                aria-pressed="{% if selected.view != "timeline" %}true{% else %}false{% endif %}"
+            >Liste</button>
+            <button
+                type="button"
+                class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view == "timeline" %} active{% endif %}"
+                data-view-value="timeline"
+                aria-pressed="{% if selected.view == "timeline" %}true{% else %}false{% endif %}"
+            >Timeline</button>
+        </div>
+    </div>
     <div class="findus-filter-field findus-filter-actions">
         <button type="button" id="filter-reset" class="btn btn-sm btn-outline-secondary">
             Filter zurücksetzen
@@ -88,3 +106,45 @@
     </div>
     <span id="document-list-indicator" class="htmx-indicator findus-filter-loading">Lädt …</span>
 </form>
+<script>
+// Liste/Timeline-Umschalter (#1087): ein verstecktes `view`-Feld im Filter-
+// Formular statt einer eigenen Navigation, damit ein Klick dieselbe
+// hx-get/hx-push-url-Mechanik wie jedes andere Filterfeld auslöst -- die
+// aktuell gesetzten Filter (#1039) bleiben also automatisch erhalten.
+// Der Sync der aktiven Schaltfläche läuft über `htmx:afterSwap` auf der
+// Ergebnisliste statt direkt im Klick-Handler, weil dieselbe Stelle auch den
+// Fall abdeckt, in dem Home die Ansicht aus localStorage wiederherstellt
+// (setzt den Hidden-Wert direkt, ohne über den Button-Klick zu laufen).
+(function () {
+    var form = document.querySelector(".findus-filter-bar");
+    var toggle = form ? form.querySelector(".findus-view-toggle") : null;
+    var hidden = toggle ? toggle.querySelector("input[name='view']") : null;
+    var region = document.getElementById("document-list-region");
+    if (!form || !toggle || !hidden) {
+        return;
+    }
+
+    function syncButtons() {
+        var current = hidden.value || "";
+        toggle.querySelectorAll(".findus-view-toggle-btn").forEach(function (btn) {
+            var isActive = (btn.dataset.viewValue || "") === current;
+            btn.classList.toggle("active", isActive);
+            btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+    }
+
+    toggle.addEventListener("click", function (event) {
+        var btn = event.target.closest(".findus-view-toggle-btn");
+        if (!btn || hidden.value === (btn.dataset.viewValue || "")) {
+            return;
+        }
+        hidden.value = btn.dataset.viewValue || "";
+        syncButtons();
+        hidden.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    if (region) {
+        region.addEventListener("htmx:afterSwap", syncButtons);
+    }
+})();
+</script>
