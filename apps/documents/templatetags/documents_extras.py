@@ -29,6 +29,12 @@ _ACTION_STATUS_BADGE_CLASSES = {
     "erledigt": "bg-success-subtle text-success-emphasis border border-success-subtle",
 }
 
+_VORGANG_STATUS_BADGE_CLASSES = {
+    "open": "text-bg-secondary",
+    "in_progress": "text-bg-warning",
+    "closed": "text-bg-success",
+}
+
 
 @register.filter(name="render_markdown")
 def render_markdown(value):
@@ -71,3 +77,14 @@ def action_status_badge_class(action_status):
     entirely for it instead of rendering a neutral one.
     """
     return _ACTION_STATUS_BADGE_CLASSES.get(action_status, "")
+
+
+@register.filter(name="vorgang_status_badge_class")
+def vorgang_status_badge_class(status):
+    """Bootstrap badge class for `Vorgang.status` (#1084) -- solid colors
+    throughout, including for `closed`, unlike `action_status_badge_class`'s
+    subdued `*-subtle` treatment: "Abgeschlossen" must stay a clearly
+    visible signal on its own even though the index dims/collapses closed
+    rows separately.
+    """
+    return _VORGANG_STATUS_BADGE_CLASSES.get(status, "text-bg-secondary")

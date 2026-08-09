@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load documents_extras %}
 {% block title %}Vorgänge – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title="Vorgänge" %}
@@ -20,6 +21,15 @@
                 value="{{ search_query }}"
             >
         </div>
+        <div class="findus-filter-field">
+            <label class="form-label" for="filter-status">Status</label>
+            <select id="filter-status" name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">Alle</option>
+                {% for value, label in status_choices %}
+                <option value="{{ value }}" {% if selected.status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
         <input type="hidden" name="sort" value="{{ sort }}">
         <div class="findus-filter-field findus-filter-actions">
             <button type="submit" class="btn btn-sm btn-primary">Suchen</button>
@@ -31,33 +41,35 @@
             <thead>
                 <tr>
                     <th>
-                        <a href="?q={{ search_query|urlencode }}&sort=name" class="{% if sort == 'name' %}fw-semibold{% endif %}">
+                        <a href="?q={{ search_query|urlencode }}&status={{ selected.status }}&sort=name" class="{% if sort == 'name' %}fw-semibold{% endif %}">
                             Name
                         </a>
                     </th>
+                    <th>Status</th>
                     <th>
-                        <a href="?q={{ search_query|urlencode }}&sort=documents" class="{% if sort == 'documents' %}fw-semibold{% endif %}">
+                        <a href="?q={{ search_query|urlencode }}&status={{ selected.status }}&sort=documents" class="{% if sort == 'documents' %}fw-semibold{% endif %}">
                             Dokumente
                         </a>
                     </th>
                     <th>
-                        <a href="?q={{ search_query|urlencode }}&sort=activity" class="{% if sort == 'activity' %}fw-semibold{% endif %}">
+                        <a href="?q={{ search_query|urlencode }}&status={{ selected.status }}&sort=activity" class="{% if sort == 'activity' %}fw-semibold{% endif %}">
                             Letzte Aktivität
                         </a>
                     </th>
                 </tr>
             </thead>
             <tbody>
-                {% for vorgang in vorgaenge %}
+                {% for vorgang in open_vorgaenge %}
                 <tr>
                     <td><a href="{% url 'documents:vorgang_detail' vorgang.pk %}">{{ vorgang.name }}</a></td>
+                    <td><span class="badge {{ vorgang.status|vorgang_status_badge_class }}">{{ vorgang.get_status_display }}</span></td>
                     <td>{{ vorgang.document_count }}</td>
                     <td>{{ vorgang.last_activity|date:"d.m.Y"|default:"—" }}</td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="3" class="text-muted">
-                        {% if search_query %}Keine Vorgänge für „{{ search_query }}“.{% else %}Keine Vorgänge vorhanden.{% endif %}
+                    <td colspan="4" class="text-muted">
+                        {% if search_query or selected.status %}Keine offenen Vorgänge für die gewählten Filter.{% else %}Keine offenen Vorgänge vorhanden.{% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -65,4 +77,35 @@
         </table>
     </div>
 </section>
+
+{% if closed_vorgaenge %}
+<section class="findus-section">
+    <button
+        type="button"
+        class="btn btn-link findus-section-title p-0 text-decoration-none"
+        data-bs-toggle="collapse"
+        data-bs-target="#closed-vorgaenge"
+        aria-expanded="{% if selected.status == 'closed' %}true{% else %}false{% endif %}"
+        aria-controls="closed-vorgaenge"
+    >
+        Abgeschlossen ({{ closed_vorgaenge|length }})
+    </button>
+    <div class="collapse{% if selected.status == 'closed' %} show{% endif %}" id="closed-vorgaenge">
+        <div class="findus-card table-responsive p-0 text-body-secondary">
+            <table class="table table-hover align-middle mb-0">
+                <tbody>
+                    {% for vorgang in closed_vorgaenge %}
+                    <tr>
+                        <td><a href="{% url 'documents:vorgang_detail' vorgang.pk %}">{{ vorgang.name }}</a></td>
+                        <td><span class="badge {{ vorgang.status|vorgang_status_badge_class }}">{{ vorgang.get_status_display }}</span></td>
+                        <td>{{ vorgang.document_count }}</td>
+                        <td>{{ vorgang.last_activity|date:"d.m.Y"|default:"—" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endif %}
 {% endblock %}

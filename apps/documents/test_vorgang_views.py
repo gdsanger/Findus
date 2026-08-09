@@ -60,7 +60,9 @@ class VorgangListViewTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:vorgang_list"))
 
-        self.assertEqual(response.context["vorgaenge"].get(pk=self.vorgang_a.pk).document_count, 1)
+        open_vorgaenge = response.context["open_vorgaenge"]
+        matched = next(v for v in open_vorgaenge if v.pk == self.vorgang_a.pk)
+        self.assertEqual(matched.document_count, 1)
 
     def test_search_narrows_by_name(self):
         self.client.force_login(self.user_a)
@@ -69,11 +71,61 @@ class VorgangListViewTests(TestCase):
         self.assertContains(response, "Steuererklärung 2026")
         self.assertNotContains(response, "Nebenkostenabrechnung")
 
+    def test_search_narrows_by_description(self):
+        self.vorgang_b.description = "Betrifft die Nebenkosten fuer 2026"
+        self.vorgang_b.save()
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_list"), {"q": "Nebenkosten fuer"})
+
+        self.assertContains(response, "Nebenkostenabrechnung")
+        self.assertNotContains(response, "Steuererklärung 2026")
+
     def test_row_links_to_hub(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:vorgang_list"))
 
         self.assertContains(response, reverse("documents:vorgang_detail", args=[self.vorgang_a.pk]))
+
+    def test_open_and_closed_vorgaenge_are_grouped_separately(self):
+        closed = Vorgang.objects.create(name="Altfall abgeschlossen", status=Vorgang.Status.CLOSED)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_list"))
+
+        open_names = [v.name for v in response.context["open_vorgaenge"]]
+        closed_names = [v.name for v in response.context["closed_vorgaenge"]]
+        self.assertIn(self.vorgang_a.name, open_names)
+        self.assertIn(self.vorgang_b.name, open_names)
+        self.assertNotIn(closed.name, open_names)
+        self.assertEqual(closed_names, [closed.name])
+
+    def test_abgeschlossen_badge_is_shown_for_closed_vorgang(self):
+        Vorgang.objects.create(name="Altfall abgeschlossen", status=Vorgang.Status.CLOSED)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_list"))
+
+        self.assertContains(response, "text-bg-success")
+        self.assertContains(response, "Abgeschlossen")
+
+    def test_status_filter_open_excludes_closed_vorgaenge(self):
+        Vorgang.objects.create(name="Altfall abgeschlossen", status=Vorgang.Status.CLOSED)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_list"), {"status": "open"})
+
+        self.assertContains(response, self.vorgang_a.name)
+        self.assertNotContains(response, "Altfall abgeschlossen")
+
+    def test_status_filter_closed_only_shows_closed_vorgaenge(self):
+        closed = Vorgang.objects.create(name="Altfall abgeschlossen", status=Vorgang.Status.CLOSED)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_list"), {"status": "closed"})
+
+        self.assertEqual(response.context["open_vorgaenge"], [])
+        self.assertEqual([v.pk for v in response.context["closed_vorgaenge"]], [closed.pk])
 
 
 class VorgangDetailViewTests(TestCase):
@@ -148,6 +200,16 @@ class VorgangDetailViewTests(TestCase):
         self.assertContains(response, "Steuererklärung 2026")
         self.assertEqual(response.context["document_count"], 1)
         self.assertEqual(response.context["open_tasks_count"], 1)
+
+    def test_header_shows_high_contrast_abgeschlossen_badge_for_closed_vorgang(self):
+        self.vorgang.status = Vorgang.Status.CLOSED
+        self.vorgang.save()
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+
+        self.assertContains(response, "text-bg-success")
+        self.assertContains(response, "Abgeschlossen")
 
     def test_document_list_is_scoped_to_this_vorgang(self):
         self.client.force_login(self.user_a)
