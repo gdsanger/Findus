@@ -295,6 +295,14 @@ FINDUS_SIMILAR_DOCUMENTS_CANDIDATE_CHUNKS = int(
 # "Verknüpfen"-Button an einem Ähnlichkeits-Treffer verlinkt.
 FINDUS_DOCUMENT_LINK_PICKER_LIMIT = int(env("FINDUS_DOCUMENT_LINK_PICKER_LIMIT", "200"))
 
+# Verwandte Dokumente über gemeinsame Kennungen (#1099,
+# apps.documents.references): Cap je Kennung im Dokument-Detail. Anders
+# als bei der Ähnlichkeit ist das *kein* Relevanz-Schwellwert -- ein
+# exakter Treffer ist immer relevant -- sondern nur eine Anzeigegrenze für
+# den Ausreißer (eine IBAN kann an hunderten Rechnungen hängen). Was
+# abgeschnitten wurde, sagt der Block, statt es zu verschweigen.
+FINDUS_REFERENCE_MATCH_LIMIT = int(env("FINDUS_REFERENCE_MATCH_LIMIT", "20"))
+
 # Fokus-Graph (#1091, apps.documents.graph): Cap für die Nachbarn *einer*
 # Expansion und je Kantengruppe -- ein Vorgang mit 400 Dokumenten soll
 # beim Aufklappen keine unlesbare Wolke erzeugen. Was abgeschnitten wurde,
