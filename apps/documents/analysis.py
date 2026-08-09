@@ -81,6 +81,10 @@ from .models import (
     VorgangSuggestion,
     normalize_reference_value,
 )
+from .reference_matching import (
+    auto_assign_from_references,
+    learn_references_from_document,
+)
 from .references import normalize_role, normalize_type
 from .services import find_correspondent, find_or_create_correspondent
 from .text_sanitize import clean_json
@@ -504,6 +508,17 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
     _replace_references(document, parsed.get("references") or [])
     _replace_tag_suggestions(document, parsed.get("tag_suggestions") or [])
     _replace_vorgang_suggestions(document, parsed.get("vorgang_suggestions") or [])
+
+    # Kennungen an ihr Zuhause (#1100), gleich nachdem sie feststehen: ist
+    # das Dokument schon zugeordnet (Upload auf den Hub, Ordner-Import),
+    # lernt der Vorgang/Kontakt hier seine Nummern -- ist es das nicht,
+    # entscheidet der Abgleich gegen den bestehenden Kennungs-Bestand, ob
+    # es einen Zuordnungs-Vorschlag gibt. `document.owner` ist der
+    # Sichtbarkeits-Scope dafuer: der Worker hat keinen Request, aus dem er
+    # einen Nutzer ableiten koennte, und der Besitzer ist der einzige, der
+    # dieses Dokument sicher sehen darf.
+    learn_references_from_document(document)
+    auto_assign_from_references(document, document.owner)
 
 
 def analyze_document(
