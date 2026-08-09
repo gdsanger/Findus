@@ -33,6 +33,14 @@ Repair -> ein Retry). Schlaegt es trotzdem fehl, wird das *sichtbar*
 als bei der Dokument-Analyse gibt es hier kein "die Pipeline laeuft schon
 weiter", der Nutzer hat auf einen Knopf gedrueckt und erwartet eine
 Antwort.
+
+Die Antwort ist der laengste generierte Text im ganzen System (Lage plus
+bis zu MAX_ITEMS Empfehlungen mit Begruendung und Quellen), deshalb geht
+der Call mit einem eigenen, grosszuegigen Output-Budget raus
+(`FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS`) statt mit dem
+Provider-Default -- und deshalb nennt er `required_keys`: eine am
+Token-Limit abgeschnittene Antwort ist ein Fehler mit Retry, nie ein
+leeres Ergebnis (#1096).
 """
 
 from __future__ import annotations
@@ -66,9 +74,8 @@ _SYSTEM_PROMPT = (
     "Schritt, nicht als Anweisung, und rate im Zweifel dazu, eine "
     "Fachperson einzubeziehen.\n"
     "Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt (kein "
-    "Markdown, kein Fliesstext drumherum) mit genau diesen Schluesseln:\n"
-    '- "lage": 2-5 Saetze Fliesstext auf Deutsch, wo der Vorgang steht '
-    "(Stand, offene Punkte, erkennbare Fristen).\n"
+    "Markdown, kein Fliesstext drumherum) mit genau diesen Schluesseln, "
+    "in dieser Reihenfolge:\n"
     '- "empfehlungen": Liste von maximal {max_items} Objekten mit:\n'
     '  - "titel": kurzer, handlungsorientierter Titel.\n'
     '  - "begruendung": 1-3 Saetze, warum dieser Schritt jetzt ansteht.\n'
@@ -77,11 +84,31 @@ _SYSTEM_PROMPT = (
     '  - "quellen": Liste der Dokument-IDs (Zahlen), auf die sich die '
     "Empfehlung stuetzt -- ausschliesslich IDs aus der unten "
     "gelisteten Dokumentliste, keine erfundenen.\n"
+    '- "lage": hoechstens {max_situation_sentences} kurze Saetze '
+    "Fliesstext auf Deutsch, wo der Vorgang steht (Stand, offene Punkte, "
+    "erkennbare Fristen). Knapp und praegnant, keine Nacherzaehlung der "
+    "einzelnen Dokumente.\n"
+    "Beide Schluessel MUESSEN vorhanden sein. Die Empfehlungen sind der "
+    "wichtigere Teil der Antwort -- lieber eine knappere Lage-"
+    "Einschaetzung als eine gekuerzte Empfehlungsliste.\n"
     "Jede Empfehlung MUSS mindestens eine Quelle nennen. Erfinde keine "
     "Sachverhalte, die aus den Zusammenfassungen/Key-Facts nicht "
     "hervorgehen -- gib lieber weniger Empfehlungen aus. Ist nichts zu "
     "tun, gib eine leere Liste zurueck."
 )
+
+# Die Lage-Einschaetzung stand frueher als erster Schluessel im Schema und
+# war mit "2-5 Saetze" grosszuegig bemessen -- beides zusammen liess sie das
+# Output-Budget aufbrauchen, bevor die erste Empfehlung geschrieben war
+# (#1096). Modelle folgen der Schluessel-Reihenfolge des Schemas, also steht
+# jetzt der wichtigere Teil vorn: geht doch einmal das Budget aus, fehlt der
+# Schluss der Lage-Einschaetzung und nicht die komplette Empfehlungsliste.
+_MAX_SITUATION_SENTENCES = 3
+
+# Was `_apply_result` aus der Antwort liest -- fehlt einer davon, ist die
+# Antwort unvollstaendig und nicht etwa "nichts zu tun". `generate_json`
+# wiederholt den Call dann, statt uns ein leeres Ergebnis unterzuschieben.
+_REQUIRED_KEYS = ("lage", "empfehlungen")
 
 
 def _prompt_key_facts(document: Document) -> str:
@@ -177,7 +204,13 @@ def _build_messages(vorgang, documents: list[Document], max_items: int) -> list[
     context.append("Dokumente des Vorgangs (chronologisch, aeltestes zuerst):")
     context.extend(_document_block(document, max_summary_chars) for document in documents)
     return [
-        Message(role="system", content=_SYSTEM_PROMPT.format(max_items=max_items)),
+        Message(
+            role="system",
+            content=_SYSTEM_PROMPT.format(
+                max_items=max_items,
+                max_situation_sentences=_MAX_SITUATION_SENTENCES,
+            ),
+        ),
         Message(role="user", content="\n\n".join(context)),
     ]
 
@@ -378,6 +411,8 @@ def generate_vorgang_recommendations(
             _build_messages(
                 vorgang, used, settings.FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS
             ),
+            max_tokens=settings.FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS,
+            required_keys=_REQUIRED_KEYS,
         )
         run.save(update_fields=["based_on", "updated_at"])
         _apply_result(run, result.data, used, model=result.model, version=result.version)

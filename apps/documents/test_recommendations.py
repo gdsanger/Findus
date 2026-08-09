@@ -37,6 +37,15 @@ def _reply(*, sources, lage="Der Vorgang laeuft."):
     )
 
 
+# Am Output-Token-Limit abgeschnitten, mitten im Satz und mitten im Objekt --
+# nachgebaut nach dem gemeldeten Creditreform-Vorgang (#1096). `repair_json`
+# wuerde daraus klaglos ein Objekt ohne "empfehlungen" machen.
+_CUT_OFF_REPLY = (
+    '{"lage": "Die Verjaehrungseinrede ist erhoben, ein Vergleichsentwurf liegt '
+    'vor und ist laut Entwurf bereits fuer den 15.08.2026 vorgesehen, was angesichts'
+)
+
+
 class VorgangRecommendationGenerationTests(TestCase):
     """Covers the on-demand Vorgang-Beurteilung (#1093): one generate() call
     over the documents' summaries/key-facts, result persisted as a run plus
@@ -254,7 +263,7 @@ class VorgangRecommendationGenerationTests(TestCase):
         class _BoomProvider:
             name = "boom"
 
-            def generate(self, messages, *, stream=False):
+            def generate(self, messages, *, stream=False, max_tokens=None):
                 raise RuntimeError("Provider weg")
 
         with self.assertLogs("apps.documents.recommendations", level="ERROR"):
@@ -280,6 +289,67 @@ class VorgangRecommendationGenerationTests(TestCase):
 
         self.assertEqual(run.status, VorgangRecommendationRun.Status.FAILED)
         self.assertEqual(run.recommendations.count(), 1)
+
+    def test_generate_call_uses_the_configured_output_budget(self):
+        provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
+
+        with override_settings(FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS=4000):
+            generate_vorgang_recommendations(
+                self.vorgang.pk, self.user.pk, generation_provider=provider
+            )
+
+        self.assertEqual(provider.max_tokens_calls, [4000])
+
+    def test_truncated_reply_is_retried_instead_of_read_as_no_recommendations(self):
+        """Der gemeldete Bug (#1096): die Antwort brach mitten in der
+        Lage-Einschaetzung ab, die Empfehlungsliste kam nie an -- und das
+        Panel behauptete daraufhin "keine Empfehlungen".
+        """
+        provider = FakeGenerationProvider(
+            replies=[_CUT_OFF_REPLY, _reply(sources=[self.newer.pk])],
+            truncated=[True, False],
+        )
+
+        with override_settings(FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS=4000):
+            with self.assertLogs("apps.ai.providers.json_generation", level="WARNING"):
+                run = generate_vorgang_recommendations(
+                    self.vorgang.pk, self.user.pk, generation_provider=provider
+                )
+
+        self.assertEqual(run.status, VorgangRecommendationRun.Status.READY)
+        self.assertEqual(run.recommendations.count(), 1)
+        self.assertEqual(run.situation, "Der Vorgang laeuft.")
+        self.assertEqual(provider.max_tokens_calls, [4000, 8000], "Retry mit groesserem Budget")
+
+    def test_reply_still_truncated_after_the_retry_fails_visibly(self):
+        provider = FakeGenerationProvider(reply=_CUT_OFF_REPLY, truncated=True)
+
+        with self.assertLogs("apps.documents.recommendations", level="ERROR"):
+            run = generate_vorgang_recommendations(
+                self.vorgang.pk, self.user.pk, generation_provider=provider
+            )
+
+        self.assertEqual(run.status, VorgangRecommendationRun.Status.FAILED)
+        self.assertIn("abgeschnitten", run.error)
+        # Weder der angefangene Satz noch eine leere Liste wird gespeichert.
+        self.assertEqual(run.situation, "")
+        self.assertEqual(run.recommendations.count(), 0)
+
+    def test_prompt_keeps_the_situation_short_and_asks_for_recommendations_first(self):
+        provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
+
+        generate_vorgang_recommendations(
+            self.vorgang.pk, self.user.pk, generation_provider=provider
+        )
+
+        system_prompt = provider.calls[0][0].content
+        self.assertLess(
+            system_prompt.index('"empfehlungen"'),
+            system_prompt.index('"lage"'),
+            "Empfehlungen vor der Lage -- geht das Budget aus, fehlt der weniger "
+            "wichtige Teil",
+        )
+        self.assertIn("hoechstens 3 kurze Saetze", system_prompt)
 
     def test_empty_basis_costs_no_generate_call(self):
         empty_vorgang = Vorgang.objects.create(name="Leerer Vorgang")
