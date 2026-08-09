@@ -1,9 +1,11 @@
+import datetime
 import logging
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import Prefetch
+from django.db.models import DateField, Prefetch
+from django.db.models.functions import Coalesce, TruncDate
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.clickjacking import xframe_options_sameorigin
@@ -83,6 +85,19 @@ def filtered_documents(request):
 
     if vorgang_id or tag_id:
         documents = documents.distinct()
+
+    # Default-Sortierung nach Dokumentdatum, nicht Upload-Datum (#1085):
+    # `document_date` (KI-erkannt/user-korrigiert) absteigend, mit
+    # Upload-Datum (`created_at`) als Fallback fuer Dokumente ohne
+    # erkanntes Datum -- als DB-seitiges `Coalesce` annotiert, damit
+    # Fallback-Dokumente an ihrer chronologisch richtigen Stelle
+    # einsortiert werden statt pauschal an den Rand zu rutschen.
+    # `-created_at` bricht Gleichstaende (gleicher Tag) deterministisch.
+    documents = documents.annotate(
+        effective_date=Coalesce(
+            "document_date", TruncDate("created_at"), output_field=DateField()
+        )
+    ).order_by("-effective_date", "-created_at")
 
     return documents
 
@@ -633,7 +648,17 @@ def document_meta(request, pk):
         direction = request.POST.get("direction", "").strip()
         if direction in Document.Direction.values:
             document.direction = direction
-        document.save(update_fields=["correspondent", "direction", "updated_at"])
+        document_date = request.POST.get("document_date", "").strip()
+        if not document_date:
+            document.document_date = None
+        else:
+            try:
+                document.document_date = datetime.date.fromisoformat(document_date)
+            except ValueError:
+                pass
+        document.save(
+            update_fields=["correspondent", "direction", "document_date", "updated_at"]
+        )
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))
     return _render_meta(request, document)

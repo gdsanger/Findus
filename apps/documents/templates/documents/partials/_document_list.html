@@ -55,7 +55,10 @@
                 <td>
                     {% include "documents/partials/_action_status_control.html" %}
                 </td>
-                <td>{{ document.created_at|date:"d.m.Y" }}</td>
+                <td>
+                    {{ document.display_date|date:"d.m.Y" }}
+                    {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
+                </td>
                 <td class="text-end">
                     <form
                         method="post"

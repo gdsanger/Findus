@@ -360,6 +360,15 @@ class Document(TimeStampedModel):
     summary = models.TextField(blank=True)
     key_facts = models.JSONField(default=dict, blank=True)
 
+    # Dokumentdatum (#1085): das dem Schriftstueck selbst innewohnende Datum
+    # (Rechnungs-/Brief-/Bescheiddatum, ...) -- bewusst ein eigenes Feld statt
+    # nur `key_facts["document_date"]`, weil es editierbar sein muss (siehe
+    # `document_meta`) und eine Nutzerkorrektur sonst beim naechsten
+    # `document_analysis_rerun` wieder von der KI ueberschrieben wuerde.
+    # `_apply_analysis` setzt es daher nur, solange es noch leer ist -- exakt
+    # dasselbe "einmal befuellen, nie ueberschreiben"-Muster wie `direction`.
+    document_date = models.DateField(null=True, blank=True, db_index=True)
+
     original_file = models.FileField(upload_to="documents/%Y/%m/", blank=True)
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
 
@@ -421,6 +430,25 @@ class Document(TimeStampedModel):
             )
             collected_ids.extend(frontier)
         return Document.objects.filter(pk__in=collected_ids)
+
+    @property
+    def display_date(self):
+        """The date to show/sort by everywhere (#1085): `document_date` when
+
+        the KI-Analyse found/the user set one, else the Upload-Datum
+        (`created_at`) -- never the other way round, `created_at` itself is
+        never touched by this fallback.
+        """
+        return self.document_date or self.created_at.date()
+
+    @property
+    def display_date_is_upload_fallback(self):
+        """True when `display_date` had to fall back to `created_at` (#1085)
+
+        -- drives the dezent "(Upload)" marker so that fallback stays
+        distinguishable from an actually recognised Dokumentdatum.
+        """
+        return self.document_date is None
 
     @property
     def is_mail_body(self):
