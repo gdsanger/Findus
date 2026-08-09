@@ -80,6 +80,22 @@ urlpatterns = [
         views.document_link_delete,
         name="link_delete",
     ),
+    path("documents/<int:pk>/references/", views.document_references, name="references"),
+    path(
+        "documents/<int:pk>/references/create/",
+        views.document_reference_create,
+        name="reference_create",
+    ),
+    path(
+        "documents/<int:pk>/references/<int:reference_id>/update/",
+        views.document_reference_update,
+        name="reference_update",
+    ),
+    path(
+        "documents/<int:pk>/references/<int:reference_id>/delete/",
+        views.document_reference_delete,
+        name="reference_delete",
+    ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path(
         "documents/<int:pk>/children/<int:child_id>/delete/",

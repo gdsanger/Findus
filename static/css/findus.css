@@ -871,6 +871,48 @@ body {
     flex: 1 1 16rem;
 }
 
+/* Kennungen/Referenznummern (#1099) -- jede Zeile ist zugleich ihr
+   Korrektur-Formular, deshalb eine umbrechende Feldreihe statt einer
+   reinen Textzeile. Die Gruppen darunter tragen die Kennung als
+   Überschrift: sie ist die Begründung der Verknüpfung. */
+.findus-reference-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--findus-space-3);
+}
+
+.findus-reference-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    flex: 1 1 auto;
+}
+
+.findus-reference-form .form-select {
+    flex: 0 1 12rem;
+}
+
+.findus-reference-form .form-control {
+    flex: 1 1 12rem;
+}
+
+.findus-reference-group {
+    margin-top: var(--findus-space-3);
+}
+
+.findus-reference-group-title {
+    display: flex;
+    align-items: baseline;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-2);
+}
+
+.findus-reference-group-value {
+    font-weight: 600;
+}
+
 .findus-related-meta {
     flex-basis: 100%;
     display: flex;
