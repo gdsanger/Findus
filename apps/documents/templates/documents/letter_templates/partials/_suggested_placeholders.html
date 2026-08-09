@@ -1,0 +1,85 @@
+{% comment %}
+Platzhalter-Vorschläge aus dem KI-Entwurf (#1097) -- Teil des
+Vorlagen-Formulars, nicht der gespeicherten Platzhalter-Liste. Die
+Checkbox „übernehmen" trägt den Zeilenindex, damit Schlüssel/Bezeichnung/
+Quelle beim Abschicken nicht gegen die Haken verrutschen.
+
+Angelegt werden die angehakten Zeilen erst beim Speichern der Vorlage.
+{% endcomment %}
+{% if suggestions or suggestion_errors %}
+<div class="findus-task-form-section">
+    <h3 class="findus-letter-subheading">Vorgeschlagene Platzhalter</h3>
+    <p class="text-muted small mb-0">
+        Werden zusammen mit der Vorlage gespeichert – Haken entfernen, was nicht
+        gebraucht wird; Schlüssel, Bezeichnung und Quelle sind editierbar.
+    </p>
+
+    {% for error in suggestion_errors %}
+    <div class="alert alert-danger py-2 px-3 small mb-0">{{ error }}</div>
+    {% endfor %}
+
+    <ul class="list-group list-group-flush">
+        {% for suggestion in suggestions %}
+        <li class="list-group-item bg-transparent">
+            <div class="findus-letter-placeholder-fields">
+                <div class="form-check mb-0">
+                    <input
+                        type="checkbox"
+                        name="suggested_take"
+                        value="{{ forloop.counter0 }}"
+                        class="form-check-input"
+                        id="suggested-take-{{ forloop.counter0 }}"
+                        {% if suggestion.take %}checked{% endif %}
+                    >
+                    <label class="form-check-label small" for="suggested-take-{{ forloop.counter0 }}">übernehmen</label>
+                </div>
+                <input
+                    type="text"
+                    name="suggested_key"
+                    value="{{ suggestion.key }}"
+                    aria-label="Schlüssel"
+                    class="form-control form-control-sm findus-letter-placeholder-key"
+                >
+                <input
+                    type="text"
+                    name="suggested_label"
+                    value="{{ suggestion.label }}"
+                    aria-label="Bezeichnung"
+                    placeholder="Bezeichnung"
+                    class="form-control form-control-sm"
+                >
+                <select name="suggested_source" aria-label="Quelle" class="form-select form-select-sm">
+                    {% for group_label, options in source_groups %}
+                    <optgroup label="{{ group_label }}">
+                        {% for value, option_label in options %}
+                        <option value="{{ value }}"{% if value == suggestion.source %} selected{% endif %}>{{ option_label }}</option>
+                        {% endfor %}
+                    </optgroup>
+                    {% endfor %}
+                </select>
+                <div class="form-check mb-0">
+                    <input
+                        type="checkbox"
+                        name="suggested_required"
+                        value="{{ forloop.counter0 }}"
+                        class="form-check-input"
+                        id="suggested-required-{{ forloop.counter0 }}"
+                        {% if suggestion.required %}checked{% endif %}
+                    >
+                    <label class="form-check-label small" for="suggested-required-{{ forloop.counter0 }}">Pflicht</label>
+                </div>
+            </div>
+            <div class="findus-letter-placeholder-hint">
+                <code>{% templatetag openvariable %}{{ suggestion.key }}{% templatetag closevariable %}</code>
+                <span class="text-muted">← {{ suggestion.source_label }}</span>
+                {% if suggestion.existing %}
+                <span class="text-warning-emphasis">
+                    Schlüssel existiert in dieser Vorlage bereits – bestehende Zeile oben ändern.
+                </span>
+                {% endif %}
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
