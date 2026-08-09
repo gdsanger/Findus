@@ -27,6 +27,13 @@
         >
             Bearbeiten
         </button>
+        {# Fokus-Graph (#1091) mit diesem Vorgang als Startknoten. #}
+        <a
+            class="btn btn-sm btn-outline-secondary"
+            href="{% url 'documents:graph' %}?type=vorgang&amp;id={{ vorgang.pk }}"
+        >
+            Im Graph anzeigen
+        </a>
         <div class="dropdown d-inline-block">
             <button
                 type="button"

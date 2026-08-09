@@ -31,6 +31,13 @@
         >
             Bearbeiten
         </button>
+        {# Fokus-Graph (#1091) mit diesem Kontakt als Startknoten. #}
+        <a
+            class="btn btn-sm btn-outline-secondary"
+            href="{% url 'documents:graph' %}?type=correspondent&amp;id={{ correspondent.pk }}"
+        >
+            Im Graph anzeigen
+        </a>
         <div class="dropdown d-inline-block">
             <button
                 type="button"

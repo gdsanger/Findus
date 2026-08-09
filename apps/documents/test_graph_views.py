@@ -122,6 +122,26 @@ class GraphViewTests(TestCase):
         for node_type in ("document", "vorgang", "tag", "correspondent"):
             self.assertContains(response, f'data-graph-node-filter="{node_type}"')
 
+    def test_hubs_link_into_the_graph(self):
+        """"Im Graph anzeigen" von Dokument-Detail, Vorgangs- und Kontakt-Hub."""
+        graph_url = reverse("documents:graph")
+        for url, expected in [
+            (
+                reverse("documents:detail", args=[self.document.pk]),
+                f"{graph_url}?type=document&amp;id={self.document.pk}",
+            ),
+            (
+                reverse("documents:vorgang_detail", args=[self.vorgang.pk]),
+                f"{graph_url}?type=vorgang&amp;id={self.vorgang.pk}",
+            ),
+            (
+                reverse("documents:correspondent_detail", args=[self.correspondent.pk]),
+                f"{graph_url}?type=correspondent&amp;id={self.correspondent.pk}",
+            ),
+        ]:
+            with self.subTest(url=url):
+                self.assertContains(self.client.get(url), expected)
+
     def test_graph_page_reports_a_focus_the_user_may_not_see(self):
         """Ein nicht sichtbares Dokument darf keinen Fokus ergeben -- und die
         Seite muss das sagen, statt eine leere Fläche zu zeigen.
