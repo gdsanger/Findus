@@ -124,6 +124,20 @@
 </section>
 
 <section class="findus-section">
+    <h2 class="findus-section-title">Ähnliche Dokumente</h2>
+    {# Nachgeladen (#1088): die kNN-Query ist Beiwerk und soll den Aufbau
+       von Titel/Zusammenfassung/Original nicht aufhalten. #}
+    <div
+        id="document-related"
+        hx-get="{% url 'documents:related' document.pk %}"
+        hx-trigger="load"
+        hx-swap="innerHTML"
+    >
+        <p class="text-muted">Wird geladen …</p>
+    </div>
+</section>
+
+<section class="findus-section">
     <h2 class="findus-section-title">Unterdokumente</h2>
     <div id="document-children">
         {% include "documents/partials/_detail_children.html" %}

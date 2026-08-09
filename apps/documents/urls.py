@@ -47,6 +47,13 @@ urlpatterns = [
         views.document_original_preview_panel,
         name="original_preview_panel",
     ),
+    path("documents/<int:pk>/related/", views.document_related, name="related"),
+    path("documents/<int:pk>/links/create/", views.document_link_create, name="link_create"),
+    path(
+        "documents/<int:pk>/links/<int:link_id>/delete/",
+        views.document_link_delete,
+        name="link_delete",
+    ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path(
         "documents/<int:pk>/children/<int:child_id>/delete/",

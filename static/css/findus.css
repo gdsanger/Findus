@@ -663,6 +663,43 @@ body {
     border-radius: var(--findus-radius-md);
 }
 
+/* Ähnliche Dokumente / Querverweise (#1088) -- ein dezenter Block: der
+   Ähnlichkeitswert steht in der Akzentfarbe wie bei den Suchtreffern,
+   Kontakt/Datum bleiben gedämpft, damit die Zeile nicht mit dem eigentlichen
+   Dokument-Inhalt konkurriert. */
+.findus-related-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--findus-space-3);
+}
+
+.findus-related-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--findus-space-2);
+}
+
+.findus-related-score {
+    color: var(--findus-accent);
+    font-size: var(--findus-font-size-sm);
+    font-weight: 600;
+}
+
+#document-link-create .form-select {
+    flex: 1 1 16rem;
+}
+
+.findus-related-meta {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-3);
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
 /* Leitdokument/Unterdokument-Baum (#1069) -- Unterdokumente hängen
    eingeklappt unter ihrem Leitdokument, statt als eigene Zeile in der
    Liste zu erscheinen. */
