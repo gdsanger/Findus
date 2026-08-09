@@ -4,6 +4,7 @@ from .models import (
     ChecklistItem,
     Chunk,
     Correspondent,
+    CorrespondentReference,
     Document,
     DocumentLink,
     DocumentReference,
@@ -18,6 +19,7 @@ from .models import (
     Vorgang,
     VorgangRecommendation,
     VorgangRecommendationRun,
+    VorgangReference,
     VorgangSuggestion,
 )
 
@@ -149,11 +151,35 @@ class DocumentLinkAdmin(admin.ModelAdmin):
     autocomplete_fields = ("document_a", "document_b", "created_by")
 
 
+class OwnerReferenceInline(admin.TabularInline):
+    """Die eigenen Kennungen eines Vorgangs/Kontakts (#1100).
+
+    `value_normalized` und `learned_from` bleiben schreibgeschützt: der
+    eine ist der Matching-Schlüssel, den das Modell aus `value_raw`
+    ableitet, der andere die Herkunft, an der die Sichtbarkeitsprüfung des
+    Vorschlags hängt -- von Hand gesetzt hieße beides: der Abgleich
+    verhält sich anders, als hier steht.
+    """
+
+    fields = ("type", "value_raw", "value_normalized", "source", "learned_from")
+    readonly_fields = ("value_normalized", "learned_from")
+    extra = 0
+
+
+class CorrespondentReferenceInline(OwnerReferenceInline):
+    model = CorrespondentReference
+
+
+class VorgangReferenceInline(OwnerReferenceInline):
+    model = VorgangReference
+
+
 @admin.register(Correspondent)
 class CorrespondentAdmin(admin.ModelAdmin):
     list_display = ("name", "email", "is_self", "vat_id", "iban", "created_at")
     list_filter = ("is_self",)
     search_fields = ("name", "email", "vat_id", "tax_number", "iban")
+    inlines = [CorrespondentReferenceInline]
 
 
 @admin.register(Vorgang)
@@ -161,6 +187,7 @@ class VorgangAdmin(admin.ModelAdmin):
     list_display = ("name", "status", "department", "created_at")
     list_filter = ("status", "department")
     search_fields = ("name",)
+    inlines = [VorgangReferenceInline]
 
 
 class VorgangRecommendationInline(admin.TabularInline):
