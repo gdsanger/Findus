@@ -344,6 +344,21 @@ FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS = int(
     env("FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS", "8")
 )
 
+# Output-Budget für den Empfehlungs-Call (#1096). Die Antwort ist ein
+# JSON-Objekt aus Lage-Einschätzung *und* bis zu MAX_ITEMS Empfehlungen mit
+# Begründung, Frist, Priorität und Quellen -- reichlich 2.000 Tokens, bevor
+# das Objekt überhaupt geschlossen ist. Mit dem alten Provider-Default von
+# 1.024 Tokens brach die Antwort mitten in der Lage-Einschätzung ab und die
+# Empfehlungsliste kam nie an; das Panel zeigte daraufhin "keine
+# Empfehlungen". Deshalb hier ein eigener, großzügiger Wert statt des
+# Provider-Defaults: er wird nur ausgeschöpft, wenn wirklich so viel
+# geschrieben wird (Output-Tokens werden nach Verbrauch abgerechnet, nicht
+# nach Reservierung). Reicht er doch nicht, wiederholt `generate_json` den
+# Call mit dem doppelten Budget, statt das abgeschnittene JSON zu flicken.
+FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS", "4000")
+)
+
 # --------------------------------------------------------------------------
 # Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
 # -> vision, cheapest usable stage wins. A page only escalates to the next
@@ -382,7 +397,11 @@ FINDUS_AI_PROVIDERS = {
         "base_url": env("FINDUS_ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
         "generation_model": env("FINDUS_ANTHROPIC_GENERATION_MODEL", "claude-sonnet-5"),
         "generation_model_version": env("FINDUS_ANTHROPIC_GENERATION_MODEL_VERSION", "1"),
-        "max_tokens": int(env("FINDUS_ANTHROPIC_MAX_TOKENS", "1024")),
+        # Default-Output-Budget für Calls, die keins mitgeben. 1.024 war zu
+        # knapp für jede strukturierte Antwort (#1096) -- Anthropic verlangt
+        # das Feld zwingend, es ist eine Obergrenze und keine Reservierung,
+        # also kostet ein großzügiger Default nichts.
+        "max_tokens": int(env("FINDUS_ANTHROPIC_MAX_TOKENS", "4096")),
     },
     "gemini": {
         "api_key": env("FINDUS_GEMINI_API_KEY", ""),

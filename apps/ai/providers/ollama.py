@@ -93,13 +93,19 @@ class OllamaProvider:
         )
 
     def generate(
-        self, messages: Iterable[Message], *, stream: bool = False
+        self,
+        messages: Iterable[Message],
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
     ) -> GenerationOutput:
         payload = {
             "model": self._generation_model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": stream,
         }
+        if max_tokens:
+            payload["options"] = {"num_predict": max_tokens}
         if stream:
             return self._stream(payload)
 
@@ -117,6 +123,7 @@ class OllamaProvider:
             text=body["message"]["content"],
             model=self._generation_model,
             version=self._generation_model_version,
+            truncated=body.get("done_reason") == "length",
         )
 
     def _stream(self, payload: dict) -> Iterator[GenerationChunk]:

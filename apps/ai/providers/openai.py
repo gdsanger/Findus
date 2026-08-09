@@ -105,13 +105,24 @@ class OpenAIProvider:
         )
 
     def generate(
-        self, messages: Iterable[Message], *, stream: bool = False
+        self,
+        messages: Iterable[Message],
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
     ) -> GenerationOutput:
         payload = {
             "model": self._generation_model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": stream,
         }
+        if max_tokens:
+            # `max_completion_tokens`, not the older `max_tokens`: current
+            # OpenAI models reject the latter outright, while an
+            # OpenAI-compatible endpoint that doesn't know the newer field
+            # simply ignores it -- i.e. falls back to today's uncapped
+            # behaviour instead of failing the whole call.
+            payload["max_completion_tokens"] = max_tokens
         if stream:
             return self._stream(payload)
 
@@ -125,12 +136,14 @@ class OpenAIProvider:
             max_retries=self._max_retries,
             retry_backoff_seconds=self._retry_backoff_seconds,
         )
-        text = body["choices"][0]["message"]["content"]
+        choice = body["choices"][0]
+        text = choice["message"]["content"]
         self._report_usage("generate", self._generation_model, body.get("usage", {}))
         return GenerationResult(
             text=text,
             model=self._generation_model,
             version=self._generation_model_version,
+            truncated=choice.get("finish_reason") == "length",
         )
 
     def _stream(self, payload: dict) -> Iterator[GenerationChunk]:

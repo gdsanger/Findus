@@ -198,6 +198,10 @@ class GenerateJsonTests(SimpleTestCase):
 
     def test_reply_unrecoverable_by_repair_triggers_one_retry(self):
         class _SequencedProvider:
+            """Deliberately without the `max_tokens` keyword: `generate_json`
+            must keep working against a provider that predates it.
+            """
+
             def __init__(self, replies):
                 self._replies = replies
                 self.calls = []
@@ -227,6 +231,109 @@ class GenerateJsonTests(SimpleTestCase):
 
         self.assertEqual(len(provider.calls), 2)
         self.assertLessEqual(len(ctx.exception.raw_text), 2000)
+
+    def test_max_tokens_is_passed_through_to_the_provider(self):
+        provider = FakeGenerationProvider(reply=json.dumps({"a": 1}))
+
+        generate_json(provider, [Message(role="user", content="go")], max_tokens=4000)
+
+        self.assertEqual(provider.max_tokens_calls, [4000])
+
+
+class GenerateJsonTruncationTests(SimpleTestCase):
+    """Truncation handling (#1096): a reply cut off at the output-token
+    ceiling must never be repaired into a "complete" object -- the missing
+    keys would read as "the model had nothing to say".
+    """
+
+    # Mid-sentence, mid-object: exactly the shape the Creditreform-Vorgang
+    # produced -- `lage` unfinished, `empfehlungen` never written.
+    _CUT_OFF = '{"lage": "Der Vergleich ist fuer den 15.08.2026 vorgesehen, was angesichts'
+    _COMPLETE = json.dumps({"lage": "Kurz.", "empfehlungen": [{"titel": "Frist notieren"}]})
+
+    def test_provider_reported_truncation_is_retried_with_a_bigger_budget(self):
+        provider = FakeGenerationProvider(
+            replies=[self._CUT_OFF, self._COMPLETE], truncated=[True, False]
+        )
+
+        with self.assertLogs("apps.ai.providers.json_generation", level="WARNING"):
+            result = generate_json(
+                provider, [Message(role="user", content="go")], max_tokens=4000
+            )
+
+        self.assertEqual(result.attempts, 2)
+        self.assertEqual(len(result.data["empfehlungen"]), 1)
+        self.assertEqual(provider.max_tokens_calls, [4000, 8000])
+        self.assertIn("abgeschnitten", provider.calls[1][-1].content)
+
+    def test_unbalanced_payload_is_detected_without_a_provider_signal(self):
+        """Not every provider reports a finish reason -- the payload's own
+        brace/quote balance has to carry the detection then.
+        """
+        provider = FakeGenerationProvider(replies=[self._CUT_OFF, self._COMPLETE])
+
+        with self.assertLogs("apps.ai.providers.json_generation", level="WARNING"):
+            result = generate_json(provider, [Message(role="user", content="go")])
+
+        self.assertEqual(result.attempts, 2)
+        self.assertEqual(len(result.data["empfehlungen"]), 1)
+
+    def test_truncated_twice_raises_instead_of_returning_a_partial_object(self):
+        provider = FakeGenerationProvider(reply=self._CUT_OFF, truncated=True)
+
+        with self.assertLogs("apps.ai.providers.json_generation", level="WARNING"):
+            with self.assertRaises(JSONGenerationError) as ctx:
+                generate_json(
+                    provider, [Message(role="user", content="go")], max_tokens=1000
+                )
+
+        self.assertTrue(ctx.exception.truncated)
+        self.assertIn("abgeschnitten", str(ctx.exception))
+        self.assertEqual(provider.max_tokens_calls, [1000, 2000])
+
+    def test_missing_required_key_is_retried_not_read_as_an_empty_result(self):
+        provider = FakeGenerationProvider(
+            replies=[json.dumps({"lage": "Nur die Lage."}), self._COMPLETE]
+        )
+
+        with self.assertLogs("apps.ai.providers.json_generation", level="WARNING"):
+            result = generate_json(
+                provider,
+                [Message(role="user", content="go")],
+                required_keys=("lage", "empfehlungen"),
+            )
+
+        self.assertEqual(result.attempts, 2)
+        self.assertIn("empfehlungen", provider.calls[1][-1].content)
+
+    def test_missing_required_key_twice_raises(self):
+        provider = FakeGenerationProvider(reply=json.dumps({"lage": "Nur die Lage."}))
+
+        with self.assertLogs("apps.ai.providers.json_generation", level="WARNING"):
+            with self.assertRaises(JSONGenerationError) as ctx:
+                generate_json(
+                    provider,
+                    [Message(role="user", content="go")],
+                    required_keys=("lage", "empfehlungen"),
+                )
+
+        self.assertFalse(ctx.exception.truncated)
+        self.assertIn("empfehlungen", str(ctx.exception))
+
+    def test_empty_list_for_a_required_key_is_a_valid_answer(self):
+        """"Nichts zu tun" is a real result and must not trigger a retry."""
+        provider = FakeGenerationProvider(
+            reply=json.dumps({"lage": "Alles erledigt.", "empfehlungen": []})
+        )
+
+        result = generate_json(
+            provider,
+            [Message(role="user", content="go")],
+            required_keys=("lage", "empfehlungen"),
+        )
+
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(result.data["empfehlungen"], [])
 
 
 class RetryBackoffTests(SimpleTestCase):
@@ -385,6 +492,31 @@ class OpenAIAdapterTests(SimpleTestCase):
         self.assertEqual(result.text, "hello there")
 
     @patch("apps.ai.providers.http.requests.request")
+    def test_generate_reports_length_finish_reason_as_truncated(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={
+                "choices": [{"message": {"content": "abgeschnitten"}, "finish_reason": "length"}],
+            }
+        )
+        result = self._provider().generate(
+            [Message(role="user", content="hi")], max_tokens=1234
+        )
+        self.assertTrue(result.truncated)
+        # `max_completion_tokens`, not the field current models reject.
+        self.assertEqual(
+            mock_request.call_args.kwargs["json"]["max_completion_tokens"], 1234
+        )
+
+    @patch("apps.ai.providers.http.requests.request")
+    def test_generate_without_max_tokens_sends_no_budget(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+        result = self._provider().generate([Message(role="user", content="hi")])
+        self.assertFalse(result.truncated)
+        self.assertNotIn("max_completion_tokens", mock_request.call_args.kwargs["json"])
+
+    @patch("apps.ai.providers.http.requests.request")
     def test_generate_streaming_yields_deltas(self, mock_request):
         sse_lines = [
             'data: {"choices": [{"delta": {"content": "hel"}}]}',
@@ -520,6 +652,30 @@ class AnthropicAdapterTests(SimpleTestCase):
         self.assertEqual(headers["x-api-key"], "sk-ant-test")
 
     @patch("apps.ai.providers.http.requests.request")
+    def test_per_call_max_tokens_overrides_the_configured_default(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={"content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn"}
+        )
+        result = self._provider().generate(
+            [Message(role="user", content="hello")], max_tokens=4000
+        )
+        self.assertEqual(mock_request.call_args.kwargs["json"]["max_tokens"], 4000)
+        self.assertFalse(result.truncated)
+
+    @patch("apps.ai.providers.http.requests.request")
+    def test_stop_reason_max_tokens_marks_the_result_truncated(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={
+                "content": [{"type": "text", "text": '{"lage": "abgeschnitten'}],
+                "stop_reason": "max_tokens",
+            }
+        )
+        result = self._provider().generate([Message(role="user", content="hello")])
+        self.assertTrue(result.truncated)
+        # Without a per-call budget the configured default still applies.
+        self.assertEqual(mock_request.call_args.kwargs["json"]["max_tokens"], 64)
+
+    @patch("apps.ai.providers.http.requests.request")
     def test_generate_streaming(self, mock_request):
         lines = [
             'event: content_block_delta',
@@ -578,6 +734,24 @@ class GeminiAdapterTests(SimpleTestCase):
         roles = [c["role"] for c in payload["contents"]]
         self.assertEqual(roles, ["user", "model"])
 
+    @patch("apps.ai.providers.http.requests.request")
+    def test_max_tokens_maps_to_generation_config_and_max_tokens_finish_reason(
+        self, mock_request
+    ):
+        mock_request.return_value = _mock_response(
+            json_body={
+                "candidates": [
+                    {"content": {"parts": [{"text": "abgeschnitten"}]}, "finishReason": "MAX_TOKENS"}
+                ]
+            }
+        )
+        result = self._provider().generate(
+            [Message(role="user", content="hi")], max_tokens=4000
+        )
+        payload = mock_request.call_args.kwargs["json"]
+        self.assertEqual(payload["generationConfig"], {"maxOutputTokens": 4000})
+        self.assertTrue(result.truncated)
+
 
 class OllamaAdapterTests(SimpleTestCase):
     def _provider(self):
@@ -602,6 +776,17 @@ class OllamaAdapterTests(SimpleTestCase):
         result = self._provider().embed(["a", "b"])
         self.assertEqual(result.vectors, [[0.1, 0.2], [0.3, 0.4]])
         self.assertEqual(mock_request.call_args.kwargs["headers"], {})
+
+    @patch("apps.ai.providers.http.requests.request")
+    def test_max_tokens_maps_to_num_predict_and_length_done_reason(self, mock_request):
+        mock_request.return_value = _mock_response(
+            json_body={"message": {"content": "abgeschnitten"}, "done_reason": "length"}
+        )
+        result = self._provider().generate(
+            [Message(role="user", content="hi")], max_tokens=4000
+        )
+        self.assertEqual(mock_request.call_args.kwargs["json"]["options"], {"num_predict": 4000})
+        self.assertTrue(result.truncated)
 
     @patch("apps.ai.providers.http.requests.request")
     def test_generate_streaming_ndjson(self, mock_request):

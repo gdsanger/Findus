@@ -81,12 +81,16 @@ class AnthropicProvider:
         self._usage_hook("generate", self.name, self._generation_model, usage)
 
     def generate(
-        self, messages: Iterable[Message], *, stream: bool = False
+        self,
+        messages: Iterable[Message],
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
     ) -> GenerationOutput:
         system, rest = self._split_system(messages)
         payload = {
             "model": self._generation_model,
-            "max_tokens": self._max_tokens,
+            "max_tokens": max_tokens or self._max_tokens,
             "messages": rest,
             "stream": stream,
         }
@@ -114,6 +118,7 @@ class AnthropicProvider:
             text=text,
             model=self._generation_model,
             version=self._generation_model_version,
+            truncated=body.get("stop_reason") == "max_tokens",
         )
 
     def _stream(self, payload: dict) -> Iterator[GenerationChunk]:

@@ -108,12 +108,18 @@ class GeminiProvider:
         return "\n\n".join(system_parts), contents
 
     def generate(
-        self, messages: Iterable[Message], *, stream: bool = False
+        self,
+        messages: Iterable[Message],
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
     ) -> GenerationOutput:
         system, contents = self._contents(messages)
         payload = {"contents": contents}
         if system:
             payload["systemInstruction"] = {"parts": [{"text": system}]}
+        if max_tokens:
+            payload["generationConfig"] = {"maxOutputTokens": max_tokens}
 
         if stream:
             return self._stream(payload)
@@ -128,15 +134,14 @@ class GeminiProvider:
             max_retries=self._max_retries,
             retry_backoff_seconds=self._retry_backoff_seconds,
         )
-        text = "".join(
-            part.get("text", "")
-            for part in body["candidates"][0]["content"]["parts"]
-        )
+        candidate = body["candidates"][0]
+        text = "".join(part.get("text", "") for part in candidate["content"]["parts"])
         self._report_usage("generate", self._generation_model, body.get("usageMetadata", {}))
         return GenerationResult(
             text=text,
             model=self._generation_model,
             version=self._generation_model_version,
+            truncated=candidate.get("finishReason") == "MAX_TOKENS",
         )
 
     def _stream(self, payload: dict) -> Iterator[GenerationChunk]:

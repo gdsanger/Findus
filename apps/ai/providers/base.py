@@ -10,7 +10,16 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Literal, Protocol, Union, runtime_checkable
+from typing import (
+    Callable,
+    Iterable,
+    Iterator,
+    Literal,
+    Optional,
+    Protocol,
+    Union,
+    runtime_checkable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +87,22 @@ class GenerationChunk:
 
 @dataclass(frozen=True)
 class GenerationResult:
+    """`truncated` is the provider's "I hit the output-token ceiling"
+    signal, normalised across adapters (Anthropic `stop_reason`, OpenAI
+    `finish_reason`, Gemini `finishReason`, Ollama `done_reason`).
+
+    It exists because a cut-off reply is *not* a short reply (#1096): the
+    JSON layer must not repair-and-accept a half-written object whose
+    later keys never arrived, or the caller reads a missing field as "the
+    model had nothing to say". Defaults to False, so a provider that
+    doesn't report a reason simply looks untruncated -- `generate_json`
+    additionally checks the payload itself for that case.
+    """
+
     text: str
     model: str
     version: str
+    truncated: bool = False
 
 
 GenerationOutput = Union[GenerationResult, Iterator[GenerationChunk]]
@@ -115,10 +137,24 @@ class EmbeddingProvider(Protocol):
 
 @runtime_checkable
 class GenerationProvider(Protocol):
-    def generate(self, messages: Iterable[Message], *, stream: bool = False) -> GenerationOutput:
+    def generate(
+        self,
+        messages: Iterable[Message],
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
+    ) -> GenerationOutput:
         """Return a `GenerationResult`, or an iterator of `GenerationChunk`
         when `stream=True` (SSE-suitable: callers can forward each delta
         to a client as it arrives).
+
+        `max_tokens` raises (or lowers) the output-token ceiling for this
+        one call, over whatever the adapter's configured default is. A
+        per-call knob rather than config-only, because the budget is a
+        property of the *task*: a one-line classification and a structured
+        Lagebeurteilung with N recommendations (#1096) need very different
+        ceilings from the same configured provider. `None` keeps the
+        adapter default.
         """
         ...
 
