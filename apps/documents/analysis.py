@@ -40,6 +40,16 @@ side is *not* `is_self` (the Gegenstelle) becomes `Document.correspondent`
 filed under "me" as its own contact. The `is_self` side is only ever
 matched, never created, so the KI can't invent a duplicate "Ich"-identity.
 
+Kennungen/Referenznummern (#1099): derselbe Call gibt zusätzlich eine
+*Liste* typisierter Kennungen aus (Aktenzeichen, Forderungs-/Kunden-/
+Belegnummer, IBAN, "Ihr/Unser Zeichen" ...), die als `DocumentReference`
+gespeichert werden -- bewusst eine Liste und kein weiteres Key-Fact-Feld:
+ein Schreiben trägt regelmäßig mehrere davon gleichzeitig. Kein
+zusätzlicher `generate()`-Call, nur ein weiterer Schlüssel in derselben
+Antwort. Ein erneuter Lauf ersetzt nur die KI-extrahierten Zeilen; von
+Hand nachgetragene/korrigierte bleiben stehen (siehe
+`apps.documents.references`).
+
 Tag-Dimension/-Wert (#1034): `Tag`/`TagSuggestion` keep `name` and
 `dimension` as separate fields on purpose (unique on the pair, see
 `Tag.Meta.constraints`), but a KI reply sometimes ignores the prompt and
@@ -60,7 +70,18 @@ from django.conf import settings
 
 from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
 
-from .models import Correspondent, Document, SuggestionStatus, Tag, TagSuggestion, Vorgang, VorgangSuggestion
+from .models import (
+    Correspondent,
+    Document,
+    DocumentReference,
+    SuggestionStatus,
+    Tag,
+    TagSuggestion,
+    Vorgang,
+    VorgangSuggestion,
+    normalize_reference_value,
+)
+from .references import normalize_role, normalize_type
 from .services import find_correspondent, find_or_create_correspondent
 from .text_sanitize import clean_json
 
@@ -81,6 +102,16 @@ _KEY_FACT_FIELDS = (
     "currency",
     "due_date",
 )
+
+# Die Kennungsarten für den Prompt kommen aus den Model-Choices, nicht aus
+# einer zweiten, handgepflegten Liste (#1099): eine neue Kennungsart soll
+# an genau einer Stelle ergänzt werden. `SONSTIGE` steht im Prompt separat
+# als Auffangwert und fehlt deshalb hier.
+_REFERENCE_TYPE_VALUES = [
+    value
+    for value in DocumentReference.Type.values
+    if value != DocumentReference.Type.SONSTIGE
+]
 
 _SYSTEM_PROMPT = (
     "Du analysierst eingehende Dokumente fuer ein Dokumentenmanagementsystem. "
@@ -105,6 +136,22 @@ _SYSTEM_PROMPT = (
     '[ICH SELBST], ist es "intern". Ist keine der beiden Parteien als '
     '[ICH SELBST] gelistet oder eindeutig zuzuordnen, antworte "unbekannt" '
     "-- rate nicht.\n"
+    '- "references": Liste ALLER im Dokument genannten Kennungen/'
+    'Referenznummern, je Eintrag "type", "value", "role". Ein Dokument '
+    "kann mehrere tragen (z. B. Aktenzeichen UND Forderungsnummer) -- "
+    'dann mehrere Eintraege. "type" ist einer von: ' + ", ".join(
+        f'"{value}"' for value in _REFERENCE_TYPE_VALUES
+    ) + " -- passt keiner, "
+    '"sonstige". "value" ist die Nummer/das Zeichen genau so, wie es im '
+    "Dokument steht (ohne die Beschriftung davor, also \"123/45\" statt "
+    '"Az. 123/45"). "role" ordnet zu, WEM die Kennung gehoert: "deins" = '
+    'unsere/die des Empfaengers dieses Systems, "deren" = die der '
+    "Gegenstelle. Bei einem Eingangsdokument ist \"Ihr Zeichen\" also "
+    '"deins" und "Unser Zeichen" "deren", bei einem Ausgangsdokument '
+    'umgekehrt. Unklar? Dann "" (leer) -- nicht raten. Erfinde keine '
+    "Nummern: nur uebernehmen, was ausdruecklich als Kennung/Nummer/"
+    "Zeichen ausgewiesen ist, keine Betraege, Datumsangaben, Telefon-/"
+    "Steuernummern oder beliebige Ziffernfolgen aus dem Fliesstext.\n"
     '- "tag_suggestions": Liste von Objekten "name", "dimension", '
     '"confidence" (0-1) -- bevorzugt bestehende Tags/Dimensionen '
     "wiederverwenden, nicht wahllos neue erfinden. \"name\" ist "
@@ -262,6 +309,53 @@ def _replace_vorgang_suggestions(document: Document, items: list) -> None:
     VorgangSuggestion.objects.bulk_create(suggestions)
 
 
+def _replace_references(document: Document, items: list) -> None:
+    """Die KI-extrahierten Kennungen (#1099) dieses Dokuments neu setzen.
+
+    Ersetzt ausschliesslich die eigenen (`Source.AI`) Zeilen: von Hand
+    nachgetragene oder korrigierte Kennungen sind eine Nutzerentscheidung
+    und ueberleben jeden Re-Run -- dasselbe Prinzip wie bei den bereits
+    entschiedenen `TagSuggestion`s oben. Eine KI-Kennung, die eine
+    manuelle Zeile dupliziert, faellt weg (die manuelle gewinnt, und die
+    UniqueConstraint wuerde sie ohnehin abweisen).
+    """
+    manual_keys = set(
+        document.references.filter(source=DocumentReference.Source.MANUAL).values_list(
+            "type", "value_normalized"
+        )
+    )
+    document.references.filter(source=DocumentReference.Source.AI).delete()
+
+    max_length = DocumentReference._meta.get_field("value_raw").max_length
+    seen = set(manual_keys)
+    references = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        reference_type = normalize_type(item.get("type"))
+        value_raw = str(item.get("value") or "").strip()[:max_length]
+        value_normalized = normalize_reference_value(value_raw)
+        if not value_normalized:
+            continue
+        key = (reference_type, value_normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        references.append(
+            DocumentReference(
+                document=document,
+                type=reference_type,
+                value_raw=value_raw,
+                value_normalized=value_normalized,
+                role=normalize_role(item.get("role")),
+                source=DocumentReference.Source.AI,
+            )
+        )
+        if len(references) >= settings.FINDUS_ANALYSIS_MAX_REFERENCES:
+            break
+    DocumentReference.objects.bulk_create(references)
+
+
 def _derive_direction(
     sender: Optional[Correspondent], recipient: Optional[Correspondent]
 ) -> str:
@@ -407,6 +501,7 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
 
     document.save(update_fields=update_fields)
 
+    _replace_references(document, parsed.get("references") or [])
     _replace_tag_suggestions(document, parsed.get("tag_suggestions") or [])
     _replace_vorgang_suggestions(document, parsed.get("vorgang_suggestions") or [])
 

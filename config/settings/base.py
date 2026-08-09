@@ -329,6 +329,13 @@ FINDUS_ANALYSIS_MAX_CHARS = int(env("FINDUS_ANALYSIS_MAX_CHARS", "12000"))
 # apps.documents.analysis._correspondent_context_lines).
 FINDUS_ANALYSIS_MAX_CONTACTS = int(env("FINDUS_ANALYSIS_MAX_CONTACTS", "200"))
 
+# Kennungen je Dokument aus der Analyse (#1099): Obergrenze an
+# `DocumentReference`-Zeilen, die *ein* Analyse-Lauf anlegen darf. Ein
+# Dokument trägt realistisch eine Handvoll Kennungen -- das Cap fängt die
+# ausufernde Modellantwort ab, die jede Ziffernfolge im Text für eine
+# Referenznummer hält, statt sie ins Archiv zu schreiben.
+FINDUS_ANALYSIS_MAX_REFERENCES = int(env("FINDUS_ANALYSIS_MAX_REFERENCES", "12"))
+
 # --------------------------------------------------------------------------
 # Handlungsempfehlungen je Vorgang (#1093,
 # apps.documents.recommendations): ein `generate()`-Call pro Generierung,
