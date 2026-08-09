@@ -127,6 +127,11 @@ urlpatterns = [
         views.document_reference_delete,
         name="reference_delete",
     ),
+    path(
+        "documents/<int:pk>/references/assign/<str:scope>/<int:target_id>/",
+        views.document_reference_assign,
+        name="reference_assign",
+    ),
     path("documents/<int:pk>/delete/", views.document_delete, name="delete"),
     path(
         "documents/<int:pk>/children/<int:child_id>/delete/",

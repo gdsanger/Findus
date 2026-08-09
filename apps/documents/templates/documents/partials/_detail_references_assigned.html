@@ -1,0 +1,15 @@
+{% comment %}
+Antwort auf einen angenommenen Zuordnungs-Vorschlag (#1100): der
+Kennungen-Block (ohne den erledigten Vorschlag) plus die
+Zuordnungs-Anzeige als Out-of-Band-Swap.
+
+Zwei Blöcke in einer Antwort, weil ein Klick hier zwei Stellen der Seite
+ändert -- die Zuordnung ist der eigentliche Effekt und stünde sonst bis
+zum nächsten Seitenaufbau veraltet daneben. Ein voller Reload wäre die
+Alternative, würde aber für eine Ein-Feld-Änderung Vorschau, Volltext und
+Ähnlichkeiten mit neu laden.
+{% endcomment %}
+{% include "documents/partials/_detail_references.html" %}
+<div id="document-meta" hx-swap-oob="true">
+    {% include "documents/partials/_detail_meta.html" %}
+</div>

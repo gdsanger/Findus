@@ -27,6 +27,12 @@ from .models import (
     link_documents,
     normalize_reference_value,
 )
+from .reference_matching import (
+    REFERENCE_OWNERS,
+    assign_suggested,
+    assignment_suggestions,
+    learn_references_from_document,
+)
 from .references import set_reference, shared_reference_groups
 from .retrieval import DocumentRetrievalService
 from .task_views import task_departments_and_visibility
@@ -450,12 +456,16 @@ def _references_context(user, document, *, reference_error=None):
     Beides in *einem* Kontext/Partial, weil das eine das andere erzeugt:
     wer eine Kennung korrigiert, muss die daraus folgenden Verknüpfungen
     sofort sehen -- eine getrennt nachzuladende Trefferliste stünde nach
-    jeder Korrektur veraltet daneben.
+    jeder Korrektur veraltet daneben. Aus demselben Grund stehen seit
+    #1100 auch die Zuordnungs-Vorschläge hier: eine korrigierte Kennung
+    kann genau den Vorschlag erzeugen (oder erledigen), auf den es
+    ankommt.
     """
     return {
         "document": document,
         "references": list(document.references.all()),
         "reference_groups": shared_reference_groups(user, document),
+        "reference_suggestions": assignment_suggestions(user, document),
         "reference_type_choices": DocumentReference.Type.choices,
         "reference_role_choices": DocumentReference.Role.choices,
         "reference_error": reference_error,
@@ -492,6 +502,8 @@ def document_reference_create(request, pk):
         value=request.POST.get("value", ""),
         role=request.POST.get("role", ""),
     )
+    if reference is not None:
+        learn_references_from_document(document)
     reference_error = None if reference is not None else "Bitte eine Kennung eingeben."
     return render(
         request,
@@ -530,6 +542,12 @@ def document_reference_update(request, pk, reference_id):
             value=request.POST.get("value", ""),
             role=request.POST.get("role", ""),
         )
+        # Die korrigierte Schreibweise ist die, gegen die künftig gematcht
+        # wird -- ein bereits zugeordneter Vorgang/Kontakt muss sie
+        # übernehmen (#1100). Die alte, falsche Zeile bleibt am Ziel
+        # stehen: sie wurde einmal bewusst gelernt und lässt sich dort
+        # entfernen, aber nicht von hier aus erraten.
+        learn_references_from_document(document)
     else:
         reference_error = "Bitte eine Kennung eingeben."
     return render(
@@ -553,6 +571,50 @@ def document_reference_delete(request, pk, reference_id):
         request,
         "documents/partials/_detail_references.html",
         _references_context(request.user, document),
+    )
+
+
+@login_required
+@require_POST
+def document_reference_assign(request, pk, scope, target_id):
+    """Einen Zuordnungs-Vorschlag (#1100) mit einem Klick annehmen.
+
+    Zugeordnet wird nur, was auch wirklich vorgeschlagen war: der Ziel-PK
+    aus der URL muss in `assignment_suggestions()` auftauchen. Das ist
+    keine Rechteprüfung -- Zuordnen darf jeder über die Zuordnungs-Maske
+    --, sondern die Zusicherung, dass dieser Endpunkt genau das tut, was
+    daneben steht. Ein Vorschlag, der inzwischen weg ist (Kennung
+    korrigiert, Kontakt gesetzt, Vorgang schon zugeordnet), führt zu einem
+    aktualisierten Block statt zu einer stillen Zuordnung.
+
+    Neben dem Kennungen-Block wird die Zuordnungs-Anzeige (`#document-meta`)
+    per Out-of-Band-Swap mitgetauscht: die Zuordnung ist der eigentliche
+    Effekt des Klicks und darf nicht bis zum nächsten Seitenaufbau
+    unsichtbar bleiben.
+    """
+    if scope not in REFERENCE_OWNERS:
+        raise Http404(f"Unbekannter Kennungs-Scope: {scope}")
+
+    document = _visible_document(request.user, pk)
+    suggestion = next(
+        (
+            candidate
+            for candidate in assignment_suggestions(request.user, document)
+            if candidate["scope"] == scope and candidate["target"].pk == target_id
+        ),
+        None,
+    )
+    if suggestion is not None:
+        assign_suggested(document, suggestion)
+        document = _visible_document(request.user, pk)
+
+    return render(
+        request,
+        "documents/partials/_detail_references_assigned.html",
+        {
+            **_references_context(request.user, document),
+            "action_status_choices": Document.ActionStatus.choices,
+        },
     )
 
 
@@ -909,6 +971,11 @@ def document_meta(request, pk):
         )
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))
+        # Zuordnen heißt: "diese Nummern gehören hierher" (#1100). Eine
+        # entfernte Zuordnung nimmt die gelernte Kennung *nicht* wieder
+        # mit -- der Vorgang hat sein Aktenzeichen dann trotzdem, und was
+        # er nicht behalten soll, wird an seinem Hub entfernt.
+        learn_references_from_document(document)
     return _render_meta(request, document)
 
 
@@ -966,6 +1033,8 @@ def document_meta_quick_create(request, pk, kind):
             name = _truncated(Tag, "name", name)
             tag, _created = Tag.objects.get_or_create(name=name, dimension=dimension)
             document.tags.add(tag)
+        if kind in ("correspondent", "vorgang"):
+            learn_references_from_document(document)
     else:
         quick_create_error = {
             "kind": kind,
@@ -1028,6 +1097,7 @@ def document_vorgang_suggestion_accept(request, pk, suggestion_id):
     suggestion = get_object_or_404(document.vorgang_suggestions, pk=suggestion_id)
     vorgang, _ = Vorgang.objects.get_or_create(name=suggestion.name)
     document.vorgaenge.add(vorgang)
+    learn_references_from_document(document)
     suggestion.status = SuggestionStatus.ACCEPTED
     suggestion.save(update_fields=["status", "updated_at"])
     return _render_meta(request, document)
