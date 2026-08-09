@@ -766,6 +766,52 @@ class DocumentDetailViewTests(TestCase):
 
         self.assertNotContains(response, "Privater Task")
 
+    def test_correspondent_link_to_hub_is_shown(self):
+        """Covers #1098: from the document, the Kontakt-Hub (#1041) should
+        be one click away instead of only showing the name as plain text.
+        """
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+        self.doc.correspondent = correspondent
+        self.doc.save(update_fields=["correspondent"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(
+            response,
+            reverse("documents:correspondent_detail", args=[correspondent.id]),
+        )
+
+    def test_no_correspondent_link_when_unassigned(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "findus-detail-hub-link-group")
+
+    def test_vorgang_links_to_hub_are_shown(self):
+        """Covers #1098: each assigned Vorgang (M2M) links to its own
+        Vorgang-Hub (#1040).
+        """
+        vorgang_a = Vorgang.objects.create(name="Mietvertrag 2026")
+        vorgang_b = Vorgang.objects.create(name="Nebenkosten 2026")
+        self.doc.vorgaenge.add(vorgang_a, vorgang_b)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(
+            response, reverse("documents:vorgang_detail", args=[vorgang_a.id])
+        )
+        self.assertContains(
+            response, reverse("documents:vorgang_detail", args=[vorgang_b.id])
+        )
+
+    def test_no_vorgang_link_when_unassigned(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "findus-detail-hub-link-group")
+
     def test_children_are_shown_on_leitdokument_detail_page(self):
         child = Document.objects.create_child(
             self.doc, title="Anhang.pdf", child_role=Document.ChildRole.MAIL_ATTACHMENT
