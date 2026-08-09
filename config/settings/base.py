@@ -168,7 +168,6 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "mediafiles"
@@ -213,8 +212,12 @@ STORAGES = {
     "default": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
+    # CompressedStaticFilesStorage bewusst ohne Manifest (#1104): kein
+    # collectstatic-Schritt im Deploy-Ablauf (Dockerfile/docker-compose),
+    # Manifest-Storage würde {% static %} beim Fehlen der manifest.json
+    # hart brechen lassen.
     "staticfiles": {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
