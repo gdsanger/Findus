@@ -295,6 +295,16 @@ FINDUS_SIMILAR_DOCUMENTS_CANDIDATE_CHUNKS = int(
 # "Verknüpfen"-Button an einem Ähnlichkeits-Treffer verlinkt.
 FINDUS_DOCUMENT_LINK_PICKER_LIMIT = int(env("FINDUS_DOCUMENT_LINK_PICKER_LIMIT", "200"))
 
+# Fokus-Graph (#1091, apps.documents.graph): Cap für die Nachbarn *einer*
+# Expansion und je Kantengruppe -- ein Vorgang mit 400 Dokumenten soll
+# beim Aufklappen keine unlesbare Wolke erzeugen. Was abgeschnitten wurde,
+# meldet der Endpunkt als `truncated`, damit die UI es sagen kann, statt
+# es zu verschweigen. Die Ähnlichkeitskanten benutzen bewusst *kein*
+# eigenes Limit, sondern FINDUS_SIMILAR_DOCUMENTS_LIMIT/-MIN_SCORE von
+# oben: Graph und Dokument-Detail sollen nicht zwei verschiedene
+# Vorstellungen davon haben, was "ähnlich" heißt.
+FINDUS_GRAPH_NEIGHBOR_LIMIT = int(env("FINDUS_GRAPH_NEIGHBOR_LIMIT", "25"))
+
 # --------------------------------------------------------------------------
 # KI-Analyse (apps.documents.analysis, #1020): ein `generate()`-Call pro
 # Dokument auf dem bereits extrahierten Text (kostenbewusst -- kein

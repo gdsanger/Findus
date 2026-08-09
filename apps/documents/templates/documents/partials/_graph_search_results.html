@@ -1,0 +1,26 @@
+{% comment %}
+Trefferliste der Fokus-Suche (#1091). Jeder Treffer ist ein echter Link auf
+`/graph?type=…&id=…` -- so bleibt ein Fokus teilbar/bookmarkbar und
+funktioniert auch ohne den JS-Kurzschluss, den `findus-graph.js` darauf legt
+(Fokus setzen ohne Reload).
+{% endcomment %}
+{% if results %}
+<ul class="findus-graph-search-list">
+    {% for node in results %}
+    <li>
+        <a
+            class="findus-graph-search-hit"
+            href="{% url 'documents:graph' %}?type={{ node.type }}&amp;id={{ node.pk }}"
+            data-graph-focus="{{ node.id }}"
+            data-graph-focus-label="{{ node.label }}"
+        >
+            <span class="findus-graph-swatch findus-graph-swatch--{{ node.type }}"></span>
+            <span class="findus-graph-search-label">{{ node.label }}</span>
+            <span class="findus-graph-search-meta text-muted">{{ node.meta|join:" · " }}</span>
+        </a>
+    </li>
+    {% endfor %}
+</ul>
+{% elif search_query %}
+<p class="text-muted small">Keine Treffer für „{{ search_query }}“.</p>
+{% endif %}

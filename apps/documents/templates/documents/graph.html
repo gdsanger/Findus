@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Netzwerk – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Netzwerk" %}
+
+<section class="findus-section">
+    <p class="text-muted findus-graph-intro">
+        Ein Fokus-Knoten und seine direkte Nachbarschaft – kein Gesamtbild.
+        Knoten anklicken klappt dessen Nachbarn auf, Doppelklick öffnet das
+        zugehörige Detail.
+    </p>
+
+    <form class="findus-graph-search" role="search" onsubmit="return false;">
+        <label class="visually-hidden" for="graph-search-input">Fokus-Knoten suchen</label>
+        <input
+            type="search"
+            id="graph-search-input"
+            name="q"
+            class="form-control form-control-sm"
+            placeholder="Dokument, Vorgang, Tag oder Kontakt suchen …"
+            autocomplete="off"
+            hx-get="{% url 'documents:graph_search' %}"
+            hx-trigger="keyup changed delay:300ms, search"
+            hx-target="#graph-search-results"
+            hx-swap="innerHTML"
+        >
+    </form>
+    <div id="graph-search-results" class="findus-graph-search-results"></div>
+</section>
+
+<section class="findus-section">
+    <div class="findus-graph-toolbar" id="graph-toolbar">
+        <fieldset class="findus-graph-filters">
+            <legend class="findus-graph-toolbar-label">Knoten</legend>
+            {% for type_key, type_label in node_type_labels.items %}
+            <div class="form-check form-check-inline">
+                <input
+                    class="form-check-input"
+                    type="checkbox"
+                    id="graph-filter-{{ type_key }}"
+                    data-graph-node-filter="{{ type_key }}"
+                    checked
+                >
+                <label class="form-check-label findus-graph-legend-item" for="graph-filter-{{ type_key }}">
+                    <span class="findus-graph-swatch findus-graph-swatch--{{ type_key }}"></span>
+                    {{ type_label }}
+                </label>
+            </div>
+            {% endfor %}
+        </fieldset>
+
+        <fieldset class="findus-graph-filters">
+            <legend class="findus-graph-toolbar-label">Kanten</legend>
+            <span class="findus-graph-legend-item">
+                <span class="findus-graph-edge-sample findus-graph-edge-sample--structure"></span>
+                Struktur
+            </span>
+            <div class="form-check form-check-inline">
+                <input
+                    class="form-check-input"
+                    type="checkbox"
+                    id="graph-filter-similarity"
+                    data-graph-similarity
+                    {% if similarity_enabled %}checked{% endif %}
+                >
+                <label class="form-check-label findus-graph-legend-item" for="graph-filter-similarity">
+                    <span class="findus-graph-edge-sample findus-graph-edge-sample--similarity"></span>
+                    Ähnlichkeit anzeigen (ab {{ similarity_min_score_percent }} %)
+                </label>
+            </div>
+        </fieldset>
+
+        <div class="findus-graph-toolbar-actions">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-graph-fit>
+                Einpassen
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-graph-reset>
+                Auf Fokus zurücksetzen
+            </button>
+        </div>
+    </div>
+
+    <p class="findus-graph-status text-muted small" id="graph-status" role="status" aria-live="polite"></p>
+
+    <div class="findus-graph-stage">
+        <div
+            id="graph-canvas"
+            class="findus-graph-canvas"
+            data-neighbors-url="{% url 'documents:graph_neighbors' %}"
+            {% if focus_node %}data-focus-node="{{ focus_node.id }}"{% endif %}
+            role="application"
+            aria-label="Semantisches Netzwerk-Diagramm"
+        ></div>
+
+        {% if not focus_node %}
+        <p class="findus-graph-empty text-muted" id="graph-empty">
+            {% if focus_missing %}
+            Der gewählte Knoten existiert nicht (mehr) oder ist für dich nicht sichtbar.
+            Wähle oben einen anderen Startpunkt.
+            {% else %}
+            Noch kein Fokus gewählt – suche oben nach einem Dokument, Vorgang, Tag oder Kontakt.
+            {% endif %}
+        </p>
+        {% endif %}
+
+        <div class="findus-graph-tooltip" id="graph-tooltip" hidden></div>
+    </div>
+
+    <aside class="findus-graph-inspector" id="graph-inspector" hidden>
+        <h2 class="findus-section-subtitle" id="graph-inspector-title"></h2>
+        <p class="findus-graph-inspector-meta text-muted small" id="graph-inspector-meta"></p>
+        <div class="findus-detail-actions">
+            <a class="btn btn-sm btn-primary" id="graph-inspector-open" href="#">Öffnen</a>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="graph-inspector-expand">
+                Nachbarn aufklappen
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="graph-inspector-focus">
+                Als Fokus setzen
+            </button>
+        </div>
+    </aside>
+
+    <noscript>
+        <p class="text-muted">
+            Das Netzwerk-Diagramm braucht JavaScript. Die gleichen Beziehungen
+            stehen auch im Dokument-Detail sowie auf den Vorgangs- und
+            Kontakt-Seiten.
+        </p>
+    </noscript>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'vendor/cytoscape/cytoscape.min.js' %}"></script>
+<script src="{% static 'js/findus-graph.js' %}"></script>
+{% endblock %}
