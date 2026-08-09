@@ -889,3 +889,122 @@ class TaskTemplateItem(models.Model):
 
     def __str__(self):
         return self.text
+
+
+class VorgangRecommendationRun(TimeStampedModel):
+    """Das gespeicherte Ergebnis *einer* Empfehlungs-Generierung für einen
+    Vorgang (#1093): Lage-Einschätzung + die Liste der Empfehlungen.
+
+    Bewusst ein eigenes, kleines Modell statt eines JSON-Felds auf
+    `Vorgang`: jede Empfehlung trägt einen eigenen Status
+    (offen/übernommen/verworfen), eine n:n-Verknüpfung zu ihren
+    Quell-Dokumenten und ggf. die daraus erzeugte `Task` -- das sind echte
+    Relationen, die in einem JSON-Blob nur als handgepflegte ID-Listen
+    ohne FK-Integrität lägen. Additiv, kein DROP (Lehre #1055).
+
+    `OneToOneField`, nicht FK mit Historie: angezeigt wird ohnehin immer
+    nur der aktuelle Stand, und eine wachsende Lauf-Historie wäre Ballast,
+    den niemand liest. "Neu generieren" arbeitet deshalb auf derselben
+    Zeile weiter -- `status` geht auf `running`, die alten Empfehlungen
+    bleiben so lange sichtbar, bis der Worker sie ersetzt (siehe
+    `apps.documents.recommendations.generate_vorgang_recommendations`).
+
+    `based_on` hält fest, worauf der Lauf fußte -- die tatsächlich in den
+    Prompt gegangenen Dokument-IDs (Provenienz/Limit) *und* den kompletten
+    Dokumentbestand des Vorgangs zu dem Zeitpunkt
+    (`considered_document_ids`). Der Veraltet-Hinweis vergleicht gegen
+    letzteren: käme er gegen die gekürzte Prompt-Liste, wäre ein Lauf mit
+    aktivem Limit sofort nach dem Generieren "veraltet".
+    """
+
+    class Status(models.TextChoices):
+        RUNNING = "running", "Wird erstellt"
+        READY = "ready", "Fertig"
+        FAILED = "failed", "Fehlgeschlagen"
+
+    vorgang = models.OneToOneField(
+        Vorgang, on_delete=models.CASCADE, related_name="recommendation_run"
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.RUNNING
+    )
+    situation = models.TextField(blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+    based_on = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    ai_model = models.CharField(max_length=100, blank=True)
+    ai_model_version = models.CharField(max_length=50, blank=True)
+
+    class Meta:
+        verbose_name = "Handlungsempfehlungen"
+        verbose_name_plural = "Handlungsempfehlungen"
+
+    def __str__(self):
+        return f"Empfehlungen fuer Vorgang {self.vorgang_id}"
+
+    @property
+    def is_running(self):
+        return self.status == self.Status.RUNNING
+
+    @property
+    def has_result(self):
+        """True sobald überhaupt schon einmal ein Ergebnis eingetroffen ist
+        -- `generated_at` ist erst nach dem ersten erfolgreichen Lauf
+        gesetzt, `status` kann währenddessen längst wieder `running` sein.
+        """
+        return self.generated_at is not None
+
+
+class VorgangRecommendation(TimeStampedModel):
+    """Eine einzelne, prüfenswerte Empfehlung aus einem
+    `VorgangRecommendationRun` (#1093).
+
+    Immer nur ein Vorschlag: `status` startet auf `open` und wechselt
+    ausschliesslich durch eine Nutzeraktion nach `accepted` (dann hängt an
+    `task` die daraus erzeugte Aufgabe) oder `dismissed`. Nichts hier legt
+    von sich aus eine `Task` an.
+
+    `documents` sind die Quell-Dokumente, auf die sich die Empfehlung
+    beruft (Provenienz) -- beim Übernehmen werden genau sie mit der neuen
+    Aufgabe verknüpft.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Offen"
+        ACCEPTED = "accepted", "Übernommen"
+        DISMISSED = "dismissed", "Verworfen"
+
+    class Priority(models.TextChoices):
+        HIGH = "hoch", "Hoch"
+        MEDIUM = "mittel", "Mittel"
+        LOW = "niedrig", "Niedrig"
+
+    run = models.ForeignKey(
+        VorgangRecommendationRun, on_delete=models.CASCADE, related_name="recommendations"
+    )
+    order = models.PositiveIntegerField(default=0)
+    title = models.CharField(max_length=255)
+    rationale = models.TextField(blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    priority = models.CharField(max_length=20, choices=Priority.choices, blank=True)
+    documents = models.ManyToManyField(
+        Document, blank=True, related_name="vorgang_recommendations"
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.OPEN
+    )
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="source_recommendations",
+    )
+
+    class Meta:
+        ordering = ["run_id", "order", "pk"]
+        verbose_name = "Handlungsempfehlung"
+        verbose_name_plural = "Handlungsempfehlungen"
+
+    def __str__(self):
+        return self.title
