@@ -47,7 +47,15 @@
     }
 
     function isEmpty(state) {
+        // "view" defaults to "timeline" server-side (#1092), so an explicit
+        // "" (Liste) is the only meaningful value left for that field --
+        // unlike the other fields, it must NOT count as "unset" here, or a
+        // Liste-only choice would get dropped from storage and silently
+        // revert to the Timeline default on the next visit.
         return FIELD_NAMES.every(function (name) {
+            if (name === "view") {
+                return state[name] !== "";
+            }
             return !state[name];
         });
     }
@@ -100,6 +108,14 @@
     function buildUrl(state) {
         var params = new URLSearchParams();
         FIELD_NAMES.forEach(function (name) {
+            // "view" is set unconditionally: an explicit "" (Liste) is
+            // falsy but still meaningful, and must reach the server as
+            // `view=` -- omitting it would make the request look
+            // param-less and fall back to the Timeline default (#1092).
+            if (name === "view") {
+                params.set(name, state[name] || "");
+                return;
+            }
             if (state[name]) {
                 params.set(name, state[name]);
             }
