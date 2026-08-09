@@ -725,6 +725,81 @@ body {
     margin-bottom: var(--findus-space-4);
 }
 
+/* Sticky-Aktionsleiste (#1105): Primäraktionen bleiben beim Scrollen durch
+   Zusammenfassung/Kontext erreichbar. `top: 0`, weil die mobile Topbar
+   (`.findus-topbar`) unterhalb von `lg` sichtbar ist und die Leiste dort
+   ohnehin nicht sticky ist -- ab `lg` gibt es also nichts, wogegen sie
+   versetzt werden müsste. */
+.findus-detail-actions-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-3);
+    padding-block: var(--findus-space-2);
+    margin-bottom: var(--findus-space-4);
+}
+
+@media (min-width: 992px) {
+    .findus-detail-actions-bar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background-color: var(--findus-bg);
+        border-bottom: 1px solid var(--findus-border);
+    }
+}
+
+.findus-detail-letter-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-4);
+}
+
+/* Zweispaltiges Detail-Layout (#1105): Dokument links, Kontext-Sidebar
+   rechts. Unterhalb `lg` fällt das Grid auf eine Spalte zurück -- die
+   Reihenfolge im Markup (Hauptspalte vor Sidebar) sorgt dafür, dass das
+   Dokument dann zuerst kommt, ganz ohne `order`. */
+.findus-detail-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: var(--findus-space-5);
+}
+
+@media (min-width: 992px) {
+    .findus-detail-layout {
+        grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+        gap: var(--findus-space-6);
+    }
+}
+
+.findus-detail-main {
+    min-width: 0;
+}
+
+.findus-detail-sidebar {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* Beziehungs-Blöcke (Kennungen, Ähnliche Dokumente, Unterdokumente) als
+   eine zusammengehörige Karte statt dreier gleichrangiger Sektionen. */
+.findus-detail-context-group {
+    padding: var(--findus-space-4);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-detail-context-block + .findus-detail-context-block {
+    padding-top: var(--findus-space-4);
+    margin-top: var(--findus-space-4);
+    border-top: 1px solid var(--findus-border);
+}
+
 /* Schnellzugriff Kontakt-/Vorgang-Hub im Dokument-Kopf (#1098) */
 .findus-detail-hub-links {
     display: flex;

@@ -9,40 +9,27 @@
 {% endif %}
 {% include "partials/_content_header.html" with page_title=document.title %}
 
-{% if document.correspondent or document.vorgaenge.all %}
-{% comment %}
-Schnellzugriff (#1098): von hier soll man ohne Umweg über die Zuordnung
-direkt zum Kontakt- bzw. Vorgang-Hub springen koennen.
-{% endcomment %}
-<nav class="findus-section findus-detail-hub-links" aria-label="Schnellzugriff Kontakt und Vorgänge">
-    {% if document.correspondent %}
-    <div class="findus-detail-hub-link-group">
-        <span class="findus-detail-hub-link-label">Kontakt</span>
-        <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:correspondent_detail' document.correspondent.pk %}">
-            {{ document.correspondent.name }}
-        </a>
-    </div>
-    {% endif %}
-    {% if document.vorgaenge.all %}
-    <div class="findus-detail-hub-link-group">
-        <span class="findus-detail-hub-link-label">Vorgänge</span>
-        {% for vorgang in document.vorgaenge.all %}
-        <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:vorgang_detail' vorgang.pk %}">
-            {{ vorgang.name }}
-        </a>
-        {% endfor %}
-    </div>
-    {% endif %}
-</nav>
-{% endif %}
-
-{% if document.is_mail_body %}
+{% if document.is_mail_body or document.letter_draft %}
 <p class="findus-document-kind">
-    <span class="badge text-bg-info">Aus E-Mail-Text erzeugt</span>
+    {% if document.is_mail_body %}<span class="badge text-bg-info">Aus E-Mail-Text erzeugt</span>{% endif %}
+    {% comment %}
+    Ein aus einer Brief-Vorlage erzeugtes Dokument (#1095) ist das PDF. Der
+    editierbare Word-Master bleibt am Entwurf -- die Downloadlinks dazu
+    stehen unten in `findus-detail-letter-actions`.
+    `document.letter_draft` ist ein Reverse-OneToOne: fehlt er, schluckt die
+    Template-Engine den DoesNotExist (silent_variable_failure).
+    {% endcomment %}
+    {% if document.letter_draft %}<span class="badge text-bg-info">Aus Brief-Vorlage erzeugt</span>{% endif %}
 </p>
 {% endif %}
 
-<section class="findus-section findus-detail-actions">
+{% comment %}
+Sticky-Aktionsleiste (#1105): die Primäraktionen sollen beim Scrollen durch
+die Zusammenfassung/den Kontext immer erreichbar bleiben. Auf schmalen
+Viewports greift der `position: sticky` erst ab `lg` (siehe findus.css),
+darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
+{% endcomment %}
+<section class="findus-section findus-detail-actions-bar">
     {% if document.original_file %}
     {% if document.is_inline_previewable %}
     <button
@@ -90,137 +77,172 @@ direkt zum Kontakt- bzw. Vorgang-Hub springen koennen.
     {% include "documents/partials/_detail_analysis_status.html" %}
 </section>
 
-{% comment %}
-Ein aus einer Brief-Vorlage erzeugtes Dokument (#1095) ist das PDF. Der
-editierbare Word-Master bleibt am Entwurf -- hier verlinkt, damit „beide
-Formate herunterladbar" auch von der Dokumentseite aus gilt.
-`document.letter_draft` ist ein Reverse-OneToOne: fehlt er, schluckt die
-Template-Engine den DoesNotExist (silent_variable_failure).
-{% endcomment %}
 {% if document.letter_draft %}
-<section class="findus-section findus-detail-actions">
-    <span class="badge text-bg-info">Aus Brief-Vorlage erzeugt</span>
+<div class="findus-detail-letter-actions">
     <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_download' document.letter_draft.pk 'docx' %}">
         Word-Master herunterladen
     </a>
     <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_detail' document.letter_draft.pk %}">
         Entwurf ansehen
     </a>
-</section>
+</div>
 {% endif %}
 
 <div id="document-original-preview"></div>
 
-<section class="findus-section">
-    <div id="document-meta">
-        {% include "documents/partials/_detail_meta.html" %}
-    </div>
-</section>
+<div class="findus-detail-layout">
+    <div class="findus-detail-main">
+        <section class="findus-section">
+            <h2 class="findus-section-title">Zusammenfassung</h2>
+            <div class="findus-card findus-detail-summary-primary">
+                {% if document.summary %}
+                <p class="findus-ai-disclaimer text-muted small">
+                    KI-generiert – maßgeblich bleibt das Original.
+                </p>
+                <p class="findus-detail-summary-text">{{ document.summary }}</p>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Zusammenfassung</h2>
-    <div class="findus-card findus-detail-summary-primary">
-        {% if document.summary %}
-        <p class="findus-ai-disclaimer text-muted small">
-            KI-generiert – maßgeblich bleibt das Original.
-        </p>
-        <p class="findus-detail-summary-text">{{ document.summary }}</p>
-
-        <div class="findus-detail-keyfacts">
-            <h3 class="findus-section-subtitle">
-                Kern-Infos <span class="badge text-bg-info">KI-extrahiert</span>
-            </h3>
-            <dl class="findus-detail-meta-list">
-                <div>
-                    <dt>Kontakt</dt>
-                    <dd>
-                        {% if document.correspondent %}{{ document.correspondent.name }}{% elif document.key_facts.sender_name %}{{ document.key_facts.sender_name }}{% else %}—{% endif %}
-                    </dd>
+                <div class="findus-detail-keyfacts">
+                    <h3 class="findus-section-subtitle">
+                        Kern-Infos <span class="badge text-bg-info">KI-extrahiert</span>
+                    </h3>
+                    <dl class="findus-detail-meta-list">
+                        <div>
+                            <dt>Kontakt</dt>
+                            <dd>
+                                {% if document.correspondent %}{{ document.correspondent.name }}{% elif document.key_facts.sender_name %}{{ document.key_facts.sender_name }}{% else %}—{% endif %}
+                            </dd>
+                        </div>
+                        <div><dt>Datum</dt><dd>{{ document.document_date|date:"d.m.Y"|default:"—" }}</dd></div>
+                        <div><dt>Typ</dt><dd>{{ document.key_facts.document_type|default:"—" }}</dd></div>
+                        <div>
+                            <dt>Betrag/Frist</dt>
+                            <dd>
+                                {% if document.key_facts.amount %}{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}{% else %}—{% endif %}
+                                {% if document.key_facts.due_date %} · fällig {{ document.key_facts.due_date }}{% endif %}
+                            </dd>
+                        </div>
+                        <div><dt>Sprache</dt><dd>{{ document.metadata.language|language_label }}</dd></div>
+                    </dl>
                 </div>
-                <div><dt>Datum</dt><dd>{{ document.document_date|date:"d.m.Y"|default:"—" }}</dd></div>
-                <div><dt>Typ</dt><dd>{{ document.key_facts.document_type|default:"—" }}</dd></div>
-                <div>
-                    <dt>Betrag/Frist</dt>
-                    <dd>
-                        {% if document.key_facts.amount %}{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}{% else %}—{% endif %}
-                        {% if document.key_facts.due_date %} · fällig {{ document.key_facts.due_date }}{% endif %}
-                    </dd>
-                </div>
-                <div><dt>Sprache</dt><dd>{{ document.metadata.language|language_label }}</dd></div>
-            </dl>
-        </div>
 
-        <details class="findus-detail-raw">
-            <summary>Volltext anzeigen (Rohtext/Markdown)</summary>
-            <div class="findus-card findus-detail-content">
-                {% if document.markdown %}
-                <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
-                {% elif document.text_content %}
-                <pre class="findus-detail-text">{{ document.text_content }}</pre>
+                <details class="findus-detail-raw">
+                    <summary>Volltext anzeigen (Rohtext/Markdown)</summary>
+                    <div class="findus-card findus-detail-content">
+                        {% if document.markdown %}
+                        <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
+                        {% elif document.text_content %}
+                        <pre class="findus-detail-text">{{ document.text_content }}</pre>
+                        {% else %}
+                        <p class="text-muted">Kein Text vorhanden.</p>
+                        {% endif %}
+                    </div>
+                </details>
                 {% else %}
-                <p class="text-muted">Kein Text vorhanden.</p>
+                <p class="text-muted">
+                    Noch keine KI-Zusammenfassung vorhanden. Es wird der Rohtext aus der Extraktion angezeigt.
+                </p>
+                <div class="findus-card findus-detail-content">
+                    {% if document.markdown %}
+                    <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
+                    {% elif document.text_content %}
+                    <pre class="findus-detail-text">{{ document.text_content }}</pre>
+                    {% else %}
+                    <p class="text-muted">Kein Text vorhanden.</p>
+                    {% endif %}
+                </div>
                 {% endif %}
             </div>
-        </details>
-        {% else %}
-        <p class="text-muted">
-            Noch keine KI-Zusammenfassung vorhanden. Es wird der Rohtext aus der Extraktion angezeigt.
-        </p>
-        <div class="findus-card findus-detail-content">
-            {% if document.markdown %}
-            <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
-            {% elif document.text_content %}
-            <pre class="findus-detail-text">{{ document.text_content }}</pre>
-            {% else %}
-            <p class="text-muted">Kein Text vorhanden.</p>
+        </section>
+    </div>
+
+    <aside class="findus-detail-sidebar">
+        {% if document.correspondent or document.vorgaenge.all %}
+        {% comment %}
+        Schnellzugriff (#1098): von hier soll man ohne Umweg über die
+        Zuordnung direkt zum Kontakt- bzw. Vorgang-Hub springen koennen.
+        {% endcomment %}
+        <nav class="findus-section findus-detail-hub-links" aria-label="Schnellzugriff Kontakt und Vorgänge">
+            {% if document.correspondent %}
+            <div class="findus-detail-hub-link-group">
+                <span class="findus-detail-hub-link-label">Kontakt</span>
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:correspondent_detail' document.correspondent.pk %}">
+                    {{ document.correspondent.name }}
+                </a>
+            </div>
             {% endif %}
-        </div>
+            {% if document.vorgaenge.all %}
+            <div class="findus-detail-hub-link-group">
+                <span class="findus-detail-hub-link-label">Vorgänge</span>
+                {% for vorgang in document.vorgaenge.all %}
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:vorgang_detail' vorgang.pk %}">
+                    {{ vorgang.name }}
+                </a>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </nav>
         {% endif %}
-    </div>
-</section>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
-    <div id="document-tasks">
-        {% include "documents/partials/_detail_tasks.html" %}
-    </div>
-</section>
+        <section class="findus-section">
+            <div id="document-meta">
+                {% include "documents/partials/_detail_meta.html" %}
+            </div>
+        </section>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Kennungen &amp; Referenznummern</h2>
-    {% comment %}
-    Anders als der Ähnlichkeits-Block (#1088) direkt mitgerendert: der
-    Match läuft über den Index auf (type, value_normalized) und ist
-    damit ein gewöhnlicher Lookup, kein kNN, das den Seitenaufbau
-    aufhalten würde.
-    {% endcomment %}
-    <div id="document-references">
-        {% include "documents/partials/_detail_references.html" %}
-    </div>
-</section>
+        <section class="findus-section">
+            <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
+            <div id="document-tasks">
+                {% include "documents/partials/_detail_tasks.html" %}
+            </div>
+        </section>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Ähnliche Dokumente</h2>
-    {% comment %}
-    Nachgeladen (#1088): die kNN-Query ist Beiwerk und soll den Aufbau
-    von Titel/Zusammenfassung/Original nicht aufhalten.
-    {% endcomment %}
-    <div
-        id="document-related"
-        hx-get="{% url 'documents:related' document.pk %}"
-        hx-trigger="load"
-        hx-swap="innerHTML"
-    >
-        <p class="text-muted">Wird geladen …</p>
-    </div>
-</section>
+        {% comment %}
+        Die drei Beziehungs-Blöcke gehören inhaltlich zusammen -- eine
+        gemeinsame Karte statt dreier gleichrangiger Sektionen macht das
+        sichtbar, ohne die einzelnen HTMX-Targets (#document-references,
+        #document-related, #document-children) anzufassen.
+        {% endcomment %}
+        <section class="findus-section findus-detail-context-group">
+            <h2 class="findus-section-title">Verknüpfungen &amp; Kontext</h2>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Unterdokumente</h2>
-    <div id="document-children">
-        {% include "documents/partials/_detail_children.html" %}
-    </div>
-</section>
+            <div class="findus-detail-context-block">
+                <h3 class="findus-section-subtitle">Kennungen &amp; Referenznummern</h3>
+                {% comment %}
+                Anders als der Ähnlichkeits-Block (#1088) direkt mitgerendert: der
+                Match läuft über den Index auf (type, value_normalized) und ist
+                damit ein gewöhnlicher Lookup, kein kNN, das den Seitenaufbau
+                aufhalten würde.
+                {% endcomment %}
+                <div id="document-references">
+                    {% include "documents/partials/_detail_references.html" %}
+                </div>
+            </div>
+
+            <div class="findus-detail-context-block">
+                <h3 class="findus-section-subtitle">Ähnliche Dokumente</h3>
+                {% comment %}
+                Nachgeladen (#1088): die kNN-Query ist Beiwerk und soll den Aufbau
+                von Titel/Zusammenfassung/Original nicht aufhalten.
+                {% endcomment %}
+                <div
+                    id="document-related"
+                    hx-get="{% url 'documents:related' document.pk %}"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
+                >
+                    <p class="text-muted">Wird geladen …</p>
+                </div>
+            </div>
+
+            <div class="findus-detail-context-block">
+                <h3 class="findus-section-subtitle">Unterdokumente</h3>
+                <div id="document-children">
+                    {% include "documents/partials/_detail_children.html" %}
+                </div>
+            </div>
+        </section>
+    </aside>
+</div>
 {% endblock %}
 
 {% block scripts %}
