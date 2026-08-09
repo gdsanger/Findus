@@ -360,6 +360,25 @@ FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS = int(
 )
 
 # --------------------------------------------------------------------------
+# KI-Entwurf einer Brief-Vorlage (#1097,
+# apps.documents.letter_template_ai): ein `generate()`-Call pro Klick auf
+# „Mit KI erstellen", synchron im Request -- der Nutzer wartet ohnehin auf
+# das Ergebnis, das nirgends gespeichert wird, sondern nur das Formular
+# vorbefüllt. MAX_PLACEHOLDERS ist die Obergrenze an Platzhalter-
+# Vorschlägen (im Prompt genannt und beim Parsen hart durchgesetzt): eine
+# Vorlage mit 40 Bindungen wäre keine Hilfe, sondern Aufräumarbeit.
+# MAX_OUTPUT_TOKENS deckt Anleitung (Markdown, der längste Teil) plus die
+# Platzhalter-Liste; reicht es nicht, wiederholt `generate_json` den Call
+# mit dem doppelten Budget statt abgeschnittenes JSON zu flicken (#1096).
+# --------------------------------------------------------------------------
+FINDUS_LETTER_TEMPLATE_DRAFT_MAX_PLACEHOLDERS = int(
+    env("FINDUS_LETTER_TEMPLATE_DRAFT_MAX_PLACEHOLDERS", "12")
+)
+FINDUS_LETTER_TEMPLATE_DRAFT_MAX_OUTPUT_TOKENS = int(
+    env("FINDUS_LETTER_TEMPLATE_DRAFT_MAX_OUTPUT_TOKENS", "3000")
+)
+
+# --------------------------------------------------------------------------
 # Extraction cascade (apps.documents.extraction, #1009): text-layer -> OCR
 # -> vision, cheapest usable stage wins. A page only escalates to the next
 # (more expensive) stage when the current one produced fewer than
