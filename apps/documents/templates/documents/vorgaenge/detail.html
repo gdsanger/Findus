@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load documents_extras %}
 {% block title %}{{ vorgang.name }} – Vorgang – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title=vorgang.name %}
@@ -6,7 +7,7 @@
 <section class="findus-section findus-hub-header">
     <div class="findus-hub-summary">
         <div class="findus-chip-row">
-            <span class="badge text-bg-secondary fw-normal">{{ vorgang.get_status_display }}</span>
+            <span class="badge {{ vorgang.status|vorgang_status_badge_class }} fw-normal">{{ vorgang.get_status_display }}</span>
             {% if vorgang.department %}<span class="badge text-bg-secondary fw-normal">{{ vorgang.department.name }}</span>{% endif %}
         </div>
         <dl class="findus-detail-meta-list">

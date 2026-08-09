@@ -29,11 +29,19 @@ VORGANG_SORT_FIELDS = {
     "activity": "-last_activity",
 }
 
+VORGANG_STATUS_FILTER_CHOICES = [("open", "Offen"), ("closed", "Abgeschlossen")]
+
 
 @login_required
 def vorgang_list(request):
+    """Vorgänge-Index (#1040), grouped offen/abgeschlossen (#1084): the
+    `status` filter is the coarse open-vs-closed distinction users care
+    about here, not the three-way `Vorgang.Status` -- `in_progress` counts
+    as "offen" for grouping/filtering purposes, it just keeps its own badge.
+    """
     query = request.GET.get("q", "").strip()
     sort = request.GET.get("sort", "name").strip()
+    status_filter = request.GET.get("status", "").strip()
     order_by = VORGANG_SORT_FIELDS.get(sort, "name")
 
     visible_documents = Document.objects.visible_to(request.user)
@@ -46,13 +54,28 @@ def vorgang_list(request):
         ),
     )
     if query:
-        vorgaenge = vorgaenge.filter(name__icontains=query)
+        vorgaenge = vorgaenge.filter(Q(name__icontains=query) | Q(description__icontains=query))
+    if status_filter == "open":
+        vorgaenge = vorgaenge.exclude(status=Vorgang.Status.CLOSED)
+    elif status_filter == "closed":
+        vorgaenge = vorgaenge.filter(status=Vorgang.Status.CLOSED)
     vorgaenge = vorgaenge.order_by(order_by, "name")
 
+    open_vorgaenge = []
+    closed_vorgaenge = []
+    for vorgang in vorgaenge:
+        if vorgang.status == Vorgang.Status.CLOSED:
+            closed_vorgaenge.append(vorgang)
+        else:
+            open_vorgaenge.append(vorgang)
+
     context = {
-        "vorgaenge": vorgaenge,
+        "open_vorgaenge": open_vorgaenge,
+        "closed_vorgaenge": closed_vorgaenge,
         "search_query": query,
         "sort": sort,
+        "status_choices": VORGANG_STATUS_FILTER_CHOICES,
+        "selected": {"status": status_filter},
     }
     return render(request, "documents/vorgaenge/list.html", context)
 
