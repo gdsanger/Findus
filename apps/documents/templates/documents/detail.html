@@ -74,7 +74,7 @@
                         {% if document.correspondent %}{{ document.correspondent.name }}{% elif document.key_facts.sender_name %}{{ document.key_facts.sender_name }}{% else %}—{% endif %}
                     </dd>
                 </div>
-                <div><dt>Datum</dt><dd>{{ document.key_facts.document_date|default:"—" }}</dd></div>
+                <div><dt>Datum</dt><dd>{{ document.document_date|date:"d.m.Y"|default:"—" }}</dd></div>
                 <div><dt>Typ</dt><dd>{{ document.key_facts.document_type|default:"—" }}</dd></div>
                 <div>
                     <dt>Betrag/Frist</dt>

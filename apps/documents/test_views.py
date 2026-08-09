@@ -1,6 +1,7 @@
 import io
 import shutil
 import tempfile
+from datetime import date
 from unittest.mock import patch
 
 from django.conf import settings
@@ -308,6 +309,53 @@ class DocumentListViewTests(TestCase):
 
         self.assertContains(response, reverse("documents:delete", args=[self.own_doc.id]))
 
+    def test_list_row_shows_document_date_not_upload_date(self):
+        self.own_doc.document_date = date(2020, 3, 1)
+        self.own_doc.save(update_fields=["document_date"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "01.03.2020")
+        self.assertNotContains(response, "(Upload)")
+
+    def test_list_row_marks_upload_date_fallback(self):
+        """`own_doc` has no `document_date` -- the Datum column must fall
+
+        back to the Upload-Datum (#1085) and mark it as such, not display
+        it as an unqualified/possibly-misleading Dokumentdatum.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "(Upload)")
+
+    def test_list_orders_by_document_date_desc_with_upload_fallback(self):
+        """Default-Sortierung (#1085): `document_date` absteigend, mit dem
+
+        Upload-Datum als Fallback fuer Dokumente ohne erkanntes Datum --
+        ein Fallback-Dokument muss an seiner chronologisch richtigen
+        Stelle einsortiert werden, nicht pauschal ans Ende rutschen.
+        """
+        self.own_doc.document_date = date(2026, 1, 1)
+        self.own_doc.save(update_fields=["document_date"])
+        self.other_dept_doc.departments.add(self.dept_a)
+        self.other_dept_doc.document_date = date(2026, 6, 1)
+        self.other_dept_doc.save(update_fields=["document_date"])
+        undated = Document.objects.create(
+            title="Ohne erkanntes Datum", visibility=Document.Visibility.DEPARTMENT
+        )
+        undated.departments.add(self.dept_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        titles = [doc.title for doc in response.context["page_obj"]]
+        # other_dept_doc (2026-06-01) > undated (Upload-Datum, "heute") > own_doc (2026-01-01)
+        self.assertEqual(
+            titles, ["Ohne erkanntes Datum", "Vertrag Other GmbH", "Rechnung Acme"]
+        )
+
 
 class DocumentSearchViewTests(TestCase):
     """Covers the semantic search bar (#1015): a `q` param on the document
@@ -561,7 +609,8 @@ class DocumentDetailViewTests(TestCase):
             "currency": "EUR",
             "due_date": "2026-02-01",
         }
-        self.doc.save(update_fields=["markdown", "summary", "key_facts"])
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.save(update_fields=["markdown", "summary", "key_facts", "document_date"])
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
@@ -569,7 +618,7 @@ class DocumentDetailViewTests(TestCase):
         self.assertContains(response, "Rechnung von Acme über 123 EUR, fällig am 01.02.2026.")
         self.assertContains(response, "KI-extrahiert")
         self.assertContains(response, "Rechnung")
-        self.assertContains(response, "2026-01-15")
+        self.assertContains(response, "15.01.2026")
         self.assertContains(response, "123 EUR")
         self.assertContains(response, "2026-02-01")
         self.assertContains(response, "KI-generiert")
@@ -1447,6 +1496,48 @@ class DocumentMetaEditTests(TestCase):
 
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.direction, Document.Direction.AUSGANG)
+
+    def test_edit_form_shows_current_document_date(self):
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.save(update_fields=["document_date"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertContains(response, 'value="2026-01-15"')
+
+    def test_post_updates_document_date(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"document_date": "2026-01-15"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.document_date, date(2026, 1, 15))
+        self.assertContains(response, "15.01.2026")
+
+    def test_post_can_clear_document_date(self):
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.save(update_fields=["document_date"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:meta", args=[self.doc.id]), {"document_date": ""})
+
+        self.doc.refresh_from_db()
+        self.assertIsNone(self.doc.document_date)
+
+    def test_post_with_invalid_document_date_keeps_previous_value(self):
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.save(update_fields=["document_date"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"document_date": "not-a-date"}
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.document_date, date(2026, 1, 15))
 
     def test_post_with_non_numeric_correspondent_clears_instead_of_500(self):
         self.client.force_login(self.user_a)

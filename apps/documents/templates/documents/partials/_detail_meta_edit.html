@@ -37,6 +37,16 @@
                 </select>
             </div>
             <div class="findus-filter-field">
+                <label class="form-label" for="meta-document-date">Dokumentdatum</label>
+                <input
+                    type="date"
+                    id="meta-document-date"
+                    name="document_date"
+                    class="form-control form-control-sm"
+                    value="{{ document.document_date|date:'Y-m-d' }}"
+                >
+            </div>
+            <div class="findus-filter-field">
                 <label class="form-label" for="meta-vorgaenge">Vorgänge</label>
                 <select id="meta-vorgaenge" name="vorgaenge" class="form-select form-select-sm" multiple size="4">
                     {% for vorgang in all_vorgaenge %}
