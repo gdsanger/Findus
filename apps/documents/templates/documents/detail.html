@@ -250,14 +250,75 @@ darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
     // The preview panel is fetched via HTMX (no hard reload); once it's
     // swapped in, show it as a Bootstrap Offcanvas -- closing again is
     // plain Bootstrap (data-bs-dismiss), no request involved.
+    var PREVIEW_WIDTH_STORAGE_KEY = "findus-preview-panel-width";
+    var PREVIEW_MIN_WIDTH = 360;
+    var PREVIEW_MAX_WIDTH_RATIO = 0.8;
+    var PREVIEW_MOBILE_BREAKPOINT = 768;
+
+    function applyStoredPreviewWidth(panel) {
+        // Unterhalb der Mobile-Breakpoint erzwingt das CSS 100vw; eine
+        // per Inline-Style gesetzte Breite hätte dank höherer Spezifität
+        // Vorrang und würde das aushebeln.
+        if (window.innerWidth <= PREVIEW_MOBILE_BREAKPOINT) {
+            return;
+        }
+        var stored = parseFloat(localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY));
+        if (stored) {
+            panel.style.width = stored + "px";
+        }
+    }
+
     document.body.addEventListener("htmx:afterSwap", function (event) {
         if (event.detail.target.id !== "document-original-preview") {
             return;
         }
         var panel = event.detail.target.querySelector(".findus-preview-offcanvas");
         if (panel) {
+            applyStoredPreviewWidth(panel);
             bootstrap.Offcanvas.getOrCreateInstance(panel).show();
         }
+    });
+
+    // Drag-Resize am linken Panelrand (#1106). Pointer-Capture auf dem
+    // Handle sorgt dafür, dass move/up-Events dort ankommen, auch wenn der
+    // Zeiger während des Ziehens über das PDF-<iframe> wandert (dessen
+    // eigenes Dokument würde sonst die Maus-Events schlucken).
+    document.body.addEventListener("pointerdown", function (event) {
+        var handle = event.target.closest(".findus-preview-resize-handle");
+        if (!handle) {
+            return;
+        }
+        var panel = handle.closest(".findus-preview-offcanvas");
+        if (!panel) {
+            return;
+        }
+
+        var startX = event.clientX;
+        var startWidth = panel.getBoundingClientRect().width;
+        handle.setPointerCapture(event.pointerId);
+        document.body.classList.add("findus-preview-resizing");
+
+        function onMove(moveEvent) {
+            var delta = startX - moveEvent.clientX;
+            var maxWidth = window.innerWidth * PREVIEW_MAX_WIDTH_RATIO;
+            var newWidth = Math.min(maxWidth, Math.max(PREVIEW_MIN_WIDTH, startWidth + delta));
+            panel.style.width = newWidth + "px";
+        }
+
+        function onUp(upEvent) {
+            handle.releasePointerCapture(upEvent.pointerId);
+            handle.removeEventListener("pointermove", onMove);
+            handle.removeEventListener("pointerup", onUp);
+            document.body.classList.remove("findus-preview-resizing");
+            localStorage.setItem(
+                PREVIEW_WIDTH_STORAGE_KEY,
+                Math.round(panel.getBoundingClientRect().width)
+            );
+        }
+
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+        event.preventDefault();
     });
 </script>
 {% endblock %}
