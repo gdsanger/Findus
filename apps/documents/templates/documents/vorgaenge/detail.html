@@ -27,8 +27,10 @@
         >
             Bearbeiten
         </button>
-        {# Zweiter Einstieg in den Brief-Assistenten (#1095) -- ohne
-           Bezugsdokument, dafür mit dem Vorgang als Kontext. #}
+        {% comment %}
+        Zweiter Einstieg in den Brief-Assistenten (#1095) -- ohne
+        Bezugsdokument, dafür mit dem Vorgang als Kontext.
+        {% endcomment %}
         <a
             class="btn btn-sm btn-outline-secondary"
             href="{% url 'documents:letter_draft_start' %}?vorgang={{ vorgang.pk }}"
@@ -97,9 +99,11 @@
 
 <section class="findus-section">
     <h2 class="findus-section-title">Kennungen</h2>
-    {# Die fallbezogenen Kennungen dieses Vorgangs (#1100) -- Grundlage
-       dafür, dass ein neues Dokument mit derselben Nummer hier
-       vorgeschlagen wird. #}
+    {% comment %}
+    Die fallbezogenen Kennungen dieses Vorgangs (#1100) -- Grundlage
+    dafür, dass ein neues Dokument mit derselben Nummer hier
+    vorgeschlagen wird.
+    {% endcomment %}
     <div id="vorgang-references">
         {% include "documents/partials/_owner_references.html" %}
     </div>
