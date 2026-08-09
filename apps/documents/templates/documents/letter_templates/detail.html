@@ -7,16 +7,9 @@
     <a href="{% url 'documents:letter_template_list' %}" class="btn btn-sm btn-outline-secondary">Zurück zur Liste</a>
 </section>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Bearbeiten</h2>
-    <form method="post" enctype="multipart/form-data" class="findus-card findus-task-form">
-        {% csrf_token %}
-        {% include "documents/letter_templates/_form_fields.html" %}
-        <div class="findus-detail-meta-edit-actions">
-            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
-        </div>
-    </form>
-</section>
+<div id="letter-template-editor">
+    {% include "documents/letter_templates/partials/_editor.html" %}
+</div>
 
 <section class="findus-section">
     <h2 class="findus-section-title">Platzhalter / Daten-Bindungen</h2>

@@ -220,6 +220,51 @@ class LetterTemplateForm(forms.ModelForm):
         return template
 
 
+class LetterTemplateDraftForm(forms.Form):
+    """Die Eingabe für „Mit KI erstellen" (#1097): kurze Absicht, optional
+    Kategorie- und Ton-Hinweis.
+
+    Ein reines `forms.Form` -- es gibt hier nichts zu speichern, die Absicht
+    ist Prompt-Material für einen Call und danach vergessen. Das Ergebnis
+    füllt `LetterTemplateForm` vor, gespeichert wird erst auf Knopfdruck.
+    """
+
+    intent = forms.CharField(
+        label="Was soll die Vorlage können?",
+        max_length=2000,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control form-control-sm",
+                "rows": 3,
+                "placeholder": (
+                    "Widerspruch gegen eine Inkasso-Forderung, sachlich-bestimmt, "
+                    "mit Fristsetzung"
+                ),
+            }
+        ),
+    )
+    category_hint = forms.CharField(
+        label="Kategorie (optional)",
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control form-control-sm",
+                "list": "letter-template-categories",
+                "autocomplete": "off",
+            }
+        ),
+    )
+    tone = forms.CharField(
+        label="Ton / Stil (optional)",
+        required=False,
+        max_length=200,
+        widget=forms.TextInput(
+            attrs={"class": "form-control form-control-sm", "placeholder": "höflich, aber bestimmt"}
+        ),
+    )
+
+
 class LetterTemplatePlaceholderForm(forms.ModelForm):
     """Eine Daten-Bindung (#1094). `source` bekommt seine Auswahl aus der
     Quellen-Registry (`letter_bindings.source_choices`), nicht aus einer

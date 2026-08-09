@@ -196,6 +196,14 @@ urlpatterns = [
         letter_template_views.letter_template_create,
         name="letter_template_create",
     ),
+    # Ohne <pk>: derselbe Endpunkt bedient Neu- und Bearbeiten-Seite, die
+    # Vorlage (falls es schon eine gibt) kommt als `template_pk` im POST
+    # -- ein Entwurf gehört zum Formular, nicht zu einem Datensatz (#1097).
+    path(
+        "brief-vorlagen/ki-entwurf/",
+        letter_template_views.letter_template_draft,
+        name="letter_template_draft",
+    ),
     path(
         "brief-vorlagen/<int:pk>/",
         letter_template_views.letter_template_detail,

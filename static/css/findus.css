@@ -1431,3 +1431,23 @@ a.findus-kpi-card:focus-visible {
     margin-top: var(--findus-space-1);
     font-size: var(--findus-font-size-sm);
 }
+
+/* KI-Entwurf einer Brief-Vorlage (#1097) --------------------------------- */
+.findus-letter-ai {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-4);
+}
+
+.findus-letter-ai-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-3);
+}
+
+.findus-letter-ai-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+}

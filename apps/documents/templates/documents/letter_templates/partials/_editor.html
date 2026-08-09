@@ -1,0 +1,111 @@
+{% comment %}
+Editor einer Brief-Vorlage: KI-Panel (#1097) + Formular + Platzhalter-
+Vorschläge (#1094). Ein einziges Fragment für Neu- und Bearbeiten-Seite
+und zugleich Swap-Ziel von „Mit KI erstellen": das Panel schickt das
+Formular mit (hx-include) und bekommt es vorbefüllt zurück, deshalb
+müssen beide im selben Ziel liegen.
+
+Gespeichert wird hier nichts: der Entwurf füllt nur Felder, erst der
+Speichern-Button des unteren Formulars schreibt.
+{% endcomment %}
+<section class="findus-section">
+    <h2 class="findus-section-title">Mit KI erstellen</h2>
+    <form
+        class="findus-card findus-letter-ai"
+        method="post"
+        action="{% url 'documents:letter_template_draft' %}"
+        hx-post="{% url 'documents:letter_template_draft' %}"
+        hx-target="#letter-template-editor"
+        hx-swap="innerHTML"
+        hx-include="#letter-template-form"
+        hx-indicator="#letter-template-draft-indicator"
+        hx-disabled-elt="find button"
+    >
+        {% csrf_token %}
+        <input type="hidden" name="template_pk" value="{{ template.pk|default_if_none:'' }}">
+
+        <p class="findus-ai-disclaimer text-muted small">
+            KI-generierter Vorschlag für Anleitung und Platzhalter – keine Rechts-/
+            Steuerberatung. Nichts davon wird gespeichert: das Ergebnis füllt nur die
+            Felder unten, prüfen und anpassen bleibt Ihre Sache.
+        </p>
+
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ draft_form.intent.id_for_label }}">{{ draft_form.intent.label }}</label>
+            {{ draft_form.intent }}
+            <div class="form-text">
+                Ein bis zwei Sätze genügen: Anlass, gewünschte Wirkung, Besonderheiten
+                (z. B. Frist, Anlagen, Aktenzeichen).
+            </div>
+            {% if draft_form.intent.errors %}<div class="text-danger small">{{ draft_form.intent.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="findus-task-form-row">
+            <div class="findus-task-form-group">
+                <label class="form-label" for="{{ draft_form.category_hint.id_for_label }}">{{ draft_form.category_hint.label }}</label>
+                {{ draft_form.category_hint }}
+                {% if draft_form.category_hint.errors %}<div class="text-danger small">{{ draft_form.category_hint.errors|striptags }}</div>{% endif %}
+            </div>
+            <div class="findus-task-form-group">
+                <label class="form-label" for="{{ draft_form.tone.id_for_label }}">{{ draft_form.tone.label }}</label>
+                {{ draft_form.tone }}
+                {% if draft_form.tone.errors %}<div class="text-danger small">{{ draft_form.tone.errors|striptags }}</div>{% endif %}
+            </div>
+        </div>
+
+        <div class="findus-letter-ai-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Mit KI erstellen</button>
+            <span id="letter-template-draft-indicator" class="htmx-indicator findus-letter-ai-indicator text-muted small">
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                Entwurf wird erstellt …
+            </span>
+        </div>
+
+        {% if draft_error %}
+        <div class="alert alert-danger py-2 px-3 small mb-0" role="alert">
+            Der Entwurf konnte nicht erstellt werden: {{ draft_error }}
+        </div>
+        {% endif %}
+
+        {% if draft %}
+        <div class="alert alert-success py-2 px-3 small mb-0" role="status">
+            Entwurf übernommen – die Felder unten sind vorbefüllt und editierbar.
+            <strong>Gespeichert ist noch nichts</strong>, dafür unten auf
+            „{{ save_label }}“ klicken.
+            {% if draft.unknown_sources %}
+            <br>
+            Für {{ draft.unknown_sources|length }} Vorschlag/Vorschläge nannte die KI eine
+            Quelle, die es nicht gibt ({{ draft.unknown_sources|join:", " }}) – diese Zeilen
+            stehen auf „Manuelle Eingabe“, bitte prüfen.
+            {% endif %}
+        </div>
+        {% endif %}
+    </form>
+</section>
+
+<section class="findus-section">
+    <h2 class="findus-section-title">{% if template %}Bearbeiten{% else %}Vorlage{% endif %}</h2>
+    <form
+        id="letter-template-form"
+        method="post"
+        action="{{ save_url }}"
+        enctype="multipart/form-data"
+        class="findus-card findus-task-form"
+    >
+        {% csrf_token %}
+        {% include "documents/letter_templates/_form_fields.html" %}
+        {% include "documents/letter_templates/partials/_suggested_placeholders.html" %}
+        {% if not template %}
+        <p class="text-muted small mb-0">
+            Weitere Platzhalter (Daten-Bindungen) werden nach dem Anlegen auf der
+            Vorlagen-Seite gepflegt.
+        </p>
+        {% endif %}
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">{{ save_label }}</button>
+            <a href="{% url 'documents:letter_template_list' %}" class="btn btn-sm btn-outline-secondary">
+                {% if template %}Zurück zur Liste{% else %}Abbrechen{% endif %}
+            </a>
+        </div>
+    </form>
+</section>

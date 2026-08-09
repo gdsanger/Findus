@@ -1,8 +1,13 @@
+import json
+import re
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
 from apps.accounts.models import Department
+from apps.ai.providers.fake import FakeGenerationProvider
 
 from .models import DEFAULT_LETTER_LAYOUT, LetterTemplate, LetterTemplatePlaceholder
 
@@ -292,3 +297,268 @@ class LetterTemplatePlaceholderViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertTrue(LetterTemplatePlaceholder.objects.filter(pk=placeholder.pk).exists())
+
+
+def draft_reply(placeholders=None, **overrides):
+    payload = {
+        "anleitung": "## Ton\nSachlich-bestimmt.\n\n## Aufbau\n1. Bezug nehmen.",
+        "platzhalter": placeholders
+        if placeholders is not None
+        else [
+            {"key": "aktenzeichen", "label": "Aktenzeichen", "quelle": "manual", "pflicht": True},
+            {
+                "key": "empfaenger_adresse",
+                "label": "Empfängeradresse",
+                "quelle": "kontakt.address",
+                "pflicht": False,
+            },
+        ],
+        "name": "Widerspruch Inkasso",
+        "kategorie": "Widerspruch",
+        "beschreibung": "Gegen eine Inkasso-Forderung.",
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def suggestion_payload(index=0, key="aktenzeichen", label="Aktenzeichen", source="manual", take=True):
+    payload = {
+        "suggested_key": key,
+        "suggested_label": label,
+        "suggested_source": source,
+    }
+    if take:
+        payload["suggested_take"] = str(index)
+    return payload
+
+
+class LetterTemplateDraftViewTests(TestCase):
+    """„Mit KI erstellen" (#1097): der Entwurf füllt das Formular vor und
+    speichert nichts.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept A")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+        self.client.force_login(self.user)
+        self.url = reverse("documents:letter_template_draft")
+
+    def _draft(self, data, *, reply=None, provider=None):
+        provider = provider or FakeGenerationProvider(reply=reply or draft_reply())
+        with patch(
+            "apps.documents.letter_template_ai.get_generation_provider",
+            return_value=provider,
+        ):
+            response = self.client.post(self.url, data, headers={"hx-request": "true"})
+        return response, provider
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        self.client.logout()
+        response = self.client.post(self.url, {"intent": "Widerspruch"})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_draft_prefills_the_form_without_saving_anything(self):
+        response, provider = self._draft({"intent": "Widerspruch gegen Inkasso"})
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertContains(response, "Sachlich-bestimmt.")
+        self.assertContains(response, "Widerspruch Inkasso")
+        self.assertContains(response, "Gegen eine Inkasso-Forderung.")
+        self.assertContains(response, 'value="aktenzeichen"')
+        self.assertContains(response, 'value="empfaenger_adresse"')
+        self.assertContains(response, "Gespeichert ist noch nichts")
+        self.assertFalse(LetterTemplate.objects.exists())
+        self.assertFalse(LetterTemplatePlaceholder.objects.exists())
+
+    def test_draft_keeps_values_the_user_already_typed(self):
+        response, _ = self._draft(
+            {
+                "intent": "Widerspruch gegen Inkasso",
+                "name": "Mein eigener Name",
+                "signature": "Christian Angermeier",
+                "instructions": "wird durch den Entwurf ersetzt",
+            }
+        )
+
+        self.assertContains(response, "Mein eigener Name")
+        self.assertContains(response, "Christian Angermeier")
+        self.assertContains(response, "Sachlich-bestimmt.")
+        self.assertNotContains(response, "wird durch den Entwurf ersetzt")
+
+    def test_missing_intent_shows_a_field_error_and_makes_no_call(self):
+        response, provider = self._draft({"intent": "   "})
+
+        self.assertEqual(provider.calls, [])
+        self.assertContains(response, "Mit KI erstellen")
+        self.assertContains(response, "Dieses Feld ist zwingend erforderlich.")
+
+    def test_failed_draft_is_shown_instead_of_failing_silently(self):
+        response, _ = self._draft(
+            {"intent": "Widerspruch"}, reply="Kein JSON, nur Prosa."
+        )
+
+        self.assertContains(response, "Der Entwurf konnte nicht erstellt werden")
+        self.assertFalse(LetterTemplate.objects.exists())
+
+    def test_unknown_source_is_reported_and_bound_to_manual(self):
+        response, _ = self._draft(
+            {"intent": "Widerspruch"},
+            reply=draft_reply(
+                placeholders=[{"key": "aktenzeichen", "quelle": "document.aktenzeichen"}]
+            ),
+        )
+
+        self.assertContains(response, "document.aktenzeichen")
+        self.assertContains(response, "Manuelle Eingabe")
+
+    def test_draft_for_existing_template_marks_keys_that_already_exist(self):
+        template = LetterTemplate.objects.create(
+            name="Widerspruch", visibility=LetterTemplate.Visibility.DEPARTMENT
+        )
+        template.departments.add(self.dept)
+        LetterTemplatePlaceholder.objects.create(
+            template=template, key="aktenzeichen", source="manual"
+        )
+
+        response, _ = self._draft(
+            {"intent": "Widerspruch", "template_pk": str(template.pk)}
+        )
+
+        self.assertContains(response, "Schlüssel existiert in dieser Vorlage bereits")
+        self.assertEqual(template.placeholders.count(), 1)
+
+    def test_draft_for_foreign_template_is_404(self):
+        other = LetterTemplate.objects.create(name="Fremd")
+        other.departments.add(Department.objects.create(name="Dept B"))
+
+        response, provider = self._draft(
+            {"intent": "Widerspruch", "template_pk": str(other.pk)}
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(provider.calls, [])
+
+
+class LetterTemplateSuggestedPlaceholderTests(TestCase):
+    """Die Übernahme der vorgeschlagenen Platzhalter (#1097) -- sie
+    entstehen erst beim Speichern der Vorlage.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept A")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+        self.client.force_login(self.user)
+
+    def test_create_adopts_checked_suggestions_only(self):
+        payload = template_payload()
+        payload.update(
+            {
+                "suggested_key": ["aktenzeichen", "empfaenger_adresse"],
+                "suggested_label": ["Aktenzeichen", "Empfängeradresse"],
+                "suggested_source": ["manual", "kontakt.address"],
+                "suggested_take": ["0"],
+                "suggested_required": ["0"],
+            }
+        )
+
+        self.client.post(reverse("documents:letter_template_create"), payload)
+
+        template = LetterTemplate.objects.get(name="Antwort ans Finanzamt")
+        placeholders = list(template.placeholders.all())
+        self.assertEqual([p.key for p in placeholders], ["aktenzeichen"])
+        self.assertEqual(placeholders[0].label, "Aktenzeichen")
+        self.assertEqual(placeholders[0].source, "manual")
+        self.assertTrue(placeholders[0].required)
+
+    def test_invalid_suggestion_blocks_the_save_with_a_message(self):
+        payload = template_payload()
+        payload.update(suggestion_payload(key="Nicht Erlaubt"))
+
+        response = self.client.post(reverse("documents:letter_template_create"), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Platzhalter-Vorschlag")
+        self.assertFalse(LetterTemplate.objects.exists())
+
+    def test_duplicate_suggested_keys_block_the_save(self):
+        payload = template_payload()
+        payload.update(
+            {
+                "suggested_key": ["aktenzeichen", "aktenzeichen"],
+                "suggested_label": ["", ""],
+                "suggested_source": ["manual", "manual"],
+                "suggested_take": ["0", "1"],
+            }
+        )
+
+        response = self.client.post(reverse("documents:letter_template_create"), payload)
+
+        self.assertContains(response, "doppelt vergeben")
+        self.assertFalse(LetterTemplate.objects.exists())
+
+    def test_edit_appends_suggestions_behind_the_existing_placeholders(self):
+        template = LetterTemplate.objects.create(
+            name="Widerspruch", visibility=LetterTemplate.Visibility.DEPARTMENT
+        )
+        template.departments.add(self.dept)
+        LetterTemplatePlaceholder.objects.create(
+            template=template, key="absender", source="self.name", order=1
+        )
+
+        payload = template_payload(name="Widerspruch")
+        payload.update(suggestion_payload(key="aktenzeichen"))
+        self.client.post(
+            reverse("documents:letter_template_detail", args=[template.pk]), payload
+        )
+
+        self.assertEqual(
+            [p.key for p in template.placeholders.all()], ["absender", "aktenzeichen"]
+        )
+
+    def test_suggestion_colliding_with_an_existing_key_blocks_the_save(self):
+        template = LetterTemplate.objects.create(
+            name="Widerspruch", visibility=LetterTemplate.Visibility.DEPARTMENT
+        )
+        template.departments.add(self.dept)
+        LetterTemplatePlaceholder.objects.create(
+            template=template, key="aktenzeichen", source="manual"
+        )
+
+        payload = template_payload(name="Neuer Name")
+        payload.update(suggestion_payload(key="aktenzeichen", source="kontakt.address"))
+        response = self.client.post(
+            reverse("documents:letter_template_detail", args=[template.pk]), payload
+        )
+
+        self.assertContains(response, "schon vergeben")
+        template.refresh_from_db()
+        self.assertEqual(template.name, "Widerspruch")
+        self.assertEqual(template.placeholders.count(), 1)
+
+    def test_unchecked_suggestions_survive_a_validation_error(self):
+        payload = template_payload(name="")
+        payload.update(
+            {
+                "suggested_key": ["aktenzeichen", "empfaenger_adresse"],
+                "suggested_label": ["Aktenzeichen", "Empfängeradresse"],
+                "suggested_source": ["manual", "kontakt.address"],
+                "suggested_take": ["1"],
+            }
+        )
+
+        response = self.client.post(reverse("documents:letter_template_create"), payload)
+
+        self.assertFalse(LetterTemplate.objects.exists())
+        self.assertContains(response, 'value="aktenzeichen"')
+        self.assertContains(response, 'value="empfaenger_adresse"')
+        # Nur die zweite Zeile war angehakt -- und ist es nach dem
+        # Neu-Rendern immer noch.
+        content = response.content.decode()
+        self.assertIsNotNone(
+            re.search(r'id="suggested-take-1"\s+checked', content),
+            "Der Haken der zweiten Vorschlagszeile ging verloren.",
+        )
+        self.assertIsNone(re.search(r'id="suggested-take-0"\s+checked', content))
