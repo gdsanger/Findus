@@ -158,7 +158,7 @@ def vorgang_detail(request, pk):
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
-            "view": request.GET.get("view", "").strip(),
+            "view": request.GET.get("view", "timeline").strip(),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
