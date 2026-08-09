@@ -1,0 +1,60 @@
+{% comment %}
+Der vorlagenabhängige Teil des Erzeugungs-Formulars (#1095): die manuell
+abzufragenden Platzhalter und -- nur zur Ansicht -- die aus Findus-Daten
+vorbefüllten Bindungen.
+
+Swap-Ziel beim Vorlagenwechsel. Die Auto-Bindungen stehen hier bewusst
+sichtbar und nicht editierbar: sichtbar, damit vor dem Generieren auffällt,
+wenn eine Adresse fehlt; nicht editierbar, weil ein hier korrigierter Wert
+nur diesen einen Brief heilen würde und der Kontakt danach weiter falsch
+wäre.
+{% endcomment %}
+{% if template %}
+{% if form.manual_placeholders %}
+<div class="findus-task-form-section">
+    <h3 class="findus-letter-subheading">Angaben für diese Vorlage</h3>
+    {% for field in form.manual_fields %}
+    <div class="findus-task-form-group">
+        <label class="form-label" for="{{ field.id_for_label }}">
+            {{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}
+        </label>
+        {{ field }}
+        {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if bindings %}
+<div class="findus-task-form-section">
+    <h3 class="findus-letter-subheading">Automatisch übernommene Werte</h3>
+    <p class="text-muted small mb-0">
+        Aus Kontakt, eigener Identität, Key-Facts und Vorgang – zur Kontrolle.
+    </p>
+    <dl class="findus-detail-meta-list">
+        {% for binding in bindings %}
+        <div>
+            <dt>
+                {{ binding.placeholder.display_label }}
+                {% if binding.placeholder.required %}<span class="text-danger">*</span>{% endif %}
+            </dt>
+            <dd>
+                {% if binding.value %}{{ binding.value }}{% else %}<span class="text-muted">— nicht ermittelbar</span>{% endif %}
+                <span class="text-muted small">({{ binding.placeholder.source_label }})</span>
+            </dd>
+        </div>
+        {% endfor %}
+    </dl>
+</div>
+{% endif %}
+
+{% if missing_required %}
+<div class="alert alert-warning py-2 px-3 small mb-0" role="alert">
+    Pflichtangaben ohne Wert:
+    {% for placeholder in missing_required %}{{ placeholder.display_label }}{% if not forloop.last %}, {% endif %}{% endfor %}.
+    Der Entwurf lässt sich trotzdem erzeugen – die KI markiert die Lücke dann im
+    Text, statt sie zu erfinden. Besser: den fehlenden Wert erst am Kontakt bzw.
+    Dokument nachtragen.
+</div>
+{% endif %}
+{% endif %}

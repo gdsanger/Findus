@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Schreiben erstellen – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Schreiben erstellen" %}
+
+<section class="findus-section">
+    <p class="findus-ai-disclaimer text-muted small">
+        Die KI formuliert einen <strong>Entwurf</strong> nach der Anleitung der Vorlage –
+        keine Rechts-/Steuerberatung. Sie prüfen und bearbeiten ihn danach; abgelegt oder
+        verschickt wird nichts ohne Ihre Freigabe.
+    </p>
+
+    {% if document %}
+    <p class="text-muted small">
+        Bezug: <a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>
+        {% if vorgang %}
+        · Vorgang <a href="{% url 'documents:vorgang_detail' vorgang.pk %}">{{ vorgang.name }}</a>
+        {% endif %}
+    </p>
+    {% elif vorgang %}
+    <p class="text-muted small">
+        Vorgang: <a href="{% url 'documents:vorgang_detail' vorgang.pk %}">{{ vorgang.name }}</a>
+    </p>
+    {% endif %}
+
+    <form
+        id="letter-draft-start-form"
+        method="post"
+        action="{% url 'documents:letter_draft_start' %}"
+        class="findus-card findus-task-form"
+    >
+        {% csrf_token %}
+        <input type="hidden" name="document" value="{{ document.pk|default_if_none:'' }}">
+        <input type="hidden" name="vorgang" value="{{ vorgang.pk|default_if_none:'' }}">
+
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.template.id_for_label }}">{{ form.template.label }}</label>
+            {% comment %}
+            Vorlagenwechsel lädt den vorlagenabhängigen Teil nach (manuelle
+            Platzhalter + aufgelöste Bindungen): welche Felder abgefragt
+            werden, weiß erst die gewählte Vorlage.
+            {% endcomment %}
+            <select
+                name="template"
+                id="{{ form.template.id_for_label }}"
+                class="form-select form-select-sm"
+                hx-get="{% url 'documents:letter_draft_start' %}"
+                hx-target="#letter-draft-template-fields"
+                hx-swap="innerHTML"
+                hx-include="#letter-draft-start-form"
+            >
+                <option value="">– Vorlage wählen –</option>
+                {% for option in templates %}
+                <option value="{{ option.pk }}"{% if template and option.pk == template.pk %} selected{% endif %}>
+                    {% if option.category %}{{ option.category }} · {% endif %}{{ option.name }}
+                </option>
+                {% endfor %}
+            </select>
+            {% if form.template.errors %}<div class="text-danger small">{{ form.template.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div id="letter-draft-template-fields">
+            {% include "documents/letters/partials/_template_fields.html" %}
+        </div>
+
+        <div class="findus-task-form-group">
+            <label class="form-label" for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
+            {{ form.notes }}
+            {% if form.notes.errors %}<div class="text-danger small">{{ form.notes.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Entwurf generieren</button>
+            {% if document %}
+            <a href="{% url 'documents:detail' document.pk %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>
+            {% elif vorgang %}
+            <a href="{% url 'documents:vorgang_detail' vorgang.pk %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>
+            {% else %}
+            <a href="{% url 'documents:home' %}" class="btn btn-sm btn-outline-secondary">Abbrechen</a>
+            {% endif %}
+        </div>
+    </form>
+</section>
+{% endblock %}

@@ -1,0 +1,194 @@
+{% comment %}
+Die Werkbank eines Brief-Entwurfs (#1095): Poll-Ziel während der
+Generierung, Editor danach, Freigabe zum Schluss. Ein einziges Fragment,
+weil sich beim Bearbeiten/Neu-Rendern/Neu-Generieren alles darin ändert --
+Status, Text, Dateien, Meldungen.
+
+Freigegeben wird ausschließlich über den POST unten, mit Bestätigung.
+Verschickt wird gar nichts (das ist #5).
+{% endcomment %}
+<div
+    id="letter-draft-panel"
+    {% if draft.is_running %}
+    hx-get="{% url 'documents:letter_draft_panel' draft.pk %}"
+    hx-trigger="every 3s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    {% endif %}
+>
+    {% if draft.is_finalized %}
+    <div class="alert alert-success py-2 px-3 small" role="status">
+        {% if draft.document %}
+        Freigegeben und als Dokument abgelegt:
+        <a href="{% url 'documents:detail' draft.document.pk %}">{{ draft.document.title }}</a>
+        {% else %}
+        {# Das abgelegte Dokument wurde später gelöscht (FK on_delete=SET_NULL) --
+           der Entwurf bleibt als Beleg stehen, hat aber nichts mehr zu verlinken. #}
+        Freigegeben – das daraus abgelegte Dokument wurde inzwischen gelöscht.
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if message %}
+    <div class="alert alert-success py-2 px-3 small" role="status">{{ message }}</div>
+    {% endif %}
+
+    {% if draft.error %}
+    <div class="alert alert-danger py-2 px-3 small" role="alert">
+        {% if draft.status == 'failed' %}Der Entwurf konnte nicht erzeugt werden: {% endif %}{{ draft.error }}
+        {% if draft.status == 'failed' %}
+        <br>Sie können es erneut versuchen oder den Text unten selbst schreiben.
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if draft.is_running %}
+    <p class="text-muted small">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        Der Entwurf wird formuliert …
+    </p>
+    {% endif %}
+
+    <section class="findus-section">
+        <h2 class="findus-section-title">Entwurf prüfen</h2>
+        <p class="findus-ai-disclaimer text-muted small">
+            KI-generierter Entwurf – keine Rechts-/Steuerberatung. Sie haben das letzte
+            Wort: Text ändern, neu rendern, und erst mit der Freigabe entsteht ein
+            Dokument. Versendet wird nichts.
+        </p>
+
+        <form
+            class="findus-card findus-task-form"
+            method="post"
+            action="{% url 'documents:letter_draft_update' draft.pk %}"
+            hx-post="{% url 'documents:letter_draft_update' draft.pk %}"
+            hx-target="#letter-draft-panel"
+            hx-swap="outerHTML"
+        >
+            {% csrf_token %}
+            <div class="findus-task-form-group">
+                <label class="form-label" for="{{ form.subject.id_for_label }}">{{ form.subject.label }}</label>
+                {{ form.subject }}
+                {% if form.subject.errors %}<div class="text-danger small">{{ form.subject.errors|striptags }}</div>{% endif %}
+            </div>
+            <div class="findus-task-form-group">
+                <label class="form-label" for="{{ form.body_text.id_for_label }}">{{ form.body_text.label }}</label>
+                {{ form.body_text }}
+                <div class="form-text">
+                    Nur der Fließtext ab der Anrede – Anschrift, Datum, Betreff, Grußformel
+                    und Signatur setzt das Layout.
+                </div>
+                {% if form.body_text.errors %}<div class="text-danger small">{{ form.body_text.errors|striptags }}</div>{% endif %}
+            </div>
+            <div class="findus-detail-meta-edit-actions">
+                <button type="submit" class="btn btn-sm btn-primary" {% if not draft.is_editable %}disabled{% endif %}>
+                    Text übernehmen &amp; neu rendern
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <section class="findus-section">
+        <h2 class="findus-section-title">Word und PDF</h2>
+        <div class="findus-card">
+            {% if draft.has_files %}
+            <p class="text-muted small">
+                Word ist der editierbare Master, PDF die Druck-/Sendefassung – beide aus
+                demselben Layout, Stand des letzten Renderns.
+            </p>
+            <div class="findus-detail-actions">
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_download' draft.pk 'docx' %}">
+                    Word herunterladen
+                </a>
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_download' draft.pk 'pdf' %}">
+                    PDF herunterladen
+                </a>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">
+                Noch keine Dateien – sie entstehen, sobald der Text steht.
+            </p>
+            {% endif %}
+        </div>
+    </section>
+
+    {% if placeholder_values %}
+    <section class="findus-section">
+        <h2 class="findus-section-title">Verwendete Werte</h2>
+        <div class="findus-card">
+            <p class="text-muted small">
+                Was aus Vorlage, Kontakt und Bezugsdokument in den Entwurf eingeflossen ist.
+            </p>
+            <dl class="findus-detail-meta-list">
+                {% for key, value in placeholder_values %}
+                <div>
+                    <dt><code>{% templatetag openvariable %}{{ key }}{% templatetag closevariable %}</code></dt>
+                    <dd>{% if value %}{{ value }}{% else %}<span class="text-muted">—</span>{% endif %}</dd>
+                </div>
+                {% endfor %}
+            </dl>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if not draft.is_finalized %}
+    <section class="findus-section">
+        <h2 class="findus-section-title">Nächster Schritt</h2>
+        <div class="findus-card findus-detail-actions">
+            <form
+                method="post"
+                action="{% url 'documents:letter_draft_finalize' draft.pk %}"
+                onsubmit="return confirm('Brief freigeben und als Dokument{% if draft.vorgang %} am Vorgang „{{ draft.vorgang.name }}“{% endif %} ablegen? Versendet wird nichts.');"
+            >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-primary" {% if not draft.is_editable %}disabled{% endif %}>
+                    Freigeben &amp; am Vorgang ablegen
+                </button>
+            </form>
+            <form
+                method="post"
+                action="{% url 'documents:letter_draft_delete' draft.pk %}"
+                onsubmit="return confirm('Diesen Entwurf verwerfen? Text, Word und PDF gehen verloren.');"
+            >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger">Entwurf verwerfen</button>
+            </form>
+        </div>
+        <p class="text-muted small">
+            Bei der Freigabe entsteht ein Dokument mit Richtung „Ausgang“
+            {% if draft.recipient %}und Kontakt „{{ draft.recipient.name }}“{% endif %}
+            {% if draft.vorgang %}am Vorgang „{{ draft.vorgang.name }}“{% endif %}
+            {% if source_document %}, verknüpft mit dem beantworteten Dokument{% endif %}.
+        </p>
+
+        <form
+            class="findus-card findus-task-form"
+            method="post"
+            action="{% url 'documents:letter_draft_regenerate' draft.pk %}"
+            hx-post="{% url 'documents:letter_draft_regenerate' draft.pk %}"
+            hx-target="#letter-draft-panel"
+            hx-swap="outerHTML"
+        >
+            {% csrf_token %}
+            <div class="findus-task-form-group">
+                <label class="form-label" for="letter-draft-notes">Noch einmal formulieren lassen</label>
+                <textarea
+                    id="letter-draft-notes"
+                    name="notes"
+                    rows="2"
+                    class="form-control form-control-sm"
+                    placeholder="Hinweise für den nächsten Versuch – z. B. „kürzer“ oder „Frist deutlicher benennen“."
+                >{{ draft.notes }}</textarea>
+                <div class="form-text">
+                    Der bisherige Text bleibt stehen, bis der neue da ist.
+                </div>
+            </div>
+            <div class="findus-detail-meta-edit-actions">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" {% if draft.is_running %}disabled{% endif %}>
+                    Neu generieren
+                </button>
+            </div>
+        </form>
+    </section>
+    {% endif %}
+</div>

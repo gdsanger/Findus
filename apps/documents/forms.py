@@ -1,8 +1,9 @@
 from django import forms
 
-from .letter_bindings import source_choices
+from .letter_bindings import MANUAL_SOURCE, source_choices
 from .models import (
     Correspondent,
+    LetterDraft,
     LetterTemplate,
     LetterTemplatePlaceholder,
     Tag,
@@ -263,6 +264,106 @@ class LetterTemplateDraftForm(forms.Form):
             attrs={"class": "form-control form-control-sm", "placeholder": "höflich, aber bestimmt"}
         ),
     )
+
+
+class LetterDraftStartForm(forms.Form):
+    """Der Einstieg in einen KI-Brief (#1095): Vorlage wählen, optional
+    Hinweise dazuschreiben.
+
+    Ein `forms.Form` und kein `ModelForm` auf `LetterDraft`: der Entwurf
+    wird aus mehr zusammengesetzt, als hier eingegeben wird (Kontext-
+    Dokument, aufgelöste Bindungen, Layout-Snapshot), und die
+    manuellen Platzhalter sind je nach Vorlage andere Felder -- die hängt
+    `add_manual_fields()` dynamisch an.
+    """
+
+    MANUAL_PREFIX = "manual_"
+
+    template = forms.ModelChoiceField(
+        label="Brief-Vorlage",
+        queryset=LetterTemplate.objects.none(),
+        empty_label="– Vorlage wählen –",
+        widget=_SELECT_WIDGET,
+    )
+    notes = forms.CharField(
+        label="Hinweise für die KI (optional)",
+        required=False,
+        max_length=2000,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control form-control-sm",
+                "rows": 3,
+                "placeholder": (
+                    "Worauf es in diesem Schreiben ankommt – z. B. „Frist bis "
+                    "31.08. setzen“ oder „kurz und persönlich, ich duze den "
+                    "Empfänger“."
+                ),
+            }
+        ),
+    )
+
+    def __init__(self, *args, templates=None, template=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["template"].queryset = (
+            templates if templates is not None else LetterTemplate.objects.none()
+        )
+        self.manual_placeholders = []
+        if template is not None:
+            self.add_manual_fields(template)
+
+    def add_manual_fields(self, template):
+        """Ein Eingabefeld je `manual`-Platzhalter der Vorlage.
+
+        Nur `manual`: alles andere zieht die Bindungs-Schicht (#1094) selbst
+        aus Findus-Daten, und ein zweites, abweichend befülltes Eingabefeld
+        daneben wäre eine Einladung zum Widerspruch.
+        """
+        for placeholder in template.placeholders.all():
+            if placeholder.source != MANUAL_SOURCE:
+                continue
+            self.manual_placeholders.append(placeholder)
+            self.fields[f"{self.MANUAL_PREFIX}{placeholder.key}"] = forms.CharField(
+                label=placeholder.display_label,
+                required=placeholder.required,
+                max_length=500,
+                widget=_TEXT_WIDGET,
+            )
+
+    def manual_values(self):
+        return {
+            name.removeprefix(self.MANUAL_PREFIX): (value or "").strip()
+            for name, value in self.cleaned_data.items()
+            if name.startswith(self.MANUAL_PREFIX)
+        }
+
+    def manual_fields(self):
+        """Die dynamischen Felder für das Template -- `{{ form }}` würde
+        sonst auch Vorlage und Hinweise ein zweites Mal ausgeben.
+        """
+        return [
+            self[f"{self.MANUAL_PREFIX}{placeholder.key}"]
+            for placeholder in self.manual_placeholders
+        ]
+
+
+class LetterDraftEditForm(forms.ModelForm):
+    """Der Review-Editor (#1095): Betreff und Brieftext, sonst nichts.
+
+    Alles andere am Entwurf (Anschrift, Layout, Bindungen) ist Snapshot --
+    editierbar ist genau das, was die KI formuliert hat, denn genau daran
+    hat der Nutzer das letzte Wort.
+    """
+
+    class Meta:
+        model = LetterDraft
+        fields = ["subject", "body_text"]
+        labels = {"subject": "Betreff", "body_text": "Brieftext"}
+        widgets = {
+            "subject": _TEXT_WIDGET,
+            "body_text": forms.Textarea(
+                attrs={"class": "form-control form-control-sm findus-letter-body", "rows": 18}
+            ),
+        }
 
 
 class LetterTemplatePlaceholderForm(forms.ModelForm):
