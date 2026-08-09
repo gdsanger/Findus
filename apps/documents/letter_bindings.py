@@ -33,6 +33,13 @@ from django.utils.formats import date_format
 
 SOURCE_SEPARATOR = "."
 
+# Die Rückfall-/Nachfrage-Quelle: „beim Erzeugen des Schreibens vom Nutzer
+# ausfüllen lassen". Steht hier und nicht bei einem der Aufrufer, weil
+# gleich mehrere sie brauchen -- der Vorlagen-Assistent (#1097) als
+# Rückfall für eine nicht bindbare Quelle, das Erzeugungs-Formular (#1095)
+# als Kriterium dafür, welche Platzhalter es abfragen muss.
+MANUAL_SOURCE = "manual"
+
 
 @dataclass
 class LetterContext:

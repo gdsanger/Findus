@@ -1,5 +1,6 @@
 from .analysis import analyze_document
 from .extraction import extract_document
+from .letter_generation import generate_letter_draft
 from .processing import process_document
 from .recommendations import generate_vorgang_recommendations
 
@@ -51,6 +52,22 @@ def process_document_task(document_id):
     silently dropping it.
     """
     process_document(document_id)
+
+
+def generate_letter_draft_task(draft_id, user_id):
+    """Django-Q2 worker entry point for the KI-Brief (#1095), queued when a
+    Brief-Entwurf is started or re-generated -- never by the ingest
+    pipeline, this only ever runs on demand.
+
+    `user_id` travels along for the same reason as in
+    `generate_vorgang_recommendations_task`: the Kontext des beantworteten
+    Dokuments is `visible_to`-scoped and the worker has no request.
+
+    `generate_letter_draft()` records its own failures on the draft
+    (`status="failed"` + `error`, shown in the review panel) and never
+    raises, so there is nothing left for this wrapper to handle.
+    """
+    generate_letter_draft(draft_id, user_id)
 
 
 def generate_vorgang_recommendations_task(vorgang_id, user_id):
