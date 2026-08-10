@@ -1,0 +1,46 @@
+{% comment %}
+Verwandte Dokumente über gemeinsame Kennungen (#1099), als eigener Block in
+der linken Spalte (#1108): dort ist die Spalte breit genug, dass
+Dokumenttitel nicht mehr umbrechen. Die Eingabe/Korrektur der Kennungen
+selbst bleibt rechts bei "Kennungen & Referenznummern" -- dieser Block
+zeigt nur das Ergebnis. Aktualisiert wird er per Out-of-Band-Swap auf
+#document-reference-groups, sobald rechts eine Kennung angelegt, korrigiert
+oder gelöscht wird (siehe _detail_references_and_groups.html), sonst stünde
+die Trefferliste nach einer Korrektur veraltet neben den bereits
+aktualisierten Kennungen.
+{% endcomment %}
+{% if reference_groups %}
+{% for group in reference_groups %}
+<div class="findus-reference-group">
+    <p class="findus-reference-group-title">
+        <span class="badge text-bg-primary">{{ group.reference.get_type_display }}</span>
+        <span class="findus-reference-group-value">{{ group.reference.value_raw }}</span>
+    </p>
+    {% if group.documents %}
+    <ul class="findus-detail-links">
+        {% for related in group.documents %}
+        <li class="findus-related-item">
+            <div class="findus-related-main">
+                <a href="{% url 'documents:detail' related.pk %}">{{ related.title }}</a>
+                <div class="findus-related-meta">
+                    <span>{{ related.correspondent.name|default:"—" }}</span>
+                    <span>{{ related.display_date|date:"d.m.Y" }}{% if related.display_date_is_upload_fallback %} (Upload){% endif %}</span>
+                </div>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% if group.truncated %}
+    <p class="text-muted small">Weitere Dokumente mit dieser Kennung wurden nicht angezeigt.</p>
+    {% endif %}
+    {% else %}
+    <p class="text-muted small">Kein weiteres Dokument mit dieser Kennung.</p>
+    {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p class="text-muted">
+    Ohne erfasste Kennung gibt es hier nichts zu verknüpfen – exakte
+    Treffer entstehen nur über eine gemeinsame Kennung.
+</p>
+{% endif %}

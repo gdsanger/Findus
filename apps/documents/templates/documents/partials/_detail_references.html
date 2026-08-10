@@ -1,10 +1,10 @@
 {% comment %}
-Kennungen/Referenznummern (#1099). Oben die Kennungen dieses Dokuments --
-jede Zeile ist gleich das Korrektur-Formular, weil die KI-Extraktion nicht
+Kennungen/Referenznummern (#1099): die Kennungen dieses Dokuments -- jede
+Zeile ist gleich das Korrektur-Formular, weil die KI-Extraktion nicht
 perfekt ist und ein falsch gelesenes Aktenzeichen sonst den exakten Match
-verhindert. Darunter die Dokumente, die dieselbe Kennung tragen, bewusst
-*je Kennung gruppiert*: die Kennung ist die Begründung der Verknüpfung und
-gehört deshalb sichtbar über die Treffer, nicht in eine flache Liste.
+verhindert. Die Dokumente, die dieselbe Kennung tragen, stehen seit #1108
+in einem eigenen Block in der linken Spalte (_detail_reference_groups.html)
+-- dort ist genug Platz, dass Titel nicht umbrechen.
 {% endcomment %}
 {% if reference_error %}
 <p class="text-danger small">{{ reference_error }}</p>
@@ -133,41 +133,4 @@ Chip, damit die Entscheidung nicht auf Vertrauen hinausläuft.
     </li>
     {% endfor %}
 </ul>
-{% endif %}
-
-<h3 class="findus-section-subtitle">Verwandte Dokumente über gemeinsame Kennungen</h3>
-{% if reference_groups %}
-{% for group in reference_groups %}
-<div class="findus-reference-group">
-    <p class="findus-reference-group-title">
-        <span class="badge text-bg-primary">{{ group.reference.get_type_display }}</span>
-        <span class="findus-reference-group-value">{{ group.reference.value_raw }}</span>
-    </p>
-    {% if group.documents %}
-    <ul class="findus-detail-links">
-        {% for related in group.documents %}
-        <li class="findus-related-item">
-            <div class="findus-related-main">
-                <a href="{% url 'documents:detail' related.pk %}">{{ related.title }}</a>
-                <div class="findus-related-meta">
-                    <span>{{ related.correspondent.name|default:"—" }}</span>
-                    <span>{{ related.display_date|date:"d.m.Y" }}{% if related.display_date_is_upload_fallback %} (Upload){% endif %}</span>
-                </div>
-            </div>
-        </li>
-        {% endfor %}
-    </ul>
-    {% if group.truncated %}
-    <p class="text-muted small">Weitere Dokumente mit dieser Kennung wurden nicht angezeigt.</p>
-    {% endif %}
-    {% else %}
-    <p class="text-muted small">Kein weiteres Dokument mit dieser Kennung.</p>
-    {% endif %}
-</div>
-{% endfor %}
-{% else %}
-<p class="text-muted">
-    Ohne erfasste Kennung gibt es hier nichts zu verknüpfen – exakte
-    Treffer entstehen nur über eine gemeinsame Kennung.
-</p>
 {% endif %}

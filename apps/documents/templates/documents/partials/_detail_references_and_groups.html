@@ -1,0 +1,12 @@
+{% comment %}
+Antwort auf Anlegen/Ändern/Löschen einer Kennung (#1099): der
+Kennungen-Block plus die Trefferliste "Verwandte Dokumente über gemeinsame
+Kennungen" als Out-of-Band-Swap. Seit #1108 steht die Trefferliste in der
+linken Spalte, eigenständig unter #document-reference-groups -- eine
+Korrektur rechts ändert aber weiterhin beides zugleich, deshalb hier in
+einer Antwort statt als zwei getrennte Requests.
+{% endcomment %}
+{% include "documents/partials/_detail_references.html" %}
+<div id="document-reference-groups" hx-swap-oob="true">
+    {% include "documents/partials/_detail_reference_groups.html" %}
+</div>

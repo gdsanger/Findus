@@ -153,6 +153,22 @@ darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
                 {% endif %}
             </div>
         </section>
+
+        {% comment %}
+        Verwandte Dokumente über gemeinsame Kennungen (#1108): bewusst in
+        der linken statt der rechten Spalte, damit die Trefferliste die
+        volle Spaltenbreite bekommt und Dokumenttitel nicht umbrechen. Die
+        Eingabe/Korrektur der Kennungen selbst bleibt rechts bei
+        "Kennungen & Referenznummern" -- sie gehört zur
+        Verknüpfungs-Verwaltung, nicht zur Ergebnisanzeige, und die
+        Formulare dort brauchen die schmalere Spalte nicht.
+        {% endcomment %}
+        <section class="findus-section">
+            <h2 class="findus-section-title">Verwandte Dokumente über gemeinsame Kennungen</h2>
+            <div id="document-reference-groups">
+                {% include "documents/partials/_detail_reference_groups.html" %}
+            </div>
+        </section>
     </div>
 
     <aside class="findus-detail-sidebar">
