@@ -507,7 +507,7 @@ def document_reference_create(request, pk):
     reference_error = None if reference is not None else "Bitte eine Kennung eingeben."
     return render(
         request,
-        "documents/partials/_detail_references.html",
+        "documents/partials/_detail_references_and_groups.html",
         _references_context(request.user, document, reference_error=reference_error),
     )
 
@@ -552,7 +552,7 @@ def document_reference_update(request, pk, reference_id):
         reference_error = "Bitte eine Kennung eingeben."
     return render(
         request,
-        "documents/partials/_detail_references.html",
+        "documents/partials/_detail_references_and_groups.html",
         _references_context(request.user, document, reference_error=reference_error),
     )
 
@@ -569,7 +569,7 @@ def document_reference_delete(request, pk, reference_id):
     reference.delete()
     return render(
         request,
-        "documents/partials/_detail_references.html",
+        "documents/partials/_detail_references_and_groups.html",
         _references_context(request.user, document),
     )
 
