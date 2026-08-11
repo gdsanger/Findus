@@ -1546,6 +1546,253 @@ class DocumentChildDeleteViewTests(TestCase):
         )
 
 
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class DocumentChildDetachViewTests(TestCase):
+    """Covers #1111: ein Unterdokument (typisch: der wichtige Anhang einer
+
+    belanglosen Mail) wird vom Leitdokument gelöst und damit zum
+    eigenständigen Leitdokument -- ohne dass Original, Extraktion oder Index
+    angetastet werden. Gegenstück zum Löschen (#1080).
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Mail von Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+        self.child = Document.objects.create_child(
+            self.doc, title="rechnung.pdf", child_role=Document.ChildRole.MAIL_ATTACHMENT
+        )
+        self.child.original_file.save(
+            "rechnung.pdf", io.BytesIO(b"%PDF-1.4 fake"), save=True
+        )
+        self.chunk = Chunk.objects.create(
+            document=self.child,
+            position=0,
+            content="rechnung",
+            embedding=_one_hot(0),
+            embedding_model="stub",
+            embedding_model_version="1",
+        )
+
+    def _detach(self, parent_id=None, child_id=None, **extra):
+        return self.client.post(
+            reverse(
+                "documents:child_detach",
+                args=[parent_id or self.doc.id, child_id or self.child.id],
+            ),
+            **extra,
+        )
+
+    def test_detach_clears_parent_and_child_role(self):
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.child.refresh_from_db()
+        self.assertIsNone(self.child.parent_id)
+        self.assertEqual(self.child.child_role, "")
+
+    def test_detached_document_shows_up_as_leitdokument(self):
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.assertIn(self.child, Document.objects.roots())
+        self.assertIn(self.child, Document.objects.visible_to(self.user_a))
+
+    def test_detach_keeps_document_original_and_index(self):
+        file_path = self.child.original_file.path
+
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.child.refresh_from_db()
+        self.assertTrue(Document.objects.filter(pk=self.child.id).exists())
+        self.assertTrue(default_storage.exists(file_path))
+        self.assertTrue(Chunk.objects.filter(pk=self.chunk.id).exists())
+        self.assertTrue(self.child.original_file)
+
+    def test_detach_keeps_parent_and_its_other_children(self):
+        sibling = Document.objects.create_child(self.doc, title="logo.png")
+
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.doc.refresh_from_db()
+        sibling.refresh_from_db()
+        self.assertIsNone(self.doc.parent_id)
+        self.assertEqual(sibling.parent_id, self.doc.id)
+
+    def test_detach_keeps_own_scope(self):
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.visibility, Document.Visibility.DEPARTMENT)
+        self.assertEqual(list(self.child.departments.all()), [self.dept_a])
+        self.assertNotIn(self.child, Document.objects.visible_to(self.user_b))
+
+    def test_detach_backfills_empty_scope_from_parent(self):
+        """Ohne Abteilung wäre das getrennte Dokument für niemanden mehr
+
+        sichtbar -- der Scope des bisherigen Leitdokuments springt ein.
+        Erreichbar ist dieser Fall nur als Superuser: für alle anderen ist
+        ein abteilungsloses Abteilungs-Dokument schon vor dem Trennen
+        unsichtbar (`visible_to`).
+        """
+        self.child.departments.clear()
+        admin = User.objects.create_superuser(username="root", password="x")
+
+        self.client.force_login(admin)
+        self._detach()
+
+        self.child.refresh_from_db()
+        self.assertEqual(list(self.child.departments.all()), [self.dept_a])
+        self.assertIn(self.child, Document.objects.visible_to(self.user_a))
+
+    def test_detach_backfills_owner_from_parent(self):
+        self.doc.owner = self.user_a
+        self.doc.save()
+        self.child.owner = None
+        self.child.save()
+
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.owner_id, self.user_a.id)
+
+    def test_detach_leaves_soft_link_to_former_parent(self):
+        self.client.force_login(self.user_a)
+        self._detach()
+
+        self.assertTrue(DocumentLink.objects.for_document(self.child).exists())
+        link = DocumentLink.objects.for_document(self.child).first()
+        self.assertEqual(link.other_document_id(self.child), self.doc.id)
+        self.assertIn("vormals", link.note)
+
+    def test_detach_from_parent_view_renders_children_partial(self):
+        self.client.force_login(self.user_a)
+        response = self._detach(HTTP_HX_REQUEST="true")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "rechnung.pdf")
+        self.assertContains(response, "Keine Unterdokumente.")
+
+    def test_detach_asks_htmx_to_reload_the_related_block(self):
+        self.client.force_login(self.user_a)
+        response = self._detach(HTTP_HX_REQUEST="true")
+
+        self.assertEqual(response["HX-Trigger"], "findus:related-refresh")
+
+    def test_detach_from_child_view_redirects_to_child_detail(self):
+        self.client.force_login(self.user_a)
+        response = self._detach()
+
+        self.assertRedirects(
+            response, reverse("documents:detail", args=[self.child.id])
+        )
+
+    def test_detached_detail_page_has_no_breadcrumb(self):
+        self.client.force_login(self.user_a)
+        self._detach()
+        response = self.client.get(reverse("documents:detail", args=[self.child.id]))
+
+        self.assertNotContains(response, "findus-document-breadcrumb")
+
+    def test_detach_requires_get_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:child_detach", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 405)
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.parent_id, self.doc.id)
+
+    def test_detach_is_scoped_by_parent_visibility(self):
+        self.client.force_login(self.user_b)
+        response = self._detach()
+
+        self.assertEqual(response.status_code, 404)
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.parent_id, self.doc.id)
+
+    def test_detach_is_scoped_by_own_visibility_even_if_parent_visible(self):
+        self.child.visibility = Document.Visibility.PRIVATE
+        self.child.owner = self.user_b
+        self.child.departments.clear()
+        self.child.save()
+
+        self.client.force_login(self.user_a)
+        response = self._detach()
+
+        self.assertEqual(response.status_code, 404)
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.parent_id, self.doc.id)
+
+    def test_child_id_must_belong_to_given_parent(self):
+        other_doc = Document.objects.create(
+            title="Anderes Leitdokument", visibility=Document.Visibility.DEPARTMENT
+        )
+        other_doc.departments.add(self.dept_a)
+
+        self.client.force_login(self.user_a)
+        response = self._detach(parent_id=other_doc.id)
+
+        self.assertEqual(response.status_code, 404)
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.parent_id, self.doc.id)
+
+    def test_detach_requires_login(self):
+        response = self._detach()
+
+        self.assertEqual(response.status_code, 302)
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.parent_id, self.doc.id)
+
+    def test_detach_without_csrf_token_is_rejected(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user_a)
+        response = csrf_client.post(
+            reverse("documents:child_detach", args=[self.doc.id, self.child.id])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.child.refresh_from_db()
+        self.assertEqual(self.child.parent_id, self.doc.id)
+
+    def test_parent_detail_shows_detach_button(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(
+            response, reverse("documents:child_detach", args=[self.doc.id, self.child.id])
+        )
+        self.assertContains(response, "Trennen")
+
+    def test_child_detail_shows_detach_button(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.child.id]))
+
+        self.assertContains(
+            response, reverse("documents:child_detach", args=[self.doc.id, self.child.id])
+        )
+        self.assertContains(response, "Von Leitdokument lösen")
+
+
 class DocumentMetaEditTests(TestCase):
     """Covers the nice-to-have HTMX editing of Vorgang/Tag assignments."""
 

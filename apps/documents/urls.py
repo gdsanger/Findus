@@ -139,6 +139,11 @@ urlpatterns = [
         name="child_delete",
     ),
     path(
+        "documents/<int:pk>/children/<int:child_id>/detach/",
+        views.document_child_detach,
+        name="child_detach",
+    ),
+    path(
         "documents/<int:pk>/action-status/",
         views.document_action_status,
         name="action_status",
