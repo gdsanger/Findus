@@ -270,6 +270,35 @@ class DocumentListViewTests(TestCase):
         self.assertContains(response, 'id="filter-action-status"')
         self.assertContains(response, 'name="action_status"')
 
+    def test_filter_by_sphere_excludes_non_matching(self):
+        self.own_doc.sphere = Document.Sphere.PRIVAT
+        self.own_doc.save(update_fields=["sphere"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"sphere": Document.Sphere.GESCHAEFTLICH}
+        )
+
+        self.assertNotContains(response, "Rechnung Acme")
+
+    def test_filter_by_sphere_includes_matching(self):
+        self.own_doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.own_doc.save(update_fields=["sphere"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"sphere": Document.Sphere.GESCHAEFTLICH}
+        )
+
+        self.assertContains(response, "Rechnung Acme")
+
+    def test_filter_bar_includes_sphere_dropdown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, 'id="filter-sphere"')
+        self.assertContains(response, 'name="sphere"')
+
     def test_combined_filters_narrow_results(self):
         self.client.force_login(self.user_a)
         response = self.client.get(
@@ -686,6 +715,25 @@ class DocumentDetailViewTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         self.assertContains(response, "Eingang")
+
+    def test_sphere_badge_is_shown(self):
+        self.doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.doc.save(update_fields=["sphere"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Geschäftlich")
+
+    def test_ki_sphere_suggestion_badge_is_shown(self):
+        self.doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.doc.metadata = {"sphere_source": "ki"}
+        self.doc.save(update_fields=["sphere", "metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "KI-Vorschlag")
 
     def test_action_status_badge_is_shown_when_open(self):
         self.doc.action_status = Document.ActionStatus.OPEN
@@ -1897,6 +1945,56 @@ class DocumentMetaEditTests(TestCase):
 
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.direction, Document.Direction.AUSGANG)
+
+    def test_edit_form_shows_current_sphere(self):
+        self.doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.doc.save(update_fields=["sphere"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertContains(response, f'value="{Document.Sphere.GESCHAEFTLICH}" selected')
+
+    def test_post_updates_sphere(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"sphere": Document.Sphere.GESCHAEFTLICH},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.sphere, Document.Sphere.GESCHAEFTLICH)
+        self.assertContains(response, "Geschäftlich")
+
+    def test_post_with_invalid_sphere_keeps_previous_value(self):
+        self.doc.sphere = Document.Sphere.PRIVAT
+        self.doc.save(update_fields=["sphere"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:meta", args=[self.doc.id]), {"sphere": "bogus"})
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.sphere, Document.Sphere.PRIVAT)
+
+    def test_post_clears_ki_sphere_provenance_badge(self):
+        """Ein manuelles Speichern bestätigt die Sphäre -- das "KI-Vorschlag"-
+        Kennzeichen (#1112) muss danach weg sein, damit das Badge verschwindet.
+        """
+        self.doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.doc.metadata = {"sphere_source": "ki"}
+        self.doc.save(update_fields=["sphere", "metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"sphere": Document.Sphere.PRIVAT},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.sphere, Document.Sphere.PRIVAT)
+        self.assertNotIn("sphere_source", self.doc.metadata)
+        self.assertNotContains(response, "KI-Vorschlag")
 
     def test_edit_form_shows_current_document_date(self):
         self.doc.document_date = date(2026, 1, 15)

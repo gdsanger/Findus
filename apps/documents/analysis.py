@@ -140,6 +140,16 @@ _SYSTEM_PROMPT = (
     '[ICH SELBST], ist es "intern". Ist keine der beiden Parteien als '
     '[ICH SELBST] gelistet oder eindeutig zuzuordnen, antworte "unbekannt" '
     "-- rate nicht.\n"
+    '- "sphere": IMMER angeben, einer von "geschaeftlich", "privat", '
+    '"unbekannt". Klassifiziere das Dokument fachlich anhand der eigenen '
+    "Seite (der unten als [ICH SELBST] gelisteten Partei, die als "
+    "Aussteller oder Empfaenger beteiligt ist): ist diese eigene Identitaet "
+    'als [MEINE FIRMA] markiert oder traegt sie eine USt-IdNr, ist es '
+    '"geschaeftlich"; ist die beteiligte eigene Identitaet eine reine '
+    'Privatperson (kein [MEINE FIRMA], keine USt-IdNr), ist es "privat". '
+    "Auch USt-IdNr/Steuernummer der eigenen Seite im Dokumenttext sind ein "
+    'Geschaeftlich-Signal. Laesst sich keine eigene Seite zuordnen oder ist '
+    'es unklar, antworte "unbekannt" -- rate nicht.\n'
     '- "references": Liste ALLER im Dokument genannten Kennungen/'
     'Referenznummern, je Eintrag "type", "value", "role". Ein Dokument '
     "kann mehrere tragen (z. B. Aktenzeichen UND Forderungsnummer) -- "
@@ -184,7 +194,17 @@ def _correspondent_context_lines() -> list[str]:
         ids = ", ".join(
             filter(None, [correspondent.vat_id, correspondent.iban, correspondent.email])
         )
-        marker = " [ICH SELBST]" if correspondent.is_self else ""
+        # [MEINE FIRMA] verschärft [ICH SELBST] zur Gewerbe-/Firmen-Identität
+        # (#1112) -- das primäre Signal, aus dem das Modell die Sphäre
+        # (geschäftlich vs. privat) des Dokuments ableitet.
+        if correspondent.is_self:
+            marker = (
+                " [ICH SELBST] [MEINE FIRMA]"
+                if correspondent.is_own_business
+                else " [ICH SELBST]"
+            )
+        else:
+            marker = ""
         suffix = f" ({ids})" if ids else ""
         lines.append(f"{correspondent.name}{marker}{suffix}")
     return lines
@@ -412,6 +432,52 @@ def _resolve_direction(
     return _normalize_direction(parsed_direction)
 
 
+def _derive_sphere(
+    sender: Optional[Correspondent], recipient: Optional[Correspondent]
+) -> str:
+    """Geschäftlich/privat aus den beteiligten Self-Identitäten (#1112) --
+    das datenbankgestützte Gegenstück zu `_derive_direction`.
+
+    Betrachtet nur die eigene(n) Seite(n) des Dokuments (`is_self`): trägt
+    eine davon die Gewerbe-Markierung (`is_own_business`) oder eine USt-IdNr,
+    ist das Dokument `geschaeftlich`; ist die eigene Seite eine reine
+    Privatperson, `privat`. Ist keine der beiden Parteien `is_self` (die
+    eigene Identität ist z. B. gar nicht als Kontakt hinterlegt), bleibt es
+    `unbekannt` -- dann entscheidet der Modell-Vorschlag (`_resolve_sphere`).
+    """
+    self_sides = [c for c in (sender, recipient) if c and c.is_self]
+    if not self_sides:
+        return Document.Sphere.UNBEKANNT
+    if any(c.is_own_business or c.vat_id.strip() for c in self_sides):
+        return Document.Sphere.GESCHAEFTLICH
+    return Document.Sphere.PRIVAT
+
+
+def _normalize_sphere(value: object) -> str:
+    text = str(value or "").strip().lower()
+    valid_values = {choice.value for choice in Document.Sphere}
+    return text if text in valid_values else Document.Sphere.UNBEKANNT
+
+
+def _resolve_sphere(
+    parsed_sphere: object,
+    sender: Optional[Correspondent],
+    recipient: Optional[Correspondent],
+) -> str:
+    """Sphäre (#1112): der DB-Abgleich über die `is_self`-Kontakte gewinnt,
+    wann immer er greift -- er kennt `is_own_business`/USt-IdNr verlässlich.
+    Nur wenn keine eigene Seite gematcht wurde (z. B. die eigene Identität
+    steht im Dokument leicht anders als der gespeicherte `Correspondent`),
+    fällt es auf den Vorschlag des Modells zurück, das dieselbe [MEINE
+    FIRMA]-Markierung im Prompt-Kontext gesehen hat. Spiegelbildlich zu
+    `_resolve_direction`.
+    """
+    derived = _derive_sphere(sender, recipient)
+    if derived != Document.Sphere.UNBEKANNT:
+        return derived
+    return _normalize_sphere(parsed_sphere)
+
+
 def _apply_analysis(document: Document, parsed: dict, *, model: str, version: str) -> None:
     parsed = clean_json(parsed)
     title = str(parsed.get("title") or "").strip()
@@ -483,6 +549,22 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
     ):
         document.direction = candidate_direction
         update_fields.append("direction")
+
+    # Sphäre (#1112): dasselbe "einmal befuellen, nie ungefragt
+    # ueberschreiben"-Muster wie `direction`/`document_date` -- nur setzen,
+    # solange sie noch `unbekannt` ist, damit eine erneute Analyse eine
+    # bereits gesetzte (KI- oder von Hand gewaehlte) Sphaere nicht umwirft.
+    # `metadata["sphere_source"]` haelt fest, dass der Wert ein noch nicht
+    # bestaetigter KI-Vorschlag ist -- daran haengt das "KI"-Badge im Detail;
+    # ein manuelles Speichern (document_meta) entfernt die Markierung.
+    if document.sphere == Document.Sphere.UNBEKANNT:
+        candidate_sphere = _resolve_sphere(
+            parsed.get("sphere"), sender_match, recipient_match
+        )
+        if candidate_sphere != Document.Sphere.UNBEKANNT:
+            document.sphere = candidate_sphere
+            metadata["sphere_source"] = "ki"
+            update_fields.append("sphere")
 
     if document.correspondent_id is None:
         # Kontakt = Gegenstelle, nie eine eigene Identitaet (#1048): bei

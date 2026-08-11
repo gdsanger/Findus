@@ -72,6 +72,7 @@ class DocumentRetrievalService:
         date_to: Optional[date] = None,
         status: Optional[str] = None,
         direction: Optional[str] = None,
+        sphere: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> QuerySet[Document]:
         documents = (
@@ -93,6 +94,8 @@ class DocumentRetrievalService:
             documents = documents.filter(processing_status=status)
         if direction is not None:
             documents = documents.filter(direction=direction)
+        if sphere is not None:
+            documents = documents.filter(sphere=sphere)
         if action_status is not None:
             documents = documents.filter(action_status=action_status)
         return documents.distinct()
@@ -107,6 +110,7 @@ class DocumentRetrievalService:
         date_to: Optional[date] = None,
         status: Optional[str] = None,
         direction: Optional[str] = None,
+        sphere: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> QuerySet[Document]:
         """Structured browse -- no semantic query, just visibility + filters.
@@ -124,6 +128,7 @@ class DocumentRetrievalService:
             date_to=date_to,
             status=status,
             direction=direction,
+            sphere=sphere,
             action_status=action_status,
         ).roots()
 
@@ -139,6 +144,7 @@ class DocumentRetrievalService:
         date_to: Optional[date] = None,
         status: Optional[str] = None,
         direction: Optional[str] = None,
+        sphere: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> list[DocumentHit]:
         """Embed `query` via the AI provider layer, rank visible documents
@@ -154,6 +160,7 @@ class DocumentRetrievalService:
             date_to=date_to,
             status=status,
             direction=direction,
+            sphere=sphere,
             action_status=action_status,
         )
 

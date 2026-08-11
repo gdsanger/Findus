@@ -45,12 +45,22 @@ class Correspondent(TimeStampedModel):
     USt-IdNr/IBAN eine Identitaet robust identifiziert. Gilt fuer alle
     Correspondents, nicht nur Self-Identitaeten, da es generell beim
     Matching/Dedup hilft.
+
+    `is_own_business` markiert eine Self-Identität zusätzlich als eigenes
+    Gewerbe/Firma (#1112) -- bewusst additiv *neben* `is_self`, nicht als
+    dritter Wert eines Enums, damit die bestehende Richtungs-Ableitung aus
+    `is_self` (#1030) unberührt bleibt: `is_self=True`+`is_own_business=True`
+    = "meine Firma", `is_self=True`+`is_own_business=False` = "ich privat".
+    Signalquelle für `Document.sphere` (geschäftlich vs. privat) -- eine
+    fachliche Klassifikation, die bewusst nichts mit dem Sichtbarkeits-/
+    Sicherheitsmodell (`Document.visibility`/`departments`) zu tun hat.
     """
 
     name = models.CharField(max_length=255, unique=True)
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True, default="")
     is_self = models.BooleanField(default=False, db_index=True)
+    is_own_business = models.BooleanField(default=False, db_index=True)
     vat_id = models.CharField(max_length=32, blank=True)
     tax_number = models.CharField(max_length=32, blank=True)
     iban = models.CharField(max_length=34, blank=True)
@@ -246,6 +256,24 @@ class Document(TimeStampedModel):
         INTERN = "intern", "Intern"
         UNBEKANNT = "unbekannt", "Unbekannt"
 
+    class Sphere(models.TextChoices):
+        """Geschäftlich (Gewerbe) oder privat? (#1112) -- eine *fachliche*
+        Klassifikation jedes Dokuments, bewusst orthogonal zum
+        Sichtbarkeits-/Sicherheitsmodell (`visibility`/`departments`, "genau
+        zwei Ebenen"): geschäftlich-vs-privat sagt nichts darüber aus, wer
+        das Dokument sehen darf, und die Abteilung dafür zu missbrauchen
+        würde Zugriff mit Semantik vermischen. Von der KI-Analyse aus der
+        adressierten Self-Identität vorbelegt (ist die eigene Seite eine
+        `Correspondent.is_own_business`-Identität bzw. trägt sie eine
+        USt-IdNr -> `geschaeftlich`), bleibt aber ein normales, vom Nutzer
+        überschreibbares Feld -- `unbekannt` ist der ehrliche Default, wenn
+        sich nichts ableiten lässt.
+        """
+
+        GESCHAEFTLICH = "geschaeftlich", "Geschäftlich"
+        PRIVAT = "privat", "Privat"
+        UNBEKANNT = "unbekannt", "Unbekannt"
+
     class ActionStatus(models.TextChoices):
         """Muss noch jemand etwas mit diesem Dokument tun? (#1057) --
 
@@ -356,6 +384,19 @@ class Document(TimeStampedModel):
         max_length=20,
         choices=ActionStatus.choices,
         default=ActionStatus.NONE,
+        db_index=True,
+    )
+    # Sphäre (#1112): geschäftlich (Gewerbe) vs. privat -- ein eigenes,
+    # fachliches Feld, NICHT die Abteilung (siehe `Sphere`-Docstring).
+    # Von der KI vorbelegt, danach nach dem "einmal befuellen, nie
+    # ungefragt ueberschreiben"-Muster von `direction`/`document_date`
+    # behandelt: `_apply_analysis` setzt es nur, solange es noch
+    # `unbekannt` ist, damit eine erneute Analyse eine bereits gesetzte
+    # (KI- oder Nutzer-)Wahl nicht wieder umwirft.
+    sphere = models.CharField(
+        max_length=20,
+        choices=Sphere.choices,
+        default=Sphere.UNBEKANNT,
         db_index=True,
     )
 

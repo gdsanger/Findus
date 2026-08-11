@@ -24,6 +24,14 @@ _DIRECTION_BADGE_CLASSES = {
     "intern": "text-bg-secondary",
 }
 
+_SPHERE_BADGE_CLASSES = {
+    # Geschäftlich als ruhiges, aber sichtbares Info-Blau, privat als
+    # zurückgenommenes Grau -- die Sphäre (#1112) ist eine Einordnung, kein
+    # Alarm, und soll das Richtungs-Badge daneben nicht überstrahlen.
+    "geschaeftlich": "text-bg-info",
+    "privat": "bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle",
+}
+
 _ACTION_STATUS_BADGE_CLASSES = {
     "offen": "text-bg-warning",
     "erledigt": "bg-success-subtle text-success-emphasis border border-success-subtle",
@@ -65,6 +73,16 @@ def direction_badge_class(direction):
     unclassified document doesn't visually compete with a classified one.
     """
     return _DIRECTION_BADGE_CLASSES.get(direction, "border text-body-secondary")
+
+
+@register.filter(name="sphere_badge_class")
+def sphere_badge_class(sphere):
+    """Bootstrap badge class for `Document.sphere` (#1112) -- a subdued
+    outline for `unbekannt` (same treatment as an unclassified `direction`)
+    so a not-yet-classified document doesn't visually compete with a
+    classified one.
+    """
+    return _SPHERE_BADGE_CLASSES.get(sphere, "border text-body-secondary")
 
 
 @register.filter(name="action_status_badge_class")
