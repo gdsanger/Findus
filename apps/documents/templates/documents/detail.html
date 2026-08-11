@@ -3,9 +3,28 @@
 {% block title %}{{ document.title }} – Findus{% endblock %}
 {% block content %}
 {% if document.parent_id and parent_visible %}
-<p class="findus-document-breadcrumb">
+{# <div> statt <p>: das Trennen-Formular unten ist Block-Content und würde einen Absatz vorzeitig schließen. #}
+<div class="findus-document-breadcrumb mb-2">
     aus: <a href="{% url 'documents:detail' document.parent_id %}">{{ document.parent.title }}</a>
-</p>
+    {% comment %}
+    Trennen auch aus dem geöffneten Anhang heraus (#1111) -- der Umweg über
+    die Detailseite des Leitdokuments wäre genau der Kontextwechsel, den man
+    hier gerade nicht will. Bewusst ohne HTMX: nach dem Lösen ist die ganze
+    Seite eine andere (kein Breadcrumb mehr), also lädt der View sie neu.
+    {% endcomment %}
+    <form
+        method="post"
+        action="{% url 'documents:child_detach' document.parent_id document.pk %}"
+        class="d-inline"
+    >
+        {% csrf_token %}
+        <button
+            type="submit"
+            class="btn btn-sm btn-link align-baseline p-0 ms-2"
+            title="Macht dieses Dokument zu einem eigenständigen Leitdokument – nichts wird gelöscht."
+        >Von Leitdokument lösen</button>
+    </form>
+</div>
 {% endif %}
 {% include "partials/_content_header.html" with page_title=document.title %}
 
@@ -239,11 +258,16 @@ darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
                 {% comment %}
                 Nachgeladen (#1088): die kNN-Query ist Beiwerk und soll den Aufbau
                 von Titel/Zusammenfassung/Original nicht aufhalten.
+
+                `findus:related-refresh` schickt die Detach-View (#1111) mit: das
+                getrennte Unterdokument taucht hier ab sofort als Querverweis auf,
+                und ohne den Nachlade-Trigger stünde der Block bis zum nächsten
+                Seitenaufbau veraltet daneben.
                 {% endcomment %}
                 <div
                     id="document-related"
                     hx-get="{% url 'documents:related' document.pk %}"
-                    hx-trigger="load"
+                    hx-trigger="load, findus:related-refresh from:body"
                     hx-swap="innerHTML"
                 >
                     <p class="text-muted">Wird geladen …</p>

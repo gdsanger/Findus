@@ -810,6 +810,79 @@ def document_child_delete(request, pk, child_id):
     )
 
 
+@login_required
+@require_POST
+def document_child_detach(request, pk, child_id):
+    """Löse ein Unterdokument von seinem Leitdokument (#1111).
+
+    Der häufige Fall aus dem Mail-Ingest (#1069/#1070): belangloses
+    Anschreiben, wichtiger Anhang. Der Anhang hängt als Unterdokument am
+    Mail-Text, taucht damit weder im Eingang noch im Browsing auf
+    (`DocumentQuerySet.roots()`) und war bisher nur *löschbar* (#1080) --
+    Trennen macht ihn stattdessen zum eigenständigen Leitdokument, ohne
+    dass ein Byte verloren geht: `parent`/`child_role` fallen weg, Original,
+    Extraktion, Kennungen und Chunks bleiben unangetastet.
+
+    Kein Migrationsbedarf: `parent` ist bereits nullable (#1069).
+
+    Der Scope wird bei `create_child` *kopiert*, nicht zur Laufzeit vom
+    Elter geerbt -- ein getrenntes Kind behält also seinen eigenen gültigen
+    Sichtbarkeitsbereich. Nur für den Fall, dass er (z. B. durch eine
+    Alt-Zuordnung von Hand) leer ist, werden `owner`/`departments` vorher
+    vom bisherigen Leitdokument übernommen: sonst entstünde genau die
+    verwaiste Karteikarte ohne erklärten Scope, vor der der Kommentar an
+    `Document.parent` warnt -- und die nach dem Trennen niemand mehr sähe.
+
+    Die harte Eltern-Kante wird zum Soft-Link herabgestuft statt ersatzlos
+    gekappt (`link_documents`, #1088): der inhaltliche Bezug Anhang ↔
+    ursprüngliche Mail bleibt auf beiden Detailseiten sichtbar.
+
+    Beide Seiten laufen wie bei `document_child_delete` durch `visible_to`
+    -- die Sichtbarkeit des Elters allein ist kein Beleg dafür, dass der
+    Nutzer dieses Kind anfassen darf.
+    """
+    document = _visible_document(request.user, pk)
+    child = get_object_or_404(
+        Document.objects.visible_to(request.user),
+        pk=child_id,
+        parent_id=document.pk,
+    )
+
+    if child.owner_id is None:
+        child.owner_id = document.owner_id
+    if not child.departments.exists():
+        child.departments.set(document.departments.all())
+
+    former_role = child.get_child_role_display() if child.child_role else ""
+    child.parent = None
+    child.child_role = ""
+    child.save()
+
+    link_documents(
+        child,
+        document,
+        created_by=request.user,
+        note=f"vormals {former_role or 'Unterdokument'}",
+    )
+
+    # Aus der Leitdokument-Ansicht heraus wird nur die Unterdokumente-Liste
+    # neu gerendert (HTMX). Aus dem Unterdokument selbst kommt ein normaler
+    # POST -- danach zurück auf dessen eigene Detailseite, die jetzt ohne
+    # Breadcrumb als Leitdokument rendert.
+    if request.htmx:
+        response = render(
+            request,
+            "documents/partials/_detail_children.html",
+            _children_context(request.user, document),
+        )
+        # Der Ähnlichkeits-/Querverweis-Block hängt an einem anderen Target
+        # und weiß nichts vom Swap hier -- der neue Soft-Link erscheint sonst
+        # erst beim nächsten Seitenaufbau.
+        response["HX-Trigger"] = "findus:related-refresh"
+        return response
+    return redirect("documents:detail", pk=child.pk)
+
+
 def _meta_edit_context(document, quick_create_error=None):
     return {
         "document": document,

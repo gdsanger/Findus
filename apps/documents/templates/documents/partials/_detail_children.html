@@ -1,3 +1,10 @@
+{% comment %}
+Zwei Aktionen pro Unterdokument, bewusst unterschiedlich gewichtet (#1111):
+"Trennen" verliert nichts (das Dokument bleibt samt Original und Index
+erhalten, nur als eigenständiges Leitdokument) und bleibt deshalb ein
+neutraler Sekundär-Button ohne Rückfrage; "Löschen" entfernt Original und
+indizierte Inhalte und bleibt rot plus Bestätigung.
+{% endcomment %}
 {% if children %}
 <ul class="findus-detail-links">
     {% for child in children %}
@@ -6,18 +13,35 @@
             {% if child.child_role %}<span class="badge text-bg-secondary">{{ child.get_child_role_display }}</span>{% endif %}
             <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
         </span>
-        <form
-            method="post"
-            action="{% url 'documents:child_delete' document.pk child.pk %}"
-            hx-post="{% url 'documents:child_delete' document.pk child.pk %}"
-            hx-target="#document-children"
-            hx-swap="innerHTML"
-            class="d-inline"
-            onsubmit="return confirm('Unterdokument „{{ child.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
-        >
-            {% csrf_token %}
-            <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
-        </form>
+        <span class="d-inline-flex gap-1">
+            <form
+                method="post"
+                action="{% url 'documents:child_detach' document.pk child.pk %}"
+                hx-post="{% url 'documents:child_detach' document.pk child.pk %}"
+                hx-target="#document-children"
+                hx-swap="innerHTML"
+                class="d-inline"
+            >
+                {% csrf_token %}
+                <button
+                    type="submit"
+                    class="btn btn-sm btn-outline-secondary"
+                    title="Macht „{{ child.title }}“ zu einem eigenständigen Dokument – nichts wird gelöscht."
+                >Trennen</button>
+            </form>
+            <form
+                method="post"
+                action="{% url 'documents:child_delete' document.pk child.pk %}"
+                hx-post="{% url 'documents:child_delete' document.pk child.pk %}"
+                hx-target="#document-children"
+                hx-swap="innerHTML"
+                class="d-inline"
+                onsubmit="return confirm('Unterdokument „{{ child.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
+            >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+            </form>
+        </span>
     </li>
     {% endfor %}
 </ul>
