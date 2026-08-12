@@ -36,6 +36,29 @@
             </dd>
         </div>
         <div>
+            <dt>Privat absetzbar</dt>
+            <dd>
+                {% if document.sphere == "geschaeftlich" %}
+                {# Geschäftliche Belege: private ESt-Absetzbarkeit greift nicht (#1113) --
+                   betriebliche Absetzbarkeit ist ein separates, späteres Merkmal. #}
+                <span class="badge border text-body-secondary" title="Geschäftlicher Beleg – die betriebliche Absetzbarkeit ist ein separates Thema, nicht die private Einkommensteuer.">Nicht zutreffend</span>
+                {% else %}
+                <span class="badge {{ document.tax_relevance|tax_relevance_badge_class }}"{% if document.tax_relevance_reason %} title="{{ document.tax_relevance_reason }}"{% endif %}>
+                    {{ document.get_tax_relevance_display }}
+                </span>
+                {% if document.metadata.tax_relevance_source == "ki" %}
+                <span class="badge text-bg-light" title="KI-Vorschlag – zum Bestätigen „Zuordnung bearbeiten“ speichern.">KI-Vorschlag</span>
+                {% endif %}
+                {% if document.tax_relevance_reason %}
+                <div class="text-muted small">{{ document.tax_relevance_reason }}</div>
+                {% endif %}
+                {% if document.has_tax_assessment %}
+                <div class="text-muted small fst-italic">KI-Einschätzung, keine Steuerberatung.</div>
+                {% endif %}
+                {% endif %}
+            </dd>
+        </div>
+        <div>
             <dt>Erledigung</dt>
             <dd>
                 {% include "documents/partials/_action_status_control.html" %}

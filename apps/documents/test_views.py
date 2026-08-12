@@ -299,6 +299,55 @@ class DocumentListViewTests(TestCase):
         self.assertContains(response, 'id="filter-sphere"')
         self.assertContains(response, 'name="sphere"')
 
+    def test_filter_bar_includes_tax_relevance_dropdown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, 'id="filter-tax-relevance"')
+        self.assertContains(response, 'name="tax_relevance"')
+        # Der Sammelwert "privat absetzbar (Ja/Vielleicht)" steht zur Auswahl.
+        self.assertContains(response, 'value="absetzbar"')
+
+    def test_filter_by_tax_relevance_exact_value(self):
+        self.own_doc.tax_relevance = Document.TaxRelevance.JA
+        self.own_doc.save(update_fields=["tax_relevance"])
+
+        self.client.force_login(self.user_a)
+        matching = self.client.get(
+            reverse("documents:home"), {"tax_relevance": Document.TaxRelevance.JA}
+        )
+        self.assertContains(matching, "Rechnung Acme")
+
+        non_matching = self.client.get(
+            reverse("documents:home"), {"tax_relevance": Document.TaxRelevance.NEIN}
+        )
+        self.assertNotContains(non_matching, "Rechnung Acme")
+
+    def test_filter_by_deductible_bundles_ja_and_vielleicht(self):
+        self.own_doc.tax_relevance = Document.TaxRelevance.VIELLEICHT
+        self.own_doc.save(update_fields=["tax_relevance"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"),
+            {"tax_relevance": Document.TAX_RELEVANCE_DEDUCTIBLE_FILTER},
+        )
+
+        # "vielleicht" zählt zum Sammelfilter "absetzbar" dazu.
+        self.assertContains(response, "Rechnung Acme")
+
+    def test_filter_by_deductible_excludes_nein(self):
+        self.own_doc.tax_relevance = Document.TaxRelevance.NEIN
+        self.own_doc.save(update_fields=["tax_relevance"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"),
+            {"tax_relevance": Document.TAX_RELEVANCE_DEDUCTIBLE_FILTER},
+        )
+
+        self.assertNotContains(response, "Rechnung Acme")
+
     def test_combined_filters_narrow_results(self):
         self.client.force_login(self.user_a)
         response = self.client.get(
@@ -734,6 +783,33 @@ class DocumentDetailViewTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         self.assertContains(response, "KI-Vorschlag")
+
+    def test_tax_relevance_badge_and_reason_and_disclaimer_are_shown(self):
+        self.doc.sphere = Document.Sphere.PRIVAT
+        self.doc.tax_relevance = Document.TaxRelevance.JA
+        self.doc.tax_relevance_reason = "Handwerkerrechnung mit Lohnanteil -> §35a"
+        self.doc.save(
+            update_fields=["sphere", "tax_relevance", "tax_relevance_reason"]
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Handwerkerrechnung mit Lohnanteil")
+        self.assertContains(response, "keine Steuerberatung")
+
+    def test_tax_relevance_hidden_as_nicht_zutreffend_for_business(self):
+        # Geschäftliche Belege zeigen "Nicht zutreffend", nie fälschlich "Ja"
+        # -- selbst wenn (Alt-)Wert am Feld noch "ja" stünde.
+        self.doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.doc.tax_relevance = Document.TaxRelevance.JA
+        self.doc.save(update_fields=["sphere", "tax_relevance"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Nicht zutreffend")
+        self.assertNotContains(response, "keine Steuerberatung")
 
     def test_action_status_badge_is_shown_when_open(self):
         self.doc.action_status = Document.ActionStatus.OPEN
@@ -1994,6 +2070,70 @@ class DocumentMetaEditTests(TestCase):
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.sphere, Document.Sphere.PRIVAT)
         self.assertNotIn("sphere_source", self.doc.metadata)
+        self.assertNotContains(response, "KI-Vorschlag")
+
+    def test_edit_form_shows_tax_relevance_select(self):
+        self.doc.tax_relevance = Document.TaxRelevance.VIELLEICHT
+        self.doc.save(update_fields=["tax_relevance"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+
+        self.assertContains(response, 'name="tax_relevance"')
+        self.assertContains(
+            response, f'value="{Document.TaxRelevance.VIELLEICHT}" selected'
+        )
+
+    def test_post_updates_tax_relevance(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"tax_relevance": Document.TaxRelevance.JA},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.tax_relevance, Document.TaxRelevance.JA)
+
+    def test_post_with_invalid_tax_relevance_keeps_previous_value(self):
+        self.doc.tax_relevance = Document.TaxRelevance.NEIN
+        self.doc.save(update_fields=["tax_relevance"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"tax_relevance": "bogus"}
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.tax_relevance, Document.TaxRelevance.NEIN)
+
+    def test_post_changing_tax_relevance_clears_ki_reason_and_badge(self):
+        """Ändert der Nutzer die Einschätzung, verliert die KI-Begründung ihre
+        Grundlage -- sie wird verworfen, ebenso das "KI-Vorschlag"-Kennzeichen.
+        """
+        self.doc.sphere = Document.Sphere.PRIVAT
+        self.doc.tax_relevance = Document.TaxRelevance.JA
+        self.doc.tax_relevance_reason = "Handwerker -> §35a"
+        self.doc.metadata = {"tax_relevance_source": "ki"}
+        self.doc.save(
+            update_fields=[
+                "sphere",
+                "tax_relevance",
+                "tax_relevance_reason",
+                "metadata",
+            ]
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"sphere": Document.Sphere.PRIVAT, "tax_relevance": Document.TaxRelevance.NEIN},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.tax_relevance, Document.TaxRelevance.NEIN)
+        self.assertEqual(self.doc.tax_relevance_reason, "")
+        self.assertNotIn("tax_relevance_source", self.doc.metadata)
         self.assertNotContains(response, "KI-Vorschlag")
 
     def test_edit_form_shows_current_document_date(self):

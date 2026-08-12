@@ -31,7 +31,7 @@ from django.db.models import Q, QuerySet
 from apps.ai.providers import EmbeddingProvider, get_embedding_provider
 from pgvector.django import CosineDistance
 
-from .models import Chunk, Document
+from .models import Chunk, Document, tax_relevance_filter_q
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,7 @@ class DocumentRetrievalService:
         status: Optional[str] = None,
         direction: Optional[str] = None,
         sphere: Optional[str] = None,
+        tax_relevance: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> QuerySet[Document]:
         documents = (
@@ -96,6 +97,10 @@ class DocumentRetrievalService:
             documents = documents.filter(direction=direction)
         if sphere is not None:
             documents = documents.filter(sphere=sphere)
+        if tax_relevance is not None:
+            tax_q = tax_relevance_filter_q(tax_relevance)
+            if tax_q is not None:
+                documents = documents.filter(tax_q)
         if action_status is not None:
             documents = documents.filter(action_status=action_status)
         return documents.distinct()
@@ -111,6 +116,7 @@ class DocumentRetrievalService:
         status: Optional[str] = None,
         direction: Optional[str] = None,
         sphere: Optional[str] = None,
+        tax_relevance: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> QuerySet[Document]:
         """Structured browse -- no semantic query, just visibility + filters.
@@ -129,6 +135,7 @@ class DocumentRetrievalService:
             status=status,
             direction=direction,
             sphere=sphere,
+            tax_relevance=tax_relevance,
             action_status=action_status,
         ).roots()
 
@@ -145,6 +152,7 @@ class DocumentRetrievalService:
         status: Optional[str] = None,
         direction: Optional[str] = None,
         sphere: Optional[str] = None,
+        tax_relevance: Optional[str] = None,
         action_status: Optional[str] = None,
     ) -> list[DocumentHit]:
         """Embed `query` via the AI provider layer, rank visible documents
@@ -161,6 +169,7 @@ class DocumentRetrievalService:
             status=status,
             direction=direction,
             sphere=sphere,
+            tax_relevance=tax_relevance,
             action_status=action_status,
         )
 
