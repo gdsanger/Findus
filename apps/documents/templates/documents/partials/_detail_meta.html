@@ -39,8 +39,7 @@
             <dt>Privat absetzbar</dt>
             <dd>
                 {% if document.sphere == "geschaeftlich" %}
-                {# Geschäftliche Belege: private ESt-Absetzbarkeit greift nicht (#1113) --
-                   betriebliche Absetzbarkeit ist ein separates, späteres Merkmal. #}
+            
                 <span class="badge border text-body-secondary" title="Geschäftlicher Beleg – die betriebliche Absetzbarkeit ist ein separates Thema, nicht die private Einkommensteuer.">Nicht zutreffend</span>
                 {% else %}
                 <span class="badge {{ document.tax_relevance|tax_relevance_badge_class }}"{% if document.tax_relevance_reason %} title="{{ document.tax_relevance_reason }}"{% endif %}>
