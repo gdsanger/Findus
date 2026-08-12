@@ -25,6 +25,17 @@
             </dd>
         </div>
         <div>
+            <dt>Sphäre</dt>
+            <dd>
+                <span class="badge {{ document.sphere|sphere_badge_class }}">
+                    {{ document.get_sphere_display }}
+                </span>
+                {% if document.metadata.sphere_source == "ki" %}
+                <span class="badge text-bg-light" title="KI-Vorschlag – zum Bestätigen „Zuordnung bearbeiten“ speichern.">KI-Vorschlag</span>
+                {% endif %}
+            </dd>
+        </div>
+        <div>
             <dt>Erledigung</dt>
             <dd>
                 {% include "documents/partials/_action_status_control.html" %}

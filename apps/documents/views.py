@@ -97,6 +97,10 @@ def filtered_documents(request):
     if direction:
         documents = documents.filter(direction=direction)
 
+    sphere = request.GET.get("sphere", "").strip()
+    if sphere:
+        documents = documents.filter(sphere=sphere)
+
     action_status = request.GET.get("action_status", "").strip()
     if action_status:
         documents = documents.filter(action_status=action_status)
@@ -137,6 +141,7 @@ def _search_hits(request, query):
         tags=[tag_id] if tag_id else None,
         status=request.GET.get("status", "").strip() or None,
         direction=request.GET.get("direction", "").strip() or None,
+        sphere=request.GET.get("sphere", "").strip() or None,
         action_status=request.GET.get("action_status", "").strip() or None,
     )
 
@@ -180,6 +185,7 @@ def document_list(request):
         "tags": Tag.objects.all(),
         "status_choices": Document.ProcessingStatus.choices,
         "direction_choices": Document.Direction.choices,
+        "sphere_choices": Document.Sphere.choices,
         "action_status_choices": Document.ActionStatus.choices,
         "selected": {
             "correspondent": request.GET.get("correspondent", ""),
@@ -187,6 +193,7 @@ def document_list(request):
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
+            "sphere": request.GET.get("sphere", ""),
             "action_status": request.GET.get("action_status", ""),
             "view": request.GET.get("view", "timeline").strip(),
         },
@@ -890,6 +897,7 @@ def _meta_edit_context(document, quick_create_error=None):
         "all_vorgaenge": Vorgang.objects.all(),
         "all_tags": Tag.objects.all(),
         "direction_choices": Document.Direction.choices,
+        "sphere_choices": Document.Sphere.choices,
         "selected_correspondent_id": document.correspondent_id,
         "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
         "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
@@ -1031,6 +1039,17 @@ def document_meta(request, pk):
         direction = request.POST.get("direction", "").strip()
         if direction in Document.Direction.values:
             document.direction = direction
+        # Sphäre (#1112): ein manuelles Speichern ist die Nutzerentscheidung,
+        # die jede Re-Analyse ab jetzt respektiert -- deshalb auch das "noch
+        # nicht bestaetigt"-Kennzeichen aus `metadata` entfernen, damit das
+        # KI-Badge im Detail verschwindet.
+        sphere = request.POST.get("sphere", "").strip()
+        if sphere in Document.Sphere.values:
+            document.sphere = sphere
+        if document.metadata.get("sphere_source"):
+            metadata = dict(document.metadata)
+            metadata.pop("sphere_source", None)
+            document.metadata = metadata
         document_date = request.POST.get("document_date", "").strip()
         if not document_date:
             document.document_date = None
@@ -1040,7 +1059,14 @@ def document_meta(request, pk):
             except ValueError:
                 pass
         document.save(
-            update_fields=["correspondent", "direction", "document_date", "updated_at"]
+            update_fields=[
+                "correspondent",
+                "direction",
+                "sphere",
+                "document_date",
+                "metadata",
+                "updated_at",
+            ]
         )
         document.vorgaenge.set(request.POST.getlist("vorgaenge"))
         document.tags.set(request.POST.getlist("tags"))

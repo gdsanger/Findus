@@ -37,6 +37,14 @@
                 </select>
             </div>
             <div class="findus-filter-field">
+                <label class="form-label" for="meta-sphere">Sphäre</label>
+                <select id="meta-sphere" name="sphere" class="form-select form-select-sm">
+                    {% for value, label in sphere_choices %}
+                    <option value="{{ value }}" {% if value == document.sphere %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="findus-filter-field">
                 <label class="form-label" for="meta-document-date">Dokumentdatum</label>
                 <input
                     type="date"

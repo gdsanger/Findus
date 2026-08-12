@@ -19,20 +19,37 @@ _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
 class CorrespondentForm(forms.ModelForm):
     class Meta:
         model = Correspondent
-        fields = ["name", "email", "address", "is_self", "vat_id", "tax_number", "iban"]
+        fields = [
+            "name",
+            "email",
+            "address",
+            "is_self",
+            "is_own_business",
+            "vat_id",
+            "tax_number",
+            "iban",
+        ]
         labels = {
             "email": "E-Mail",
             "address": "Adresse",
             "is_self": "Das bin ich",
+            "is_own_business": "Das ist meine Firma",
             "vat_id": "USt-IdNr.",
             "tax_number": "Steuernummer",
             "iban": "IBAN",
+        }
+        help_texts = {
+            # "Meine Firma" ist eine Verschärfung von "Das bin ich" (#1112):
+            # sie markiert die eigene Identität als Gewerbe/Firma und ist die
+            # Signalquelle für die geschäftliche Sphäre der Dokumente.
+            "is_own_business": "Nur relevant für eigene Identitäten („Das bin ich“).",
         }
         widgets = {
             "name": _TEXT_WIDGET,
             "email": forms.EmailInput(attrs={"class": "form-control form-control-sm"}),
             "address": forms.Textarea(attrs={"class": "form-control form-control-sm", "rows": 3}),
             "is_self": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "is_own_business": forms.CheckboxInput(attrs={"class": "form-check-input"}),
             "vat_id": _TEXT_WIDGET,
             "tax_number": _TEXT_WIDGET,
             "iban": _TEXT_WIDGET,

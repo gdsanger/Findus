@@ -163,10 +163,12 @@ def vorgang_detail(request, pk):
         "tags": Tag.objects.all(),
         "status_choices": Document.ProcessingStatus.choices,
         "direction_choices": Document.Direction.choices,
+        "sphere_choices": Document.Sphere.choices,
         "selected": {
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
+            "sphere": request.GET.get("sphere", ""),
             "view": request.GET.get("view", "timeline").strip(),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,

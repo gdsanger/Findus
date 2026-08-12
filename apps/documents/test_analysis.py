@@ -608,6 +608,95 @@ class DocumentDirectionTests(TestCase):
         self.assertIsNone(result.correspondent)
 
 
+class DocumentSphereTests(TestCase):
+    """Geschäftlich/privat-Ableitung aus der eigenen Seite (#1112) --
+    spiegelbildlich zu `DocumentDirectionTests`.
+    """
+
+    def _provider(self, reply=_REPLY_WITH_RECIPIENT):
+        return FakeGenerationProvider(model="fake-generate", version="1", reply=reply)
+
+    def _provider_with_sphere(self, sphere):
+        reply = json.dumps(
+            {
+                "title": "Schreiben",
+                "summary": "Ein Schreiben.",
+                "key_facts": {"sender_name": "Acme GmbH"},
+                "sphere": sphere,
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        return FakeGenerationProvider(model="fake-generate", version="1", reply=reply)
+
+    def test_own_business_self_identity_sets_geschaeftlich(self):
+        # Empfänger-Seite ist "meine Firma" (is_own_business) -> geschäftlich.
+        Correspondent.objects.create(
+            name="Christian Angermeier",
+            is_self=True,
+            is_own_business=True,
+            vat_id="DE123456789",
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.sphere, Document.Sphere.GESCHAEFTLICH)
+        # Der KI-Vorschlag ist als solcher markiert -- daran hängt das Badge.
+        self.assertEqual(result.metadata.get("sphere_source"), "ki")
+
+    def test_private_self_identity_sets_privat(self):
+        # Eigene Seite matcht per Name (keine USt-IdNr, kein Gewerbe) -> privat.
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, is_own_business=False
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.sphere, Document.Sphere.PRIVAT)
+
+    def test_no_self_match_falls_back_to_model_sphere(self):
+        document = Document.objects.create(title="brief.pdf", text_content="Brief Inhalt")
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider_with_sphere("geschaeftlich"),
+        )
+
+        self.assertEqual(result.sphere, Document.Sphere.GESCHAEFTLICH)
+        self.assertEqual(result.metadata.get("sphere_source"), "ki")
+
+    def test_no_self_match_and_no_model_sphere_stays_unbekannt(self):
+        document = Document.objects.create(title="brief.pdf", text_content="Brief Inhalt")
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.sphere, Document.Sphere.UNBEKANNT)
+        self.assertNotIn("sphere_source", result.metadata)
+
+    def test_does_not_overwrite_a_manually_set_sphere(self):
+        """Sphäre bleibt vom Nutzer überschreibbar: eine bereits gesetzte
+        Wahl darf eine erneute Analyse nicht auf einen KI-Wert zurückwerfen.
+        """
+        Correspondent.objects.create(
+            name="Christian Angermeier",
+            is_self=True,
+            is_own_business=True,
+            vat_id="DE123456789",
+        )
+        document = Document.objects.create(
+            title="rechnung.pdf",
+            text_content="Rechnung Inhalt",
+            sphere=Document.Sphere.PRIVAT,
+        )
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.sphere, Document.Sphere.PRIVAT)
+        self.assertNotIn("sphere_source", result.metadata)
+
+
 class DocumentReferenceExtractionTests(TestCase):
     """Kennungen aus derselben Analyse-Antwort (#1099) -- eine Liste, kein
 

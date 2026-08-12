@@ -284,6 +284,23 @@ class CorrespondentCreateViewTests(TestCase):
         self.assertEqual(correspondent.tax_number, "12/345/67890")
         self.assertEqual(correspondent.iban, "DE02100100109307118603")
 
+    def test_create_correspondent_as_own_business(self):
+        """„Das ist meine Firma" (#1112) muss zusätzlich zu „Das bin ich"
+        durch das Formular durchgehen -- das Signal für die Sphäre.
+        """
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:correspondent_create"))
+        self.assertContains(response, "Das ist meine Firma")
+
+        self.client.post(
+            reverse("documents:correspondent_create"),
+            {"name": "Eigene Firma GmbH", "is_self": "on", "is_own_business": "on"},
+        )
+
+        correspondent = Correspondent.objects.get(name="Eigene Firma GmbH")
+        self.assertTrue(correspondent.is_self)
+        self.assertTrue(correspondent.is_own_business)
+
     def test_create_with_duplicate_name_shows_error_and_does_not_create(self):
         Correspondent.objects.create(name="Acme GmbH")
 
