@@ -274,6 +274,45 @@ class Document(TimeStampedModel):
         PRIVAT = "privat", "Privat"
         UNBEKANNT = "unbekannt", "Unbekannt"
 
+    class TaxRelevance(models.TextChoices):
+        """Ist dieser **private** Beleg in der Einkommensteuererklärung
+        absetzbar? (#1113) -- bewusst *eng* gefasst: gemeint ist
+        ausschließlich die private ESt-Absetzbarkeit (Werbungskosten,
+        haushaltsnahe Dienstleistungen/Handwerker §35a, Spenden,
+        Versicherungs-/Vorsorgebeiträge, außergewöhnliche Belastungen,
+        Kinderbetreuung ...), NICHT die betriebliche Absetzbarkeit.
+
+        Ein geschäftlicher (Gewerbe-)Beleg ist zwar als Betriebsausgabe
+        immer steuerlich relevant -- aber das ist ein *anderes*, späteres
+        Merkmal (eigenes Issue), nicht dieses Feld. Deshalb der eigene Wert
+        `NICHT_ZUTREFFEND`: erkennt die Analyse einen geschäftlichen Beleg
+        (`Document.sphere == geschaeftlich`), wird er ausdrücklich *nicht*
+        fälschlich `ja`, sondern `nicht_zutreffend` -- so bleibt "privat
+        absetzbar" sauber von der betrieblichen Relevanz getrennt.
+
+        `VIELLEICHT` ist der ehrliche Hedge für unsichere Fälle (lieber das
+        als eine Fehlklassifikation), `UNBEKANNT` der Default vor/ohne
+        Analyse. Von der KI vorbelegt, danach nach dem "einmal befuellen,
+        nie ungefragt ueberschreiben"-Muster von `direction`/`sphere`
+        behandelt -- eine Nutzerkorrektur überlebt jede Re-Analyse. Die
+        Einordnung ist eine KI-Einschätzung, keine Steuerberatung.
+        """
+
+        JA = "ja", "Ja"
+        NEIN = "nein", "Nein"
+        VIELLEICHT = "vielleicht", "Vielleicht"
+        NICHT_ZUTREFFEND = "nicht_zutreffend", "Nicht zutreffend"
+        UNBEKANNT = "unbekannt", "Unbekannt"
+
+    # Sentinel-Filterwert der Dokumentliste (#1113): "privat absetzbar"
+    # bündelt Ja UND Vielleicht in einer Auswahl -- der Nutzer will die
+    # potenziell absetzbaren Belege gesammelt sehen, nicht zwei Filterläufe
+    # fahren. Bewusst *kein* eigener Enum-Wert, sondern nur ein Filter-
+    # Kürzel: es ist keine Klassifikation eines Belegs, sondern eine Sicht
+    # auf zwei davon.
+    TAX_RELEVANCE_DEDUCTIBLE_FILTER = "absetzbar"
+    TAX_RELEVANCE_DEDUCTIBLE_VALUES = (TaxRelevance.JA, TaxRelevance.VIELLEICHT)
+
     class ActionStatus(models.TextChoices):
         """Muss noch jemand etwas mit diesem Dokument tun? (#1057) --
 
@@ -399,6 +438,23 @@ class Document(TimeStampedModel):
         default=Sphere.UNBEKANNT,
         db_index=True,
     )
+    # Private ESt-Absetzbarkeit (#1113): ausschließlich "kann ich diesen
+    # *privaten* Beleg in der Einkommensteuererklaerung absetzen?" -- ein
+    # eigenes, filter-/auswertbares Feld (nicht nur `key_facts`-JSON), damit
+    # sich die absetzbaren Privatbelege spaeter gesammelt bearbeiten/
+    # exportieren lassen. Von der KI vorbelegt, danach wie `sphere` nach dem
+    # "einmal befuellen, nie ungefragt ueberschreiben"-Muster behandelt
+    # (siehe `TaxRelevance`-Docstring). Geschaeftliche Belege werden
+    # `nicht_zutreffend`, nie faelschlich `ja` -- betriebliche Absetzbarkeit
+    # ist ein separates Merkmal. `tax_relevance_reason` traegt die kurze
+    # KI-Begruendung (z. B. "Handwerkerrechnung mit Lohnanteil -> §35a EStG").
+    tax_relevance = models.CharField(
+        max_length=20,
+        choices=TaxRelevance.choices,
+        default=TaxRelevance.UNBEKANNT,
+        db_index=True,
+    )
+    tax_relevance_reason = models.TextField(blank=True)
 
     # Extraktion + Cache.
     text_content = models.TextField(blank=True)
@@ -558,6 +614,31 @@ class Document(TimeStampedModel):
         """
         mime = self.mime_type
         return mime in self.INLINE_PREVIEW_MIME_TYPES or mime.startswith("image/")
+
+    @property
+    def has_tax_assessment(self):
+        """True, wenn die KI eine *echte* private ESt-Einschätzung getroffen
+        hat (#1113) -- Ja/Nein/Vielleicht. Grenzt die Fälle ab, in denen
+        Begründung + Disclaimer sinnvoll sind, von `unbekannt` (keine
+        Aussage) und `nicht_zutreffend` (geschäftlich, anderes Thema).
+        """
+        return self.tax_relevance in (
+            self.TaxRelevance.JA,
+            self.TaxRelevance.NEIN,
+            self.TaxRelevance.VIELLEICHT,
+        )
+
+    @classmethod
+    def tax_relevance_filter_choices(cls):
+        """Die Filter-Auswahl der Dokumentliste (#1113): der Sammelwert
+        "privat absetzbar (Ja/Vielleicht)" zuerst, danach die einzelnen
+        Feldwerte -- die Meta-Bearbeitung nutzt dagegen `TaxRelevance.choices`
+        pur (der Sammelwert ist keine setzbare Klassifikation).
+        """
+        return [
+            (cls.TAX_RELEVANCE_DEDUCTIBLE_FILTER, "Privat absetzbar (Ja/Vielleicht)"),
+            *cls.TaxRelevance.choices,
+        ]
 
 
 class SuggestionStatus(models.TextChoices):
@@ -755,6 +836,26 @@ def link_documents(first, second, *, created_by=None, note=""):
         document_b=document_b,
         defaults={"created_by": created_by, "note": note},
     )
+
+
+def tax_relevance_filter_q(value):
+    """Q-Objekt für den Steuerrelevanz-Filter der Dokumentliste (#1113).
+
+    Der Sammelwert `"absetzbar"` (`TAX_RELEVANCE_DEDUCTIBLE_FILTER`) trifft
+    Ja UND Vielleicht zusammen -- genau die Belege, die man als ESt-Grundlage
+    sammeln will. Jeder andere gültige Feldwert filtert exakt. Ein leerer
+    oder unbekannter Wert liefert `None` ("kein Filter"), damit der Aufrufer
+    die Query unverändert lässt. An einer Stelle, weil Browse (`views`) und
+    semantische Suche (`retrieval`) denselben Filter teilen.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    if value == Document.TAX_RELEVANCE_DEDUCTIBLE_FILTER:
+        return models.Q(tax_relevance__in=Document.TAX_RELEVANCE_DEDUCTIBLE_VALUES)
+    if value in Document.TaxRelevance.values:
+        return models.Q(tax_relevance=value)
+    return None
 
 
 # Wegwerf-Präfixe vor dem eigentlichen Wert einer Kennung (#1099): "AZ",

@@ -45,6 +45,15 @@
                 </select>
             </div>
             <div class="findus-filter-field">
+                <label class="form-label" for="meta-tax-relevance">Privat absetzbar</label>
+                <select id="meta-tax-relevance" name="tax_relevance" class="form-select form-select-sm">
+                    {% for value, label in tax_relevance_choices %}
+                    <option value="{{ value }}" {% if value == document.tax_relevance %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text small">Private Einkommensteuer – KI-Einschätzung, keine Steuerberatung.</div>
+            </div>
+            <div class="findus-filter-field">
                 <label class="form-label" for="meta-document-date">Dokumentdatum</label>
                 <input
                     type="date"

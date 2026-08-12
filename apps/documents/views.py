@@ -26,6 +26,7 @@ from .models import (
     Vorgang,
     link_documents,
     normalize_reference_value,
+    tax_relevance_filter_q,
 )
 from .reference_matching import (
     REFERENCE_OWNERS,
@@ -101,6 +102,10 @@ def filtered_documents(request):
     if sphere:
         documents = documents.filter(sphere=sphere)
 
+    tax_q = tax_relevance_filter_q(request.GET.get("tax_relevance", ""))
+    if tax_q is not None:
+        documents = documents.filter(tax_q)
+
     action_status = request.GET.get("action_status", "").strip()
     if action_status:
         documents = documents.filter(action_status=action_status)
@@ -142,6 +147,7 @@ def _search_hits(request, query):
         status=request.GET.get("status", "").strip() or None,
         direction=request.GET.get("direction", "").strip() or None,
         sphere=request.GET.get("sphere", "").strip() or None,
+        tax_relevance=request.GET.get("tax_relevance", "").strip() or None,
         action_status=request.GET.get("action_status", "").strip() or None,
     )
 
@@ -186,6 +192,7 @@ def document_list(request):
         "status_choices": Document.ProcessingStatus.choices,
         "direction_choices": Document.Direction.choices,
         "sphere_choices": Document.Sphere.choices,
+        "tax_relevance_filter_choices": Document.tax_relevance_filter_choices(),
         "action_status_choices": Document.ActionStatus.choices,
         "selected": {
             "correspondent": request.GET.get("correspondent", ""),
@@ -194,6 +201,7 @@ def document_list(request):
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
             "sphere": request.GET.get("sphere", ""),
+            "tax_relevance": request.GET.get("tax_relevance", ""),
             "action_status": request.GET.get("action_status", ""),
             "view": request.GET.get("view", "timeline").strip(),
         },
@@ -898,6 +906,7 @@ def _meta_edit_context(document, quick_create_error=None):
         "all_tags": Tag.objects.all(),
         "direction_choices": Document.Direction.choices,
         "sphere_choices": Document.Sphere.choices,
+        "tax_relevance_choices": Document.TaxRelevance.choices,
         "selected_correspondent_id": document.correspondent_id,
         "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
         "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
@@ -1039,16 +1048,28 @@ def document_meta(request, pk):
         direction = request.POST.get("direction", "").strip()
         if direction in Document.Direction.values:
             document.direction = direction
-        # Sphäre (#1112): ein manuelles Speichern ist die Nutzerentscheidung,
-        # die jede Re-Analyse ab jetzt respektiert -- deshalb auch das "noch
-        # nicht bestaetigt"-Kennzeichen aus `metadata` entfernen, damit das
-        # KI-Badge im Detail verschwindet.
+        # Sphäre (#1112) / private ESt-Absetzbarkeit (#1113): ein manuelles
+        # Speichern ist die Nutzerentscheidung, die jede Re-Analyse ab jetzt
+        # respektiert -- deshalb weiter unten auch die "noch nicht
+        # bestaetigt"-Kennzeichen (`*_source`) aus `metadata` entfernen,
+        # damit die KI-Badges im Detail verschwinden.
         sphere = request.POST.get("sphere", "").strip()
         if sphere in Document.Sphere.values:
             document.sphere = sphere
-        if document.metadata.get("sphere_source"):
+        # Aendert sich die Steuerrelevanz gegenueber dem gespeicherten Wert,
+        # wird die KI-Begruendung verworfen -- sie begruendete die alte,
+        # jetzt ueberstimmte Einschaetzung.
+        tax_relevance = request.POST.get("tax_relevance", "").strip()
+        if tax_relevance in Document.TaxRelevance.values:
+            if tax_relevance != document.tax_relevance:
+                document.tax_relevance_reason = ""
+            document.tax_relevance = tax_relevance
+        if document.metadata.get("sphere_source") or document.metadata.get(
+            "tax_relevance_source"
+        ):
             metadata = dict(document.metadata)
             metadata.pop("sphere_source", None)
+            metadata.pop("tax_relevance_source", None)
             document.metadata = metadata
         document_date = request.POST.get("document_date", "").strip()
         if not document_date:
@@ -1063,6 +1084,8 @@ def document_meta(request, pk):
                 "correspondent",
                 "direction",
                 "sphere",
+                "tax_relevance",
+                "tax_relevance_reason",
                 "document_date",
                 "metadata",
                 "updated_at",

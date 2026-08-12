@@ -697,6 +697,133 @@ class DocumentSphereTests(TestCase):
         self.assertNotIn("sphere_source", result.metadata)
 
 
+class DocumentTaxRelevanceTests(TestCase):
+    """Private ESt-Absetzbarkeit (#1113): Ja/Nein/Vielleicht/Nicht zutreffend
+    aus derselben Analyse-Antwort -- und die Abgrenzung, dass geschäftliche
+    Belege NICHT fälschlich "ja" werden.
+    """
+
+    def _provider(self, *, tax_relevance="ja", reason="Grund", sphere=None):
+        payload = {
+            "title": "Schreiben",
+            "summary": "Ein Schreiben.",
+            # Empfänger = die (unten je Test angelegte) eigene Seite, damit
+            # die Sphären-Ableitung greift -- genau wie in DocumentSphereTests.
+            "key_facts": {
+                "sender_name": "Acme GmbH",
+                "recipient_name": "Christian Angermeier",
+            },
+            "tax_relevance": tax_relevance,
+            "tax_relevance_reason": reason,
+            "tag_suggestions": [],
+            "vorgang_suggestions": [],
+        }
+        if sphere is not None:
+            payload["sphere"] = sphere
+        reply = json.dumps(payload)
+        return FakeGenerationProvider(model="fake-generate", version="1", reply=reply)
+
+    def test_private_document_gets_model_tax_relevance(self):
+        # Reine Privatperson als eigene Seite -> Sphäre privat, das Modell-
+        # Urteil "ja" (samt Begründung) greift.
+        Correspondent.objects.create(
+            name="Christian Angermeier", is_self=True, is_own_business=False
+        )
+        document = Document.objects.create(
+            title="handwerker.pdf", text_content="Handwerkerrechnung"
+        )
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                tax_relevance="ja", reason="Handwerkerrechnung mit Lohnanteil -> §35a"
+            ),
+        )
+
+        self.assertEqual(result.tax_relevance, Document.TaxRelevance.JA)
+        self.assertEqual(
+            result.tax_relevance_reason, "Handwerkerrechnung mit Lohnanteil -> §35a"
+        )
+        self.assertEqual(result.metadata.get("tax_relevance_source"), "ki")
+
+    def test_uncertain_case_stays_vielleicht(self):
+        Correspondent.objects.create(name="Christian Angermeier", is_self=True)
+        document = Document.objects.create(title="beleg.pdf", text_content="Beleg")
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider(tax_relevance="vielleicht", reason=""),
+        )
+
+        self.assertEqual(result.tax_relevance, Document.TaxRelevance.VIELLEICHT)
+
+    def test_business_document_is_nicht_zutreffend_not_ja(self):
+        """Der Kernfall: eine geschäftliche eigene Seite (Gewerbe/USt-IdNr)
+        darf NICHT als privat "ja" durchgehen, auch wenn das Modell "ja"
+        vorschlägt -- die Sphäre stimmt es auf `nicht_zutreffend` um.
+        """
+        Correspondent.objects.create(
+            name="Christian Angermeier",
+            is_self=True,
+            is_own_business=True,
+            vat_id="DE123456789",
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung")
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider(tax_relevance="ja", reason="egal"),
+        )
+
+        self.assertEqual(result.sphere, Document.Sphere.GESCHAEFTLICH)
+        self.assertEqual(result.tax_relevance, Document.TaxRelevance.NICHT_ZUTREFFEND)
+        # Für "nicht zutreffend" bleibt die private Begründung leer.
+        self.assertEqual(result.tax_relevance_reason, "")
+
+    def test_business_document_via_model_sphere_is_nicht_zutreffend(self):
+        # Keine eigene Seite in der DB -> Sphäre kommt aus dem Modell; ist sie
+        # geschäftlich, gilt dasselbe: nicht zutreffend statt "ja".
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung")
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider(
+                tax_relevance="ja", sphere="geschaeftlich"
+            ),
+        )
+
+        self.assertEqual(result.sphere, Document.Sphere.GESCHAEFTLICH)
+        self.assertEqual(result.tax_relevance, Document.TaxRelevance.NICHT_ZUTREFFEND)
+
+    def test_does_not_overwrite_a_manually_set_tax_relevance(self):
+        Correspondent.objects.create(name="Christian Angermeier", is_self=True)
+        document = Document.objects.create(
+            title="beleg.pdf",
+            text_content="Beleg",
+            tax_relevance=Document.TaxRelevance.NEIN,
+        )
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider(tax_relevance="ja", reason="Grund"),
+        )
+
+        self.assertEqual(result.tax_relevance, Document.TaxRelevance.NEIN)
+        self.assertNotIn("tax_relevance_source", result.metadata)
+
+    def test_missing_tax_relevance_stays_unbekannt(self):
+        Correspondent.objects.create(name="Christian Angermeier", is_self=True)
+        document = Document.objects.create(title="beleg.pdf", text_content="Beleg")
+
+        result = analyze_document(
+            document.id,
+            generation_provider=self._provider(tax_relevance="", reason=""),
+        )
+
+        self.assertEqual(result.tax_relevance, Document.TaxRelevance.UNBEKANNT)
+        self.assertNotIn("tax_relevance_source", result.metadata)
+
+
 class DocumentReferenceExtractionTests(TestCase):
     """Kennungen aus derselben Analyse-Antwort (#1099) -- eine Liste, kein
 

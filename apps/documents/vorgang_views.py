@@ -164,11 +164,13 @@ def vorgang_detail(request, pk):
         "status_choices": Document.ProcessingStatus.choices,
         "direction_choices": Document.Direction.choices,
         "sphere_choices": Document.Sphere.choices,
+        "tax_relevance_filter_choices": Document.tax_relevance_filter_choices(),
         "selected": {
             "tag": request.GET.get("tag", ""),
             "status": request.GET.get("status", ""),
             "direction": request.GET.get("direction", ""),
             "sphere": request.GET.get("sphere", ""),
+            "tax_relevance": request.GET.get("tax_relevance", ""),
             "view": request.GET.get("view", "timeline").strip(),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,

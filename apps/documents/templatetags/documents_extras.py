@@ -32,6 +32,18 @@ _SPHERE_BADGE_CLASSES = {
     "privat": "bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle",
 }
 
+_TAX_RELEVANCE_BADGE_CLASSES = {
+    # Private ESt-Absetzbarkeit (#1113): Ja = grün (positiver Treffer),
+    # Vielleicht = gelb (Hedge, prüfen), Nein = neutral-zurückgenommen,
+    # "nicht zutreffend" = dezenter Outline (geschäftlich, kein privates
+    # Thema). `unbekannt` fällt auf denselben dezenten Default wie eine
+    # unklassifizierte Sphäre.
+    "ja": "text-bg-success",
+    "vielleicht": "text-bg-warning",
+    "nein": "bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle",
+    "nicht_zutreffend": "border text-body-secondary",
+}
+
 _ACTION_STATUS_BADGE_CLASSES = {
     "offen": "text-bg-warning",
     "erledigt": "bg-success-subtle text-success-emphasis border border-success-subtle",
@@ -83,6 +95,16 @@ def sphere_badge_class(sphere):
     classified one.
     """
     return _SPHERE_BADGE_CLASSES.get(sphere, "border text-body-secondary")
+
+
+@register.filter(name="tax_relevance_badge_class")
+def tax_relevance_badge_class(tax_relevance):
+    """Bootstrap badge class for `Document.tax_relevance` (#1113) -- private
+    ESt-Absetzbarkeit. Ampel-Logik (Ja grün, Vielleicht gelb, Nein neutral),
+    `unbekannt` fällt auf den dezenten Outline-Default zurück, wie eine
+    unklassifizierte Sphäre/Richtung.
+    """
+    return _TAX_RELEVANCE_BADGE_CLASSES.get(tax_relevance, "border text-body-secondary")
 
 
 @register.filter(name="action_status_badge_class")

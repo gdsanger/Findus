@@ -150,6 +150,23 @@ _SYSTEM_PROMPT = (
     "Auch USt-IdNr/Steuernummer der eigenen Seite im Dokumenttext sind ein "
     'Geschaeftlich-Signal. Laesst sich keine eigene Seite zuordnen oder ist '
     'es unklar, antworte "unbekannt" -- rate nicht.\n'
+    '- "tax_relevance": IMMER angeben, einer von "ja", "nein", "vielleicht", '
+    '"nicht_zutreffend". Bewerte AUSSCHLIESSLICH, ob dieser Beleg als '
+    "PRIVATPERSON in der Einkommensteuererklaerung absetzbar ist -- also "
+    "Werbungskosten, haushaltsnahe Dienstleistungen/Handwerkerleistungen "
+    "(§35a EStG), Spenden, Versicherungs-/Vorsorgebeitraege, "
+    "aussergewoehnliche Belastungen, Kinderbetreuung u. ae. Klar privat "
+    'absetzbar -> "ja"; klar nicht absetzbar (Werbung, reiner Kontoauszug, '
+    'Kassenbon ohne Bezug) -> "nein"; unsicher -> "vielleicht" (ehrlicher '
+    "Hedge, lieber das als eine Fehleinschaetzung). WICHTIG: Es geht rein um "
+    "die PRIVATE Absetzbarkeit. Ein geschaeftlicher/betrieblicher Beleg ist "
+    'NICHT "ja", nur weil er als Betriebsausgabe absetzbar waere -- das ist '
+    "ein anderes Thema. Ist das Dokument geschaeftlich (sphere = "
+    '"geschaeftlich", eigene Seite [MEINE FIRMA]/mit USt-IdNr), antworte '
+    '"nicht_zutreffend".\n'
+    '- "tax_relevance_reason": kurze Begruendung in einem Satz zu '
+    '"tax_relevance" (z. B. "Handwerkerrechnung mit ausgewiesenem Lohnanteil '
+    '-> §35a EStG" oder "Reine Werbung, kein absetzbarer Aufwand"), sonst "".\n'
     '- "references": Liste ALLER im Dokument genannten Kennungen/'
     'Referenznummern, je Eintrag "type", "value", "role". Ein Dokument '
     "kann mehrere tragen (z. B. Aktenzeichen UND Forderungsnummer) -- "
@@ -478,6 +495,26 @@ def _resolve_sphere(
     return _normalize_sphere(parsed_sphere)
 
 
+def _normalize_tax_relevance(value: object) -> str:
+    text = str(value or "").strip().lower()
+    valid_values = {choice.value for choice in Document.TaxRelevance}
+    return text if text in valid_values else Document.TaxRelevance.UNBEKANNT
+
+
+def _resolve_tax_relevance(parsed_value: object, effective_sphere: str) -> str:
+    """Private ESt-Absetzbarkeit (#1113): geschaeftliche Belege sind hier
+    IMMER `nicht_zutreffend` -- die betriebliche Absetzbarkeit ist ein
+    anderes, spaeteres Merkmal, und der haeufigste Fehler waere, einen
+    Gewerbe-Beleg faelschlich als privat "ja" zu markieren. Die (ggf. gerade
+    abgeleitete) Sphaere entscheidet also, *ob* das Feld ueberhaupt greift:
+    ist sie `geschaeftlich`, ueberschreibt das jeden Modell-Vorschlag; sonst
+    zaehlt die private Einschaetzung des Modells (ja/nein/vielleicht).
+    """
+    if effective_sphere == Document.Sphere.GESCHAEFTLICH:
+        return Document.TaxRelevance.NICHT_ZUTREFFEND
+    return _normalize_tax_relevance(parsed_value)
+
+
 def _apply_analysis(document: Document, parsed: dict, *, model: str, version: str) -> None:
     parsed = clean_json(parsed)
     title = str(parsed.get("title") or "").strip()
@@ -565,6 +602,31 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
             document.sphere = candidate_sphere
             metadata["sphere_source"] = "ki"
             update_fields.append("sphere")
+
+    # Private ESt-Absetzbarkeit (#1113): dasselbe "einmal befuellen, nie
+    # ungefragt ueberschreiben"-Muster wie `sphere`/`direction` -- nur
+    # setzen, solange sie noch `unbekannt` ist. `document.sphere` ist hier
+    # bereits aktuell (oben ggf. gerade gesetzt), sodass ein geschaeftlicher
+    # Beleg zuverlaessig `nicht_zutreffend` wird statt faelschlich "ja". Die
+    # Begruendung wird mitgesetzt; fuer `nicht_zutreffend` bleibt sie leer
+    # (die betriebliche Relevanz ist ein anderes Thema, keine private
+    # Begruendung). `metadata["tax_relevance_source"] = "ki"` markiert den
+    # noch unbestaetigten Vorschlag fuers Badge -- ein manuelles Speichern
+    # (document_meta) entfernt die Markierung.
+    if document.tax_relevance == Document.TaxRelevance.UNBEKANNT:
+        candidate_tax = _resolve_tax_relevance(
+            parsed.get("tax_relevance"), document.sphere
+        )
+        if candidate_tax != Document.TaxRelevance.UNBEKANNT:
+            document.tax_relevance = candidate_tax
+            document.tax_relevance_reason = (
+                ""
+                if candidate_tax == Document.TaxRelevance.NICHT_ZUTREFFEND
+                else str(parsed.get("tax_relevance_reason") or "").strip()
+            )
+            metadata["tax_relevance_source"] = "ki"
+            update_fields.append("tax_relevance")
+            update_fields.append("tax_relevance_reason")
 
     if document.correspondent_id is None:
         # Kontakt = Gegenstelle, nie eine eigene Identitaet (#1048): bei
