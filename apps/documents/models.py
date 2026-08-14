@@ -482,6 +482,16 @@ class Document(TimeStampedModel):
     document_date = models.DateField(null=True, blank=True, db_index=True)
 
     original_file = models.FileField(upload_to="documents/%Y/%m/", blank=True)
+    # Vorschaubild der ersten Seite (#1123): beim Ingest gerendert und im
+    # selben Object Storage wie das Original abgelegt (nicht in Postgres,
+    # siehe Architektur "Gehirn ↔ Regal"). Bewusst ein eigenes FileField
+    # statt On-the-fly-Rendering beim ersten Abruf -- die Kachelansicht zeigt
+    # 20 Bilder gleichzeitig, 20 synchrone Renderings pro Seitenaufruf waeren
+    # der falsche Ort fuer die CPU-Last. Leer, solange kein Thumbnail
+    # existiert (nicht renderbarer Typ, Rendering-Fehler oder Bestand ohne
+    # Backfill) -- `document_thumbnail` antwortet dann 404, die UI zeigt einen
+    # Typ-Platzhalter.
+    thumbnail = models.FileField(upload_to="thumbnails/%Y/%m/", blank=True)
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
 
     objects = DocumentQuerySet.as_manager()
@@ -490,6 +500,14 @@ class Document(TimeStampedModel):
     # Konverter (#1036) -- PDF und alle Bildformate; alles andere (docx,
     # xlsx, zip, eml, …) bleibt Download-only.
     INLINE_PREVIEW_MIME_TYPES = {"application/pdf"}
+
+    # Thumbnail-fähig heißt: die Ingest-Pipeline (#1123) kann daraus ein
+    # Vorschaubild der ersten Seite rastern -- PDF (pypdfium2) und alle
+    # Bildformate (Pillow). Alles andere (docx, xlsx, zip, eml, …) bekommt
+    # keins; die UI zeigt dort einen Typ-Platzhalter. Bewusst hier auf dem
+    # Model gekapselt (analog `INLINE_PREVIEW_MIME_TYPES`), damit Template,
+    # View und Rendering dieselbe Quelle nutzen statt drei Whitelists.
+    THUMBNAIL_MIME_TYPES = {"application/pdf"}
 
     class Meta:
         ordering = ["-created_at"]
@@ -614,6 +632,18 @@ class Document(TimeStampedModel):
         """
         mime = self.mime_type
         return mime in self.INLINE_PREVIEW_MIME_TYPES or mime.startswith("image/")
+
+    @property
+    def is_thumbnailable(self):
+        """Whitelist check (#1123) whether a first-page Vorschaubild can be
+        rendered for this document -- PDF and every image format, nothing
+        else. Shared by the ingest step, the backfill command and the
+        Kachel-Template so all three agree on "which documents get a
+        thumbnail" (the field being empty otherwise means "not renderable"
+        *or* "render failed" -- both correctly end up on the placeholder).
+        """
+        mime = self.mime_type
+        return mime in self.THUMBNAIL_MIME_TYPES or mime.startswith("image/")
 
     @property
     def has_tax_assessment(self):

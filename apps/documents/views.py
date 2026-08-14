@@ -1,5 +1,6 @@
 import datetime
 import logging
+import mimetypes
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -770,6 +771,37 @@ def document_original_preview_panel(request, pk):
 
 
 @login_required
+def document_thumbnail(request, pk):
+    """Serve the first-page Vorschaubild (#1123) through the same
+    `visible_to` scoping as every other document view -- the storage
+    backend's own URL is a public S3/MinIO link that bypasses the ACL, so
+    the thumbnail (like the original, #1024) must only ever be reached
+    through this auth-gated route, never linked directly.
+
+    A missing thumbnail (not renderable, render failed, or a Bestand doc not
+    yet backfilled) is a 404, not an error -- the Kachel-Template falls back
+    to a type placeholder. Scoping via `_visible_document` means a foreign
+    document is a 404 too, not a 403, so the endpoint never leaks that a pk
+    exists. `Cache-Control: private` because the image is per-document and
+    unveraenderlich, but must not land in a shared/proxy cache given the
+    auth gate.
+    """
+    document = _visible_document(request.user, pk)
+    if not document.thumbnail:
+        raise Http404("Kein Thumbnail vorhanden.")
+    content_type = mimetypes.guess_type(document.thumbnail.name)[0] or "image/webp"
+    response = FileResponse(
+        document.thumbnail.open("rb"),
+        content_type=content_type,
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = (
+        f"private, max-age={settings.FINDUS_THUMBNAIL_CACHE_MAX_AGE}"
+    )
+    return response
+
+
+@login_required
 @require_POST
 def document_delete(request, pk):
     """Delete a document (#1022) from the list or the detail page, guarded
@@ -778,15 +810,18 @@ def document_delete(request, pk):
     document view -- confirmation happens client-side before the POST is
     ever sent. Chunks, tag/Vorgang suggestions, Unterdokumente (#1069) and
     the Task m2m rows all cascade via FK `on_delete=CASCADE`/m2m cleanup;
-    only the object-storage originals need an explicit delete, since
-    Django never removes FileField contents on its own -- deleting a
-    Leitdokument takes its whole subtree with it, so every descendant's
-    `original_file` needs the same treatment, not just this document's own.
+    only the object-storage files need an explicit delete, since Django
+    never removes FileField contents on its own -- both the `original_file`
+    and the `thumbnail` (#1123). Deleting a Leitdokument takes its whole
+    subtree with it, so every descendant's files need the same treatment,
+    not just this document's own.
     """
     document = _visible_document(request.user, pk)
     for doc in [document, *document.subtree()]:
         if doc.original_file:
             doc.original_file.delete(save=False)
+        if doc.thumbnail:
+            doc.thumbnail.delete(save=False)
     document.delete()
     return redirect("documents:home")
 
@@ -817,6 +852,8 @@ def document_child_delete(request, pk, child_id):
     for doc in [child, *child.subtree()]:
         if doc.original_file:
             doc.original_file.delete(save=False)
+        if doc.thumbnail:
+            doc.thumbnail.delete(save=False)
     child.delete()
     return render(
         request,

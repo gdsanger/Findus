@@ -47,6 +47,12 @@ pytesseract==0.3.13
 python-docx==1.2.0
 Pillow==12.3.0
 langdetect==1.0.9
+# Thumbnails (apps.documents.thumbnails, #1123): erste PDF-Seite fuer die
+# Kachelansicht rastern. pypdfium2 buendelt die PDFium-Engine als reines
+# Python-Wheel -- bewusst kein pdf2image/Poppler-Weg hier, damit die
+# Thumbnail-Erzeugung nicht an der tesseract/poppler-Systeminstallation
+# haengt; Bilder skaliert Pillow (schon oben).
+pypdfium2==4.30.0
 # Robuste MIME-Erkennung aus dem Dateiinhalt (#1077): Scanner/Upload-Wege
 # melden fuer echte PDFs oft `application/octet-stream`. python-magic bindet
 # die auf dem Server vorhandene libmagic (`file`) an; fehlt sie, faellt

@@ -3,25 +3,46 @@ from .extraction import extract_document
 from .letter_generation import generate_letter_draft
 from .processing import process_document
 from .recommendations import generate_vorgang_recommendations
+from .thumbnails import generate_thumbnail_for_document
 
 
 def extract_document_task(document_id):
     """Django-Q2 worker entry point for the extraction cascade (#1009),
     queued by `apps.ingest.service.ingest_file` right after a `Document`
-    is created (`processing_status="pending"`). On success it enqueues
-    `analyze_document_task` (#1020, KI-Analyse) as the pipeline's next
-    stage.
+    is created (`processing_status="pending"`). On success it renders the
+    first-page thumbnail (#1123) and then enqueues `analyze_document_task`
+    (#1020, KI-Analyse) as the pipeline's next stage.
 
     `extract_document()` already records failures on the `Document`
     itself (`processing_status="failed"` + `processing_error`) and
     re-raises, so Django-Q records this task as failed too and
     `analyze_document_task` is never enqueued for a failed extraction.
+
+    The thumbnail runs *after* a successful extraction (the original file is
+    already downloaded and its MIME type normalised) but is deliberately
+    fault-tolerant -- `generate_thumbnail_for_document` never raises, so a
+    render failure leaves the document without a thumbnail (UI shows a
+    placeholder) instead of breaking the pipeline, exactly like the
+    KI-Analyse.
     """
     extract_document(document_id)
+    generate_thumbnail_for_document(document_id)
 
     from django_q.tasks import async_task
 
     async_task(analyze_document_task, document_id)
+
+
+def generate_thumbnail_task(document_id, force=False):
+    """Django-Q2 worker entry point for the thumbnail backfill (#1123),
+    queued by `manage.py generate_thumbnails --queue` for a large existing
+    stock, so the command doesn't block for the whole run.
+
+    Reuses the same fault-tolerant helper as the ingest pipeline -- a failed
+    thumbnail is enrichment lost, not a broken document, so this never marks
+    the task failed either.
+    """
+    generate_thumbnail_for_document(document_id, force=force)
 
 
 def analyze_document_task(document_id):

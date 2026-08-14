@@ -447,6 +447,16 @@ FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE = float(env("FINDUS_EXTRACTION_MIN_OCR_CONF
 FINDUS_EXTRACTION_OCR_LANGUAGES = env("FINDUS_EXTRACTION_OCR_LANGUAGES", "deu+eng")
 FINDUS_EXTRACTION_PDF_RENDER_DPI = int(env("FINDUS_EXTRACTION_PDF_RENDER_DPI", "200"))
 
+# --------------------------------------------------------------------------
+# Thumbnails (apps.documents.thumbnails, #1123): beim Ingest gerendertes
+# Vorschaubild der ersten Seite (PDF) bzw. skaliertes Bild (image/*) fuer die
+# Kachelansicht. Bewusst klein -- ein Kachelbild, keine Leseansicht --, daher
+# die kurze laengste Kante. `document_thumbnail` liefert es auth-gestuetzt
+# aus und cacht es MAX_AGE Sekunden, da es pro Dokument unveraenderlich ist.
+# --------------------------------------------------------------------------
+FINDUS_THUMBNAIL_MAX_EDGE = int(env("FINDUS_THUMBNAIL_MAX_EDGE", "400"))
+FINDUS_THUMBNAIL_CACHE_MAX_AGE = int(env("FINDUS_THUMBNAIL_CACHE_MAX_AGE", str(60 * 60 * 24 * 30)))
+
 # Per-provider settings, keyed by the same name used in
 # FINDUS_AI_{EMBEDDING,GENERATION,VISION}_PROVIDER. `*_model_version` is not
 # read back from any provider API (none of them report it consistently) --
