@@ -5,20 +5,23 @@ import mimetypes
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import DateField, Prefetch
+from django.db.models import DateField, Exists, OuterRef, Prefetch
 from django.db.models.functions import Coalesce, TruncDate
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
 from apps.ingest.service import ingest_file
 
 from .analysis import analyze_and_finalize
+from .comment_views import document_comments_context
 from .forms import TaskForm
 from .models import (
     Correspondent,
     Document,
+    DocumentComment,
     DocumentLink,
     DocumentReference,
     SuggestionStatus,
@@ -38,6 +41,10 @@ from .reference_matching import (
 from .references import set_reference, shared_reference_groups
 from .retrieval import DocumentRetrievalService
 from .task_views import task_departments_and_visibility
+
+FOLLOW_UP_FILTER_CHOICES = [
+    ("due", "Nur fällige"),
+]
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +118,30 @@ def filtered_documents(request):
     if action_status:
         documents = documents.filter(action_status=action_status)
 
-    if vorgang_id or tag_id:
+    today = timezone.localdate()
+    follow_up = request.GET.get("follow_up", "").strip()
+    if follow_up == "due":
+        documents = documents.filter(
+            comments__follow_up_date__isnull=False, comments__follow_up_date__lte=today
+        )
+
+    if vorgang_id or tag_id or follow_up == "due":
         documents = documents.distinct()
+
+    # Dezenter Indikator fuer die Kachelansicht (#1125): unabhaengig vom
+    # `follow_up`-Filter annotiert, damit die Kachel auch dann zeigt "hier
+    # steht was an", wenn der Filter selbst nicht aktiv ist. `Exists` statt
+    # eines zweiten `filter()`/`distinct()` -- vermeidet, dass ein Dokument
+    # mit mehreren faelligen Kommentaren mehrfach in der Seite auftaucht.
+    documents = documents.annotate(
+        has_due_comment=Exists(
+            DocumentComment.objects.filter(
+                document_id=OuterRef("pk"),
+                follow_up_date__isnull=False,
+                follow_up_date__lte=today,
+            )
+        )
+    )
 
     # Default-Sortierung nach Dokumentdatum, nicht Upload-Datum (#1085):
     # `document_date` (KI-erkannt/user-korrigiert) absteigend, mit
@@ -195,6 +224,7 @@ def document_list(request):
         "sphere_choices": Document.Sphere.choices,
         "tax_relevance_filter_choices": Document.tax_relevance_filter_choices(),
         "action_status_choices": Document.ActionStatus.choices,
+        "follow_up_choices": FOLLOW_UP_FILTER_CHOICES,
         "selected": {
             "correspondent": request.GET.get("correspondent", ""),
             "vorgang": request.GET.get("vorgang", ""),
@@ -204,6 +234,7 @@ def document_list(request):
             "sphere": request.GET.get("sphere", ""),
             "tax_relevance": request.GET.get("tax_relevance", ""),
             "action_status": request.GET.get("action_status", ""),
+            "follow_up": request.GET.get("follow_up", ""),
             # Kachel/Grid ist der Default (#1124); "" = Liste, "timeline" =
             # Zeitleiste (#1087). Der Wert steuert nur die Darstellung im
             # gemeinsamen Listen-Partial, nicht das Filtern/Sortieren.
@@ -644,6 +675,7 @@ def document_detail(request, pk):
 
     context = {
         **_document_tasks_context(request.user, document),
+        **document_comments_context(request.user, document),
         **_analysis_status_context(document),
         **_children_context(request.user, document),
         **_references_context(request.user, document),

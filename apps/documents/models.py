@@ -671,6 +671,77 @@ class Document(TimeStampedModel):
         ]
 
 
+class DocumentCommentQuerySet(models.QuerySet):
+    def due(self, *, on=None):
+        """Kommentare mit einer Wiedervorlage, die heute oder frueher liegt
+
+        (#1125) -- unabhaengig von `remind`, treibt allein die
+        Hervorhebung im Detail und den Uebersichts-/Filter-Indikator.
+        """
+        cutoff = on or timezone.localdate()
+        return self.filter(follow_up_date__isnull=False, follow_up_date__lte=cutoff)
+
+    def pending_reminders(self, *, on=None):
+        """Faellige Wiedervorlagen, die noch nie erinnert haben (#1125) --
+
+        die Grundlage des taeglichen Erinnerungs-Jobs. `reminded_at` wird
+        erst nach erfolgreichem Versand gesetzt, damit ein Kommentar genau
+        einmal erinnert.
+        """
+        return self.due(on=on).filter(remind=True, reminded_at__isnull=True)
+
+
+class DocumentComment(TimeStampedModel):
+    """Ein Eintrag der Kommentar-Chronik eines Dokuments (#1125): freier
+
+    Text mit optionalem Wiedervorlage-Datum und optionaler Erinnerung.
+
+    Ersetzt bewusst kein Statusfeld -- ob an einem Dokument noch etwas
+    offen ist, sagt weiterhin allein `Document.action_status` (dieselbe
+    Trennung wie `ProcessingStatus` vs. `ActionStatus`, siehe dort). Ein
+    Kommentar hat deshalb auch kein eigenes Erledigt-Feld: die Wiedervorlage
+    ist ein One-Shot-Ping (erinnert höchstens einmal, `reminded_at`
+    dokumentiert das), keine Aufgabe mit eigenem Lebenszyklus -- was nicht
+    wichtig genug war, noch einmal nachzuhaken, verschwindet zu Recht
+    kommentarlos in der Chronik statt als offener Posten liegen zu bleiben.
+    """
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="comments")
+    body = models.TextField()
+    follow_up_date = models.DateField(null=True, blank=True)
+    remind = models.BooleanField(default=False)
+    # Nur gesetzt, nachdem der Erinnerungs-Job (apps.documents.reminders)
+    # tatsaechlich eine Mail verschickt hat -- der Bewacher gegen
+    # Doppelversand bei einem zweiten Lauf desselben oder eines spaeteren
+    # Tages.
+    reminded_at = models.DateTimeField(null=True, blank=True)
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="document_comments",
+    )
+
+    objects = DocumentCommentQuerySet.as_manager()
+
+    class Meta:
+        # Journal, keine Terminliste: neueste zuerst nach Anlagedatum, nicht
+        # nach `follow_up_date` (siehe Klassendoc).
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.body[:50]
+
+    @property
+    def is_overdue(self):
+        return self.follow_up_date is not None and self.follow_up_date < timezone.localdate()
+
+    @property
+    def is_due_today(self):
+        return self.follow_up_date is not None and self.follow_up_date == timezone.localdate()
+
+
 class SuggestionStatus(models.TextChoices):
     PENDING = "pending", "Offen"
     ACCEPTED = "accepted", "Angenommen"

@@ -3,6 +3,7 @@ from django import forms
 from .letter_bindings import MANUAL_SOURCE, source_choices
 from .models import (
     Correspondent,
+    DocumentComment,
     LetterDraft,
     LetterTemplate,
     LetterTemplatePlaceholder,
@@ -110,6 +111,38 @@ class TaskForm(forms.ModelForm):
                 attrs={"class": "form-control form-control-sm", "rows": 4}
             ),
         }
+
+
+class DocumentCommentForm(forms.ModelForm):
+    """Covers the Kommentar-Chronik-Eintrag (#1125) -- `document`/`author`
+
+    are set by the view (same split as `TaskForm`/`task.documents`), and
+    `remind` is validated against `follow_up_date` here so an inline error
+    shows up next to the checkbox instead of a checkbox that silently does
+    nothing without a date to hang off.
+    """
+
+    class Meta:
+        model = DocumentComment
+        fields = ["body", "follow_up_date", "remind"]
+        labels = {
+            "body": "Kommentar",
+            "follow_up_date": "Wiedervorlage",
+            "remind": "Erinnern",
+        }
+        widgets = {
+            "body": forms.Textarea(attrs={"class": "form-control form-control-sm", "rows": 2}),
+            "follow_up_date": forms.DateInput(
+                attrs={"class": "form-control form-control-sm", "type": "date"}
+            ),
+            "remind": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        }
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get("remind") and not cleaned_data.get("follow_up_date"):
+            self.add_error("remind", "Erinnern setzt ein Wiedervorlage-Datum voraus.")
+        return cleaned_data
 
 
 class TaskTemplateForm(forms.ModelForm):

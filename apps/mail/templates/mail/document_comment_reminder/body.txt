@@ -1,0 +1,8 @@
+Hallo,
+
+folgende Wiedervorlagen sind fällig:
+{% for item in items %}
+- {{ item.document_title }} ({{ item.follow_up_date|date:"d.m.Y" }}): {{ item.body }}
+  {{ item.document_url }}
+{% endfor %}
+-- Findus

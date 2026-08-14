@@ -7,7 +7,15 @@ from django.utils import timezone
 
 from apps.accounts.models import Department
 
-from .models import ChecklistItem, Correspondent, Document, Task, TaskTemplate, TaskTemplateItem
+from .models import (
+    ChecklistItem,
+    Correspondent,
+    Document,
+    DocumentComment,
+    Task,
+    TaskTemplate,
+    TaskTemplateItem,
+)
 from .services import (
     create_task_from_template,
     find_correspondent,
@@ -261,6 +269,95 @@ class TaskTests(TestCase):
             list(task.checklist_items.values_list("text", flat=True)),
             ["Betrag prüfen", "Belege sammeln"],
         )
+
+
+class DocumentCommentTests(TestCase):
+    """Covers the model-level building blocks of the Kommentar-Chronik
+
+    (#1125): Sortierung, Fälligkeits-/Erinnerungs-Queryset und die
+    Hervorhebungs-Properties.
+    """
+
+    def setUp(self):
+        self.document = Document.objects.create(title="Rechnung")
+        self.today = timezone.localdate()
+
+    def test_comments_are_ordered_newest_first(self):
+        older = DocumentComment.objects.create(document=self.document, body="Zuerst")
+        newer = DocumentComment.objects.create(document=self.document, body="Danach")
+        DocumentComment.objects.filter(pk=older.pk).update(
+            created_at=timezone.now() - datetime.timedelta(days=1)
+        )
+
+        self.assertEqual(list(self.document.comments.all()), [newer, older])
+
+    def test_comment_without_follow_up_date_is_valid(self):
+        comment = DocumentComment.objects.create(document=self.document, body="Nur eine Notiz")
+
+        self.assertIsNone(comment.follow_up_date)
+        self.assertFalse(comment.is_overdue)
+        self.assertFalse(comment.is_due_today)
+
+    def test_is_overdue_for_past_follow_up_date(self):
+        comment = DocumentComment.objects.create(
+            document=self.document,
+            body="Kündigungsfrist",
+            follow_up_date=self.today - datetime.timedelta(days=1),
+        )
+
+        self.assertTrue(comment.is_overdue)
+        self.assertFalse(comment.is_due_today)
+
+    def test_is_due_today_for_todays_follow_up_date(self):
+        comment = DocumentComment.objects.create(
+            document=self.document, body="Heute prüfen", follow_up_date=self.today
+        )
+
+        self.assertFalse(comment.is_overdue)
+        self.assertTrue(comment.is_due_today)
+
+    def test_future_follow_up_date_is_neither_overdue_nor_due_today(self):
+        comment = DocumentComment.objects.create(
+            document=self.document,
+            body="Verlängerung prüfen",
+            follow_up_date=self.today + datetime.timedelta(days=30),
+        )
+
+        self.assertFalse(comment.is_overdue)
+        self.assertFalse(comment.is_due_today)
+
+    def test_pending_reminders_requires_remind_due_date_and_no_prior_send(self):
+        due_and_remind = DocumentComment.objects.create(
+            document=self.document,
+            body="Frist",
+            follow_up_date=self.today,
+            remind=True,
+        )
+        DocumentComment.objects.create(
+            document=self.document, body="Ohne Erinnerung", follow_up_date=self.today, remind=False
+        )
+        DocumentComment.objects.create(
+            document=self.document,
+            body="Noch nicht fällig",
+            follow_up_date=self.today + datetime.timedelta(days=1),
+            remind=True,
+        )
+        DocumentComment.objects.create(
+            document=self.document,
+            body="Bereits erinnert",
+            follow_up_date=self.today,
+            remind=True,
+            reminded_at=timezone.now(),
+        )
+
+        self.assertEqual(list(DocumentComment.objects.pending_reminders()), [due_and_remind])
+
+    def test_deleting_document_deletes_its_comments(self):
+        DocumentComment.objects.create(document=self.document, body="Wird mitgelöscht")
+
+        self.document.delete()
+
+        self.assertEqual(DocumentComment.objects.count(), 0)
 
 
 class TaskTemplateVisibleToTests(TestCase):

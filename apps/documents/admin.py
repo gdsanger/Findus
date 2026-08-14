@@ -6,6 +6,7 @@ from .models import (
     Correspondent,
     CorrespondentReference,
     Document,
+    DocumentComment,
     DocumentLink,
     DocumentReference,
     LetterDraft,
@@ -56,6 +57,20 @@ class DocumentTaskInline(admin.TabularInline):
     extra = 0
     verbose_name = "Verknüpfte Aufgabe"
     verbose_name_plural = "Verknüpfte Aufgaben"
+
+
+class DocumentCommentInline(admin.TabularInline):
+    """Die Kommentar-Chronik eines Dokuments (#1125) -- `reminded_at` bleibt
+
+    schreibgeschützt, das setzt ausschließlich der Erinnerungs-Job
+    (`apps.documents.reminders`), nie eine manuelle Bearbeitung.
+    """
+
+    model = DocumentComment
+    fields = ("body", "follow_up_date", "remind", "reminded_at", "author")
+    readonly_fields = ("reminded_at",)
+    autocomplete_fields = ("author",)
+    extra = 0
 
 
 class TagSuggestionInline(admin.TabularInline):
@@ -131,6 +146,7 @@ class DocumentAdmin(admin.ModelAdmin):
         DocumentReferenceInline,
         ChunkInline,
         DocumentTaskInline,
+        DocumentCommentInline,
         TagSuggestionInline,
         VorgangSuggestionInline,
     ]

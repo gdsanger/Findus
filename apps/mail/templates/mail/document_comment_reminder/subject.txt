@@ -1,0 +1,1 @@
+Findus: {{ count }} fällige Wiedervorlage{{ count|pluralize:"n" }}

@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import (
+    comment_views,
     correspondent_views,
     dashboard_views,
     graph_views,
@@ -97,6 +98,31 @@ urlpatterns = [
     path("documents/upload/", views.document_upload, name="upload"),
     path("documents/<int:pk>/", views.document_detail, name="detail"),
     path("documents/<int:pk>/tasks/create/", views.document_task_create, name="document_task_create"),
+    path(
+        "documents/<int:pk>/comments/create/",
+        comment_views.document_comment_create,
+        name="document_comment_create",
+    ),
+    path(
+        "documents/<int:pk>/comments/<int:comment_id>/edit/",
+        comment_views.document_comment_edit_form,
+        name="document_comment_edit_form",
+    ),
+    path(
+        "documents/<int:pk>/comments/<int:comment_id>/cancel/",
+        comment_views.document_comment_cancel_edit,
+        name="document_comment_cancel_edit",
+    ),
+    path(
+        "documents/<int:pk>/comments/<int:comment_id>/update/",
+        comment_views.document_comment_update,
+        name="document_comment_update",
+    ),
+    path(
+        "documents/<int:pk>/comments/<int:comment_id>/delete/",
+        comment_views.document_comment_delete,
+        name="document_comment_delete",
+    ),
     path("documents/<int:pk>/original/", views.document_original_download, name="original_download"),
     path("documents/<int:pk>/original/preview/", views.document_original_preview, name="original_preview"),
     path(

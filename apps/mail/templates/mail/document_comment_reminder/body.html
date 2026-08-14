@@ -1,0 +1,11 @@
+<p>Hallo,</p>
+<p>folgende Wiedervorlagen sind fällig:</p>
+<ul>
+{% for item in items %}
+<li>
+<strong>{{ item.document_title }}</strong> ({{ item.follow_up_date|date:"d.m.Y" }}): {{ item.body }}<br>
+<a href="{{ item.document_url }}">Dokument ansehen</a>
+</li>
+{% endfor %}
+</ul>
+<p>-- Findus</p>
