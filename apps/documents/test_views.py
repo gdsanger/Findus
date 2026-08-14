@@ -475,15 +475,24 @@ class DocumentTimelineViewTests(TestCase):
         )
         self.undated_doc.departments.add(self.dept)
 
-    def test_timeline_view_is_default(self):
-        """#1092: Timeline is the default now that #1087's toggle exists --
-        no `view` param at all (fresh visit, no stored/explicit choice).
+    def test_grid_view_is_default(self):
+        """#1124: Kachel/Grid is the default now -- no `view` param at all
+        (fresh visit, no stored/explicit choice) renders the tile grid, not
+        the timeline (#1092) or the table.
         """
         self.client.force_login(self.user)
         response = self.client.get(reverse("documents:home"))
 
-        self.assertContains(response, "findus-timeline\"")
+        self.assertContains(response, "findus-doc-grid")
+        self.assertNotContains(response, "findus-timeline\"")
         self.assertNotContains(response, "<table")
+
+    def test_timeline_view_stays_reachable_via_explicit_param(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+
+        self.assertContains(response, "findus-timeline\"")
+        self.assertNotContains(response, "findus-doc-grid")
 
     def test_list_view_stays_reachable_via_explicit_param(self):
         self.client.force_login(self.user)
@@ -541,6 +550,119 @@ class DocumentTimelineViewTests(TestCase):
         response = self.client.get(reverse("documents:home"), {"view": "timeline"})
 
         self.assertContains(response, "view=timeline")
+
+
+_GRID_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-grid-media-")
+_GRID_LOCAL_STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+
+@override_settings(MEDIA_ROOT=_GRID_MEDIA_ROOT, STORAGES=_GRID_LOCAL_STORAGES)
+class DocumentGridViewTests(TestCase):
+    """Kachelansicht der Dokumentliste (#1124): Default-Grid, Kachel-Inhalt
+    (Thumbnail bzw. Platzhalter), die drei Aktionen und der Tag-Filter-Link --
+    alles auf demselben visibility-gescopten `page_obj` wie Liste/Timeline.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(_GRID_MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+
+        self.acme = Correspondent.objects.create(name="Acme GmbH")
+        self.tag = Tag.objects.create(name="Dringend", dimension="Priorität")
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme",
+            correspondent=self.acme,
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+            metadata={"mime_type": "application/pdf", "original_filename": "rechnung.pdf"},
+        )
+        self.doc.departments.add(self.dept)
+        self.doc.tags.add(self.tag)
+        self.doc.original_file.save("rechnung.pdf", io.BytesIO(b"%PDF-1.4 stub"), save=True)
+
+        # Ein Dokument einer fremden Abteilung -- darf in der Kachelansicht
+        # ebensowenig auftauchen wie in Liste/Timeline.
+        self.hidden_doc = Document.objects.create(
+            title="Vertrag Other GmbH",
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        self.hidden_doc.departments.add(Department.objects.create(name="Fremd"))
+
+    def test_default_view_renders_grid_with_card_content(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus-doc-grid")
+        self.assertContains(response, "findus-doc-card")
+        self.assertContains(response, "Rechnung Acme")
+        self.assertContains(response, "Acme GmbH")
+
+    def test_grid_scopes_documents_by_visibility(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "Vertrag Other GmbH")
+
+    def test_card_shows_thumbnail_url_when_thumbnail_present(self):
+        self.doc.thumbnail.save("thumb.webp", io.BytesIO(b"RIFFstubWEBP"), save=True)
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, reverse("documents:thumbnail", args=[self.doc.id]))
+        self.assertNotContains(response, "findus-doc-card-thumb-placeholder")
+
+    def test_card_shows_placeholder_when_no_thumbnail(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus-doc-card-thumb-placeholder")
+        # Dateiendung im Platzhalter, keine kaputte <img>-Box.
+        self.assertContains(response, "PDF")
+        self.assertNotContains(response, reverse("documents:thumbnail", args=[self.doc.id]))
+
+    def test_card_exposes_all_three_actions(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, reverse("documents:detail", args=[self.doc.id]))
+        self.assertContains(response, reverse("documents:original_preview", args=[self.doc.id]))
+        self.assertContains(response, reverse("documents:original_download", args=[self.doc.id]))
+
+    def test_card_hides_preview_action_for_non_previewable_format(self):
+        self.doc.metadata = {"mime_type": "application/zip", "original_filename": "archiv.zip"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        # Detail/Download bleiben, "Original ansehen" fällt weg (kein toter Button).
+        self.assertContains(response, reverse("documents:original_download", args=[self.doc.id]))
+        self.assertNotContains(response, reverse("documents:original_preview", args=[self.doc.id]))
+
+    def test_card_tag_badge_links_to_tag_filter(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, 'data-tag-filter="%d"' % self.tag.id)
+        self.assertContains(response, "?tag=%d" % self.tag.id)
+
+    def test_delete_action_lives_in_card_overflow_menu(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, reverse("documents:delete", args=[self.doc.id]))
+        self.assertContains(response, "dropdown-item text-danger")
 
 
 class DocumentSearchViewTests(TestCase):

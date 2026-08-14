@@ -682,6 +682,194 @@ body {
     font-size: var(--findus-font-size-sm);
 }
 
+/* Kachelansicht der Dokumentliste (#1124) --------------------------------
+   Responsives Grid gleich hoher Kacheln (Paperless-ngx-Vorbild): Vorschau
+   oben, Kontakt+Titel, Tags, Richtungs-/Status-Badges, Fußzeile mit Datum/
+   Vorgängen und Aktionsleiste. Teilt Card-/Badge-Look mit Liste/Timeline
+   (gleiche Variablen), damit alle Modi wie ein System wirken. */
+.findus-doc-grid {
+    display: grid;
+    /* ~4 Spalten Desktop, 2 Tablet, 1 Handy -- über die Mindestbreite
+       gesteuert, ohne feste Media-Query-Spaltenzahlen. */
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    gap: var(--findus-space-4);
+}
+
+.findus-doc-card {
+    display: flex;
+    flex-direction: column;
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    overflow: hidden;
+    transition: border-color var(--findus-transition-fast);
+}
+
+.findus-doc-card:hover {
+    border-color: var(--findus-accent);
+}
+
+.findus-doc-card-thumb {
+    position: relative;
+    display: block;
+    /* Feste Bildhöhe -> gleich hohe Kacheln unabhängig vom Vorschauinhalt. */
+    aspect-ratio: 4 / 3;
+    background-color: var(--findus-surface-raised);
+    overflow: hidden;
+}
+
+.findus-doc-card-thumb-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* Oben ausgerichtet + beschnitten, damit der Kopf des Dokuments (Absender,
+       Betreff) sichtbar bleibt statt zentriert wegzuschneiden. */
+    object-fit: cover;
+    object-position: top;
+}
+
+.findus-doc-card-thumb-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--findus-space-2);
+    width: 100%;
+    height: 100%;
+    color: var(--findus-text-muted);
+}
+
+.findus-doc-card-thumb-ext {
+    font-size: var(--findus-font-size-sm);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.findus-doc-card-tags {
+    position: absolute;
+    top: var(--findus-space-2);
+    left: var(--findus-space-2);
+    right: var(--findus-space-2);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-1);
+}
+
+.findus-doc-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+    flex: 1 1 auto;
+    padding: var(--findus-space-3);
+}
+
+.findus-doc-card-headline {
+    margin: 0;
+    line-height: 1.35;
+    /* Mehrzeilig abschneiden, damit Kacheln nicht auseinanderlaufen. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.findus-doc-card-correspondent {
+    color: var(--findus-accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.findus-doc-card-correspondent:hover {
+    text-decoration: underline;
+}
+
+.findus-doc-card-title {
+    color: var(--findus-text);
+    text-decoration: none;
+}
+
+.findus-doc-card-title:hover {
+    text-decoration: underline;
+}
+
+.findus-doc-card-children {
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-doc-card-children-summary {
+    cursor: pointer;
+    color: var(--findus-text-muted);
+}
+
+.findus-doc-card-children-list {
+    margin: var(--findus-space-1) 0 0;
+    padding-left: var(--findus-space-4);
+}
+
+.findus-doc-card-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin-top: auto;
+}
+
+.findus-doc-card-footer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-3);
+    padding: var(--findus-space-3);
+    border-top: 1px solid var(--findus-border);
+}
+
+.findus-doc-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    color: var(--findus-text-muted);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-doc-card-vorgang {
+    text-decoration: none;
+}
+
+.findus-doc-card-actions {
+    align-self: flex-start;
+}
+
+.findus-doc-card-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Deterministische Tag-Farbe je Dimension (#1124) -- der Bucket kommt aus
+   `tag_dimension_badge_class` (md5(dimension) % 8), damit dasselbe Tag über
+   Seiten/Prozesse hinweg gleich aussieht. Solide Töne mit weißem Text, dunkel
+   genug für Kontrast auf hellem wie dunklem Grund. `-none` (dimensionslos)
+   bekommt einen neutralen Outline statt einer der Dimensionsfarben. */
+.findus-tag-badge {
+    text-decoration: none;
+}
+
+.findus-tag-dim-none {
+    color: var(--findus-text-muted);
+    background-color: rgba(var(--findus-text-muted-rgb), 0.15);
+    border: 1px solid var(--findus-border);
+}
+
+.findus-tag-dim-0 { color: #fff; background-color: #3b6fe0; }
+.findus-tag-dim-1 { color: #fff; background-color: #1f8f83; }
+.findus-tag-dim-2 { color: #fff; background-color: #47884a; }
+.findus-tag-dim-3 { color: #fff; background-color: #9a6a12; }
+.findus-tag-dim-4 { color: #fff; background-color: #b8455e; }
+.findus-tag-dim-5 { color: #fff; background-color: #7a5bd0; }
+.findus-tag-dim-6 { color: #fff; background-color: #b0479b; }
+.findus-tag-dim-7 { color: #fff; background-color: #2b7fa8; }
+
 /* Document detail --------------------------------------------------------*/
 .findus-detail-meta {
     margin-bottom: var(--findus-space-4);

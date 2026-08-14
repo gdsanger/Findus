@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import markdown as markdown_lib
 from django import template
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
 
 register = template.Library()
+
+# Anzahl der deterministischen Tag-Dimensions-Farbklassen (#1124) -- muss mit
+# der Zahl der `.findus-tag-dim-N`-Regeln in findus.css übereinstimmen.
+_TAG_DIMENSION_PALETTE_SIZE = 8
 
 _LANGUAGE_LABELS = {
     "de": "Deutsch",
@@ -128,3 +134,32 @@ def vorgang_status_badge_class(status):
     rows separately.
     """
     return _VORGANG_STATUS_BADGE_CLASSES.get(status, "text-bg-secondary")
+
+
+@register.filter(name="tag_dimension_badge_class")
+def tag_dimension_badge_class(dimension):
+    """Stabile Badge-Farbklasse für die Kachelansicht (#1124), abgeleitet aus
+    der `Tag.dimension`.
+
+    Ziel: dasselbe Tag sieht über Seiten- und Prozessgrenzen hinweg gleich aus.
+    Python-`hash()` ist pro Prozess gesalzen (PYTHONHASHSEED) und damit *nicht*
+    stabil -- deshalb md5 über die Dimension, dann modulo der Palettengröße.
+    Tags ohne Dimension teilen sich eine neutrale Klasse, damit sie nicht
+    zufällig eine der Dimensionsfarben belegen.
+    """
+    if not dimension:
+        return "findus-tag-dim-none"
+    digest = hashlib.md5(dimension.encode("utf-8")).hexdigest()
+    bucket = int(digest, 16) % _TAG_DIMENSION_PALETTE_SIZE
+    return f"findus-tag-dim-{bucket}"
+
+
+@register.filter(name="file_extension")
+def file_extension(filename):
+    """Dateiendung in Großbuchstaben für den Kachel-Platzhalter (#1124), wenn
+    kein Vorschaubild vorliegt. Leerer/endungsloser Name -> "" (das Template
+    fällt dann auf einen generischen Text zurück).
+    """
+    if not filename or "." not in filename:
+        return ""
+    return filename.rsplit(".", 1)[-1].upper()

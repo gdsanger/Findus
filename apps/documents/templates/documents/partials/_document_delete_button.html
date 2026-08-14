@@ -5,5 +5,15 @@
     onsubmit="return confirm('Dokument „{{ document.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
 >
     {% csrf_token %}
+    {% comment %}
+    In der Kachelansicht (#1124) sitzt Löschen in einem dezenten Overflow-Menü
+    der Kachel und wird als `dropdown-item` gerendert -- sonst der bisherige
+    Outline-Button (Tabelle/Timeline). Der Bestätigungsdialog bleibt in beiden
+    Fällen identisch.
+    {% endcomment %}
+    {% if as_dropdown_item %}
+    <button type="submit" class="dropdown-item text-danger">Löschen</button>
+    {% else %}
     <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+    {% endif %}
 </form>

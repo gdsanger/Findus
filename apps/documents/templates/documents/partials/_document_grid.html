@@ -1,0 +1,11 @@
+{% comment %}
+Kachel-Grid der Dokumentliste (#1124). Iteriert das bereits gefilterte und
+seitenweise geschnittene `page_obj` (Documents) und rendert je Dokument eine
+Kachel. Die Kachel selbst liegt in `_document_card.html`, damit die semantische
+Suche (`_search_results.html`) dieselbe Darstellung wiederverwenden kann.
+{% endcomment %}
+<div class="findus-doc-grid">
+    {% for document in page_obj %}
+    {% include "documents/partials/_document_card.html" %}
+    {% endfor %}
+</div>
