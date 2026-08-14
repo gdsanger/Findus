@@ -102,12 +102,19 @@
     <div class="findus-filter-field">
         <span class="form-label d-block">Ansicht</span>
         <div class="btn-group btn-group-sm findus-view-toggle" role="group" aria-label="Ansicht wählen">
+            {# Kachel (#1124) ist Default -> `view=grid`; "" = Liste, "timeline" = Zeitleiste. #}
             <input type="hidden" name="view" id="filter-view" value="{{ selected.view }}">
             <button
                 type="button"
-                class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view != "timeline" %} active{% endif %}"
+                class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view == "grid" %} active{% endif %}"
+                data-view-value="grid"
+                aria-pressed="{% if selected.view == "grid" %}true{% else %}false{% endif %}"
+            >Kachel</button>
+            <button
+                type="button"
+                class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view == "" %} active{% endif %}"
                 data-view-value=""
-                aria-pressed="{% if selected.view != "timeline" %}true{% else %}false{% endif %}"
+                aria-pressed="{% if selected.view == "" %}true{% else %}false{% endif %}"
             >Liste</button>
             <button
                 type="button"
@@ -163,6 +170,26 @@
 
     if (region) {
         region.addEventListener("htmx:afterSwap", syncButtons);
+    }
+
+    // Tag-Badge-Klick in der Kachelansicht (#1124): statt eines eigenen
+    // Requests wird der bestehende Tag-Filter des Formulars gesetzt und ein
+    // `change` ausgelöst -- so laufen Klick über dieselbe hx-get/hx-push-url-
+    // und localStorage-Mechanik wie das Dropdown, und alle übrigen Filter
+    // bleiben erhalten. Delegation auf `document`, weil die Badges in der bei
+    // jedem Swap ausgetauschten Ergebnisregion sitzen. Der Badge behält ein
+    // echtes `href` als No-JS-Fallback, das wir hier abfangen.
+    var tagSelect = form.querySelector("select[name='tag']");
+    if (tagSelect) {
+        document.addEventListener("click", function (event) {
+            var badge = event.target.closest("[data-tag-filter]");
+            if (!badge) {
+                return;
+            }
+            event.preventDefault();
+            tagSelect.value = badge.dataset.tagFilter;
+            tagSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        });
     }
 })();
 </script>

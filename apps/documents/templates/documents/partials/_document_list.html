@@ -8,7 +8,9 @@
     hx-target="this"
     {% endif %}
 >
-{% if selected.view == "timeline" %}
+{% if selected.view == "grid" %}
+{% include "documents/partials/_document_grid.html" %}
+{% elif selected.view == "timeline" %}
 <div class="findus-timeline">
     {% regroup page_obj by display_date_month_label as month_groups %}
     {% for group in month_groups %}

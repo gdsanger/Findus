@@ -1,0 +1,164 @@
+{% load documents_extras %}
+{% comment %}
+Kachel eines Dokuments (#1124) im Stil von Paperless-ngx: Vorschaubild oben,
+Kontakt+Titel, Tags, Richtungs-/Status-Badges und eine Aktionsleiste am Fuß.
+
+Erwartet `document` im Kontext (`_document_grid.html` iteriert `page_obj`). Die
+semantische Suche behält bewusst ihre eigene Snippet-/Score-Darstellung und
+nutzt diese Kachel nicht -- siehe `_search_results.html`.
+{% endcomment %}
+<article class="findus-doc-card">
+    <a
+        class="findus-doc-card-thumb"
+        href="{% url 'documents:detail' document.pk %}"
+        aria-label="Datensatz „{{ document.title }}“ öffnen"
+    >
+        {% if document.thumbnail %}
+        {# Auth-gestützte Thumbnail-View (#1123) -- niemals die Storage-URL direkt. #}
+        <img
+            class="findus-doc-card-thumb-img"
+            src="{% url 'documents:thumbnail' document.pk %}"
+            loading="lazy"
+            alt=""
+        >
+        {% else %}
+        <span class="findus-doc-card-thumb-placeholder" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.25">
+                <path d="M4 1.5h5L12.5 5v9.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/>
+                <path d="M9 1.5V5h3.5"/>
+            </svg>
+            <span class="findus-doc-card-thumb-ext">{{ document.original_filename|file_extension|default:"Datei" }}</span>
+        </span>
+        {% endif %}
+        {% if document.tags.all %}
+        <span class="findus-doc-card-tags">
+            {% for tag in document.tags.all %}
+            <a
+                class="badge findus-tag-badge {{ tag.dimension|tag_dimension_badge_class }}"
+                href="{{ list_url }}?tag={{ tag.id }}"
+                data-tag-filter="{{ tag.id }}"
+                title="Nach Tag filtern: {{ tag }}"
+            >{{ tag.name }}</a>
+            {% endfor %}
+        </span>
+        {% endif %}
+    </a>
+
+    <div class="findus-doc-card-body">
+        <p class="findus-doc-card-headline">
+            {% if document.correspondent %}
+            <a
+                class="findus-doc-card-correspondent"
+                href="{% url 'documents:correspondent_detail' document.correspondent.pk %}"
+            >{{ document.correspondent.name }}</a><span class="findus-doc-card-headline-sep">: </span>
+            {% endif %}
+            <a class="findus-doc-card-title" href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>
+        </p>
+
+        {% comment %}
+        Unterdokumente (#1069) bleiben auch in der Kachel eingeklappt erreichbar
+        -- wie in Liste/Timeline, damit ein Mail-Anhang nicht unsichtbar wird,
+        nur weil die Übersicht auf Kacheln umgestellt ist.
+        {% endcomment %}
+        {% if document.children.all %}
+        <details class="findus-doc-card-children">
+            <summary class="findus-doc-card-children-summary">
+                {{ document.children.all|length }} Unterdokument{{ document.children.all|length|pluralize:"e" }}
+            </summary>
+            <ul class="findus-doc-card-children-list">
+                {% for child in document.children.all %}
+                <li>
+                    <a href="{% url 'documents:detail' child.pk %}">{{ child.title }}</a>
+                    {% if child.child_role %}<span class="badge text-bg-light text-muted">{{ child.get_child_role_display }}</span>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+
+        <div class="findus-doc-card-badges">
+            <span class="badge {{ document.direction|direction_badge_class }}">
+                {{ document.get_direction_display }}
+            </span>
+            <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
+                {{ document.get_processing_status_display }}
+            </span>
+            {% include "documents/partials/_action_status_control.html" %}
+        </div>
+    </div>
+
+    <div class="findus-doc-card-footer">
+        <div class="findus-doc-card-meta">
+            <span class="findus-doc-card-date">
+                {{ document.display_date|date:"d.m.Y" }}
+                {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
+            </span>
+            {% for vorgang in document.vorgaenge.all %}
+            <a class="badge text-bg-secondary findus-doc-card-vorgang" href="{% url 'documents:vorgang_detail' vorgang.pk %}">
+                {{ vorgang.name }}
+            </a>
+            {% endfor %}
+        </div>
+
+        <div class="findus-doc-card-actions btn-group btn-group-sm" role="group" aria-label="Aktionen">
+            <a
+                class="btn btn-outline-secondary"
+                href="{% url 'documents:detail' document.pk %}"
+                title="Datensatz öffnen"
+                aria-label="Datensatz öffnen"
+            >
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                    <path d="M4 1.5h5L12.5 5v9.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/>
+                    <path d="M9 1.5V5h3.5"/>
+                </svg>
+            </a>
+            {% comment %}
+            "Original ansehen" nur, wenn das Format inline darstellbar ist
+            (#1036) -- sonst kein toter Button, der auf einen Download-Dialog
+            fällt. `original_preview` liefert die Datei inline (Content-
+            Disposition: inline), deshalb reicht ein Link im neuen Tab; die
+            Slide-Over-Mechanik der Detailseite ist hier bewusst nicht
+            nachgebaut.
+            {% endcomment %}
+            {% if document.original_file and document.is_inline_previewable %}
+            <a
+                class="btn btn-outline-secondary"
+                href="{% url 'documents:original_preview' document.pk %}"
+                target="_blank"
+                rel="noopener"
+                title="Original ansehen"
+                aria-label="Original im Browser ansehen"
+            >
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                    <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z"/>
+                    <circle cx="8" cy="8" r="2"/>
+                </svg>
+            </a>
+            {% endif %}
+            {% if document.original_file %}
+            <a
+                class="btn btn-outline-secondary"
+                href="{% url 'documents:original_download' document.pk %}"
+                title="Herunterladen"
+                aria-label="Original herunterladen"
+            >
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                    <path d="M8 1.5v9M4.5 7 8 10.5 11.5 7M2.5 13.5h11"/>
+                </svg>
+            </a>
+            {% endif %}
+            <div class="btn-group btn-group-sm" role="group">
+                <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    data-bs-toggle="dropdown"
+                    aria-expanded="false"
+                    aria-label="Weitere Aktionen"
+                >&hellip;</button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li>{% include "documents/partials/_document_delete_button.html" with as_dropdown_item=True %}</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</article>

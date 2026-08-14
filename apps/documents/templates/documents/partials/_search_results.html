@@ -1,4 +1,11 @@
 {% load documents_extras %}
+{% comment %}
+Die semantische Trefferliste (#1015) bleibt bewusst ihre eigene Darstellung mit
+Snippet + Relevanz-Score und folgt NICHT dem Kachel/Liste/Timeline-Umschalter
+(#1124): Suche ist eine Ranking-Ansicht, deren Kernwert (Score, Textausschnitt)
+eine Kachel nicht abbildet. Die Kacheldarstellung der Suche ist damit bewusst
+als Folge-Ticket ausgeklammert -- siehe PR-Beschreibung.
+{% endcomment %}
 {% if page_obj %}
 <div class="findus-search-results">
     {% for hit in page_obj %}

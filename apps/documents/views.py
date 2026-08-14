@@ -204,7 +204,10 @@ def document_list(request):
             "sphere": request.GET.get("sphere", ""),
             "tax_relevance": request.GET.get("tax_relevance", ""),
             "action_status": request.GET.get("action_status", ""),
-            "view": request.GET.get("view", "timeline").strip(),
+            # Kachel/Grid ist der Default (#1124); "" = Liste, "timeline" =
+            # Zeitleiste (#1087). Der Wert steuert nur die Darstellung im
+            # gemeinsamen Listen-Partial, nicht das Filtern/Sortieren.
+            "view": request.GET.get("view", "grid").strip(),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,

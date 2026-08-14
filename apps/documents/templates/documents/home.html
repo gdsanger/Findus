@@ -26,6 +26,9 @@
 (function () {
     var STORAGE_KEY = "findus:documents:filters";
     var FIELD_NAMES = ["q", "correspondent", "vorgang", "tag", "status", "direction", "sphere", "tax_relevance", "action_status", "view"];
+    // Server-Default der Ansicht (#1124): Kachel. Nur ein davon abweichender
+    // `view` (Liste "" oder Timeline) ist eine bewusste, zu speichernde Wahl.
+    var DEFAULT_VIEW = "grid";
 
     var form = document.querySelector(".findus-filter-bar");
     var region = document.getElementById("document-list-region");
@@ -47,14 +50,15 @@
     }
 
     function isEmpty(state) {
-        // "view" defaults to "timeline" server-side (#1092), so an explicit
-        // "" (Liste) is the only meaningful value left for that field --
-        // unlike the other fields, it must NOT count as "unset" here, or a
-        // Liste-only choice would get dropped from storage and silently
-        // revert to the Timeline default on the next visit.
+        // "view" defaults to "grid" server-side (#1124), so both "" (Liste)
+        // and "timeline" are meaningful, to-be-stored choices -- only the
+        // default itself counts as "unset". Unlike the other fields it must
+        // therefore be compared against DEFAULT_VIEW, not just truthiness, or
+        // a Liste-/Timeline-only choice would get dropped from storage and
+        // silently revert to Kachel on the next visit.
         return FIELD_NAMES.every(function (name) {
             if (name === "view") {
-                return state[name] !== "";
+                return state[name] === DEFAULT_VIEW;
             }
             return !state[name];
         });
@@ -111,7 +115,7 @@
             // "view" is set unconditionally: an explicit "" (Liste) is
             // falsy but still meaningful, and must reach the server as
             // `view=` -- omitting it would make the request look
-            // param-less and fall back to the Timeline default (#1092).
+            // param-less and fall back to the Kachel default (#1124).
             if (name === "view") {
                 params.set(name, state[name] || "");
                 return;
