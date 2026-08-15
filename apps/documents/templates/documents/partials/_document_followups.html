@@ -55,6 +55,7 @@ hier redundant (die Gruppierung zeigt ohnehin jede Wiedervorlage) und in
                             Erinnerung geplant
                         </span>
                         {% endif %}
+                        {% include "documents/partials/_action_status_toggle.html" with document=entry.document %}
                     </div>
                     <p class="findus-followup-item-comment">{{ entry.body }}</p>
                     <div class="findus-followup-item-meta">

@@ -1141,6 +1141,30 @@ body {
     display: inline-block;
 }
 
+/* Ein-Klick-Umschalter der Übersichten (#1137) -- dieselbe Badge-Optik wie
+   `.findus-action-status-control`, aber ein echtes `<button>`, daher der
+   Browser-Reset für Rahmen/Hintergrund. */
+.findus-action-status-toggle-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+}
+
+.findus-action-status-toggle {
+    border: 0;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.findus-action-status-toggle.htmx-request {
+    opacity: .6;
+    cursor: progress;
+}
+
+.findus-action-status-toggle-error {
+    white-space: nowrap;
+}
+
 .findus-detail-text {
     max-height: 32rem;
     overflow-y: auto;

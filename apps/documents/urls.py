@@ -181,6 +181,11 @@ urlpatterns = [
         name="action_status",
     ),
     path(
+        "documents/<int:pk>/action-status/toggle/",
+        views.document_action_status_toggle,
+        name="action_status_toggle",
+    ),
+    path(
         "documents/<int:pk>/analysis/status/",
         views.document_analysis_status,
         name="analysis_status",
