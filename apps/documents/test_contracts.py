@@ -364,6 +364,66 @@ class SwapPartialsCarryNoOwnFrameTests(SimpleTestCase):
                 )
 
 
+class HubColumnsStackBeforeMdTests(SimpleTestCase):
+    """Die Spalten der Hub-Seiten stapeln unterhalb `md` (CLAUDE.md,
+
+    "UI-Konventionen"). Ein nacktes `col-3`/`col-9` gilt in Bootstrap ab
+    dem kleinsten Breakpoint und bleibt damit auch auf dem Telefon stehen:
+    die Stammdatenspalte ist dort ~90 px breit, ihre Eingabefelder laufen
+    unter ihre `min-width` und sind unbedienbar. Deshalb die vollstaendige
+    Leiter je Spalte -- `col-12 col-md-4 col-lg-3` neben
+    `col-12 col-md-8 col-lg-9` --, mit dem Drittel im `md`-Bereich, weil die
+    Felder bei 3/12 auf ihre Mindestbreite von 10rem zusammenfallen.
+
+    Geprueft wird die Quelle statt des gerenderten Ergebnisses: die Regel
+    haengt an genau einer Klassenliste je Spalte, und der Test soll auch
+    dann anschlagen, wenn ein kuenftiger Hub dazukommt, den niemand rendert.
+    """
+
+    _HUB_PAGES = (
+        "documents/vorgaenge/detail.html",
+        "documents/correspondents/detail.html",
+        "documents/tags/detail.html",
+    )
+
+    _EXPECTED_COLUMNS = ('"col-12 col-md-4 col-lg-3"', '"col-12 col-md-8 col-lg-9"')
+
+    # Fasst jede Bootstrap-Spaltenklasse, deren Breite schon unterhalb `md`
+    # greift (`col-3`, `col-sm-9`, ...) -- genau die Schreibweise, die den
+    # Hub am Telefon zerlegt. `col-12` ist erlaubt: volle Breite ist der
+    # gewuenschte Zustand.
+    _COLUMN_BEFORE_MD = re.compile(r'\bcol(?:-sm)?-(?!12\b)\d+\b')
+
+    def _source_of(self, template_name: str) -> str:
+        return Path(get_template(template_name).origin.name).read_text(encoding="utf-8")
+
+    def test_hub_columns_carry_the_full_breakpoint_ladder(self):
+        for template_name in self._HUB_PAGES:
+            source = self._source_of(template_name)
+            for expected in self._EXPECTED_COLUMNS:
+                with self.subTest(template=template_name, columns=expected):
+                    self.assertIn(
+                        expected,
+                        source,
+                        f"{template_name} weicht von der gemeinsamen "
+                        f"Spaltenleiter {expected} ab -- die Hubs teilen ein "
+                        "Layout, ein Alleingang laesst es beim Wechsel "
+                        "springen.",
+                    )
+
+    def test_no_hub_column_is_narrow_before_md(self):
+        for template_name in self._HUB_PAGES:
+            with self.subTest(template=template_name):
+                found = self._COLUMN_BEFORE_MD.findall(self._source_of(template_name))
+                self.assertEqual(
+                    found,
+                    [],
+                    f"{template_name} setzt {found} -- diese Breite gilt schon "
+                    "unterhalb `md` und laesst die Stammdatenspalte am Telefon "
+                    "auf einem Bruchteil der Breite stehen.",
+                )
+
+
 class DocumentListPagesShareOneViewDefaultTests(SimpleTestCase):
     """Alle Seiten mit Dokumentliste haben denselben Ansicht-Default:
 
