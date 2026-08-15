@@ -1,52 +1,106 @@
 {% load documents_extras %}
+{% comment %}
+Zuordnung im Detail (#1016/#1021, umgebaut): die Felder stehen untereinander
+und sind direkt bearbeitbar -- kein "Zuordnung bearbeiten"-Umschalter und kein
+zweites Edit-Partial mehr. Jedes Bedienelement speichert sich selbst per HTMX
+und schickt dabei über `hx-vals` mit, welches Feld gemeint ist; `document_meta`
+fasst nur genau dieses Feld an. Ohne diese Markierung wäre eine leer geräumte
+Mehrfachauswahl (Vorgänge/Tags) nicht von "Feld nicht mitgeschickt" zu
+unterscheiden -- HTML sendet für eine leere Auswahl schlicht nichts.
+
+`hx-target`/`hx-swap` stehen einmal am Container und werden vererbt; ein
+Trigger wird bewusst nicht vererbt, sonst verlören die Anlegen-Buttons ihren
+Klick-Trigger.
+{% endcomment %}
 <div class="findus-card findus-detail-meta">
-    <div class="findus-detail-meta-header">
-        <button
-            type="button"
-            class="btn btn-sm btn-outline-secondary"
-            hx-get="{% url 'documents:meta_edit' document.pk %}"
-            hx-target="#document-meta"
-            hx-swap="innerHTML"
-        >
-            Zuordnung bearbeiten
-        </button>
-    </div>
-    <dl class="findus-detail-meta-list">
-        <div>
-            <dt>Kontakt</dt>
-            <dd>{{ document.correspondent.name|default:"—" }}</dd>
-        </div>
-        <div>
-            <dt>Richtung</dt>
+    <dl
+        class="findus-detail-meta-list"
+        hx-target="#document-meta"
+        hx-swap="innerHTML"
+    >
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-correspondent">Kontakt</label></dt>
             <dd>
-                <span class="badge {{ document.direction|direction_badge_class }}">
-                    {{ document.get_direction_display }}
-                </span>
+                <select
+                    id="meta-correspondent"
+                    name="correspondent"
+                    class="form-select form-select-sm"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "correspondent"}'
+                >
+                    <option value="">— kein Kontakt —</option>
+                    {% for correspondent in all_correspondents %}
+                    <option value="{{ correspondent.id }}" {% if correspondent.id == selected_correspondent_id %}selected{% endif %}>{{ correspondent.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="findus-quick-create" id="quick-create-correspondent">
+                    <input type="text" name="correspondent_name" class="form-control form-control-sm {% if quick_create_error.kind == 'correspondent' %}is-invalid{% endif %}" placeholder="Neuer Kontakt …" value="{% if quick_create_error.kind == 'correspondent' %}{{ quick_create_error.name }}{% endif %}">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        hx-post="{% url 'documents:meta_quick_create' document.pk 'correspondent' %}"
+                        hx-include="#quick-create-correspondent"
+                    >+ Anlegen</button>
+                    {% if quick_create_error.kind == 'correspondent' %}
+                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+                    {% endif %}
+                </div>
             </dd>
         </div>
-        <div>
-            <dt>Sphäre</dt>
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-direction">Richtung</label></dt>
             <dd>
-                <span class="badge {{ document.sphere|sphere_badge_class }}">
-                    {{ document.get_sphere_display }}
-                </span>
+                <select
+                    id="meta-direction"
+                    name="direction"
+                    class="form-select form-select-sm"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "direction"}'
+                >
+                    {% for value, label in direction_choices %}
+                    <option value="{{ value }}" {% if value == document.direction %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </dd>
+        </div>
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-sphere">Sphäre</label></dt>
+            <dd>
+                <select
+                    id="meta-sphere"
+                    name="sphere"
+                    class="form-select form-select-sm"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "sphere"}'
+                >
+                    {% for value, label in sphere_choices %}
+                    <option value="{{ value }}" {% if value == document.sphere %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
                 {% if document.metadata.sphere_source == "ki" %}
-                <span class="badge text-bg-light" title="KI-Vorschlag – zum Bestätigen „Zuordnung bearbeiten“ speichern.">KI-Vorschlag</span>
+                <span class="badge text-bg-light" title="KI-Vorschlag – zum Bestätigen einmal auswählen und speichern lassen.">KI-Vorschlag</span>
                 {% endif %}
             </dd>
         </div>
-        <div>
-            <dt>Privat absetzbar</dt>
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-tax-relevance">Privat absetzbar</label></dt>
             <dd>
                 {% if document.sphere == "geschaeftlich" %}
-            
                 <span class="badge border text-body-secondary" title="Geschäftlicher Beleg – die betriebliche Absetzbarkeit ist ein separates Thema, nicht die private Einkommensteuer.">Nicht zutreffend</span>
                 {% else %}
-                <span class="badge {{ document.tax_relevance|tax_relevance_badge_class }}"{% if document.tax_relevance_reason %} title="{{ document.tax_relevance_reason }}"{% endif %}>
-                    {{ document.get_tax_relevance_display }}
-                </span>
+                <select
+                    id="meta-tax-relevance"
+                    name="tax_relevance"
+                    class="form-select form-select-sm"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "tax_relevance"}'
+                >
+                    {% for value, label in tax_relevance_choices %}
+                    <option value="{{ value }}" {% if value == document.tax_relevance %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
                 {% if document.metadata.tax_relevance_source == "ki" %}
-                <span class="badge text-bg-light" title="KI-Vorschlag – zum Bestätigen „Zuordnung bearbeiten“ speichern.">KI-Vorschlag</span>
+                <span class="badge text-bg-light" title="KI-Vorschlag – zum Bestätigen einmal auswählen und speichern lassen.">KI-Vorschlag</span>
                 {% endif %}
                 {% if document.tax_relevance_reason %}
                 <div class="text-muted small">{{ document.tax_relevance_reason }}</div>
@@ -57,50 +111,105 @@
                 {% endif %}
             </dd>
         </div>
-        <div>
+        <div class="findus-detail-meta-row">
             <dt>Erledigung</dt>
             <dd>
                 {% include "documents/partials/_action_status_control.html" %}
             </dd>
         </div>
-        <div>
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-document-date">Datum</label></dt>
+            <dd>
+                <input
+                    type="date"
+                    id="meta-document-date"
+                    name="document_date"
+                    class="form-control form-control-sm"
+                    value="{{ document.document_date|date:'Y-m-d' }}"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "document_date"}'
+                >
+                {% if document.display_date_is_upload_fallback %}
+                <div class="form-text small">Ohne eigenes Datum: angezeigt wird das Upload-Datum {{ document.display_date|date:"d.m.Y" }}.</div>
+                {% endif %}
+            </dd>
+        </div>
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-vorgaenge">Vorgänge</label></dt>
+            <dd>
+                <select
+                    id="meta-vorgaenge"
+                    name="vorgaenge"
+                    class="form-select form-select-sm"
+                    multiple
+                    size="4"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "vorgaenge"}'
+                >
+                    {% for vorgang in all_vorgaenge %}
+                    <option value="{{ vorgang.id }}" {% if vorgang.id in selected_vorgang_ids %}selected{% endif %}>{{ vorgang.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="findus-quick-create" id="quick-create-vorgang">
+                    <input type="text" name="vorgang_name" class="form-control form-control-sm {% if quick_create_error.kind == 'vorgang' %}is-invalid{% endif %}" placeholder="Neuer Vorgang …" value="{% if quick_create_error.kind == 'vorgang' %}{{ quick_create_error.name }}{% endif %}">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        hx-post="{% url 'documents:meta_quick_create' document.pk 'vorgang' %}"
+                        hx-include="#quick-create-vorgang"
+                    >+ Anlegen</button>
+                    {% if quick_create_error.kind == 'vorgang' %}
+                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+                    {% endif %}
+                </div>
+            </dd>
+        </div>
+        <div class="findus-detail-meta-row">
+            <dt><label class="form-label" for="meta-tags">Tags</label></dt>
+            <dd>
+                <select
+                    id="meta-tags"
+                    name="tags"
+                    class="form-select form-select-sm"
+                    multiple
+                    size="4"
+                    hx-post="{% url 'documents:meta' document.pk %}"
+                    hx-vals='{"field": "tags"}'
+                >
+                    {% for tag in all_tags %}
+                    <option value="{{ tag.id }}" {% if tag.id in selected_tag_ids %}selected{% endif %}>{{ tag }}</option>
+                    {% endfor %}
+                </select>
+                <div class="findus-quick-create" id="quick-create-tag">
+                    <input type="text" name="tag_name" class="form-control form-control-sm {% if quick_create_error.kind == 'tag' %}is-invalid{% endif %}" placeholder="Neues Tag …" value="{% if quick_create_error.kind == 'tag' %}{{ quick_create_error.name }}{% endif %}">
+                    <input type="text" name="tag_dimension" class="form-control form-control-sm" placeholder="Dimension (optional)" value="{% if quick_create_error.kind == 'tag' %}{{ quick_create_error.dimension }}{% endif %}">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        hx-post="{% url 'documents:meta_quick_create' document.pk 'tag' %}"
+                        hx-include="#quick-create-tag"
+                    >+ Anlegen</button>
+                    {% if quick_create_error.kind == 'tag' %}
+                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+                    {% endif %}
+                </div>
+            </dd>
+        </div>
+        <div class="findus-detail-meta-row">
             <dt>Status</dt>
             <dd>{{ document.get_processing_status_display }}</dd>
         </div>
-        <div>
-            <dt>Datum</dt>
-            <dd>
-                {{ document.display_date|date:"d.m.Y" }}
-                {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
-            </dd>
-        </div>
-        <div>
+        <div class="findus-detail-meta-row">
             <dt>Hochgeladen am</dt>
             <dd>{{ document.created_at|date:"d.m.Y H:i" }}</dd>
         </div>
-        <div>
+        <div class="findus-detail-meta-row">
             <dt>Extraktionsmethode</dt>
             <dd>{{ document.get_extraction_method_display|default:"—" }}</dd>
         </div>
-        <div>
+        <div class="findus-detail-meta-row">
             <dt>Sprache</dt>
             <dd>{{ document.metadata.language|language_label }}</dd>
-        </div>
-        <div>
-            <dt>Vorgänge</dt>
-            <dd>
-                {% for vorgang in document.vorgaenge.all %}
-                <span class="badge text-bg-secondary">{{ vorgang.name }}</span>
-                {% empty %}—{% endfor %}
-            </dd>
-        </div>
-        <div>
-            <dt>Tags</dt>
-            <dd>
-                {% for tag in document.tags.all %}
-                <span class="badge text-bg-secondary">{{ tag }}</span>
-                {% empty %}—{% endfor %}
-            </dd>
         </div>
     </dl>
 

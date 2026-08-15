@@ -102,32 +102,7 @@ werden muss.
 {% endcomment %}
 <div class="findus-detail-grid">
     <div class="findus-detail-summary-area">
-        {% if document.correspondent or document.vorgaenge.all %}
-        {% comment %}
-        Schnellzugriff (#1098): von hier soll man ohne Umweg über die
-        Zuordnung direkt zum Kontakt- bzw. Vorgang-Hub springen können.
-        {% endcomment %}
-        <nav class="findus-detail-hub-links" aria-label="Schnellzugriff Kontakt und Vorgänge">
-            {% if document.correspondent %}
-            <div class="findus-detail-hub-link-group">
-                <span class="findus-detail-hub-link-label">Kontakt</span>
-                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:correspondent_detail' document.correspondent.pk %}">
-                    {{ document.correspondent.name }}
-                </a>
-            </div>
-            {% endif %}
-            {% if document.vorgaenge.all %}
-            <div class="findus-detail-hub-link-group">
-                <span class="findus-detail-hub-link-label">Vorgänge</span>
-                {% for vorgang in document.vorgaenge.all %}
-                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:vorgang_detail' vorgang.pk %}">
-                    {{ vorgang.name }}
-                </a>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </nav>
-        {% endif %}
+        {% include "documents/partials/_detail_hub_links.html" %}
 
         <section class="findus-section">
             <h2 class="findus-section-title">Zusammenfassung</h2>

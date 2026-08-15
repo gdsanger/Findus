@@ -186,7 +186,6 @@ urlpatterns = [
         views.document_reprocess,
         name="reprocess",
     ),
-    path("documents/<int:pk>/meta/edit/", views.document_meta_edit, name="meta_edit"),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
     path(
         "documents/<int:pk>/meta/quick-create/<str:kind>/",
