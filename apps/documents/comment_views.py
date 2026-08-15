@@ -1,11 +1,12 @@
 """UI for die Dokument-Kommentar-Chronik (#1125): Kommentare mit optionalem
 
-Wiedervorlage-Datum + Erinnerung, inline im Dokument-Detail -- dasselbe
-Quick-create-ohne-Seitenwechsel-Muster wie die verknüpften Aufgaben
-(`task_views`/`_detail_tasks.html`). Anders als dort ist hier jeder Eintrag
-einzeln swapbar (`#comment-<pk>`), nicht nur der ganze Block -- Bearbeiten
-oder Löschen eines Kommentars soll die übrigen, gerade eben gelesenen
-Einträge nicht mitverdrängen.
+Wiedervorlage-Datum + Erinnerung, inline im Dokument-Detail. Dasselbe
+Quick-create-ohne-Seitenwechsel-Muster, das früher auch die verknüpften
+Aufgaben am Dokument hatten -- der Block ist inzwischen weg (Aufgaben sind
+auf dem Rückzug, siehe CLAUDE.md), dieser hier hat ihn beerbt. Jeder
+Eintrag ist einzeln swapbar (`#comment-<pk>`), nicht nur der ganze Block --
+Bearbeiten oder Löschen eines Kommentars soll die übrigen, gerade eben
+gelesenen Einträge nicht mitverdrängen.
 
 Definiert absichtlich seine eigene `_visible_document` statt die aus
 `views.py` zu importieren: `views.document_detail` baut seinerseits den
@@ -54,8 +55,8 @@ def document_comment_create(request, pk):
     """Quick-create ohne Seitenwechsel, validiert über `DocumentCommentForm`
 
     statt rohem POST-Zugriff -- ein unparsbares `follow_up_date` landet
-    damit als Inline-Fehler neben dem Feld statt als 500 (gleiches Muster
-    wie `views.document_task_create`, #1045).
+    damit als Inline-Fehler neben dem Feld statt als 500 (#1045, siehe
+    CLAUDE.md "UI-Konventionen": nie roh aus `request.POST` ins Model).
     """
     document = _visible_document(request.user, pk)
     form = DocumentCommentForm(request.POST)

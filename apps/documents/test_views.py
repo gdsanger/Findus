@@ -979,7 +979,7 @@ class DocumentDetailViewTests(TestCase):
         for label in [
             "Details",
             "Kommentare",
-            "Verknüpfungen &amp; Kontext",
+            "Verknüpfungen",
             "Ähnliche Dokumente",
             "Unterdokumente",
         ]:
@@ -1196,7 +1196,14 @@ class DocumentDetailViewTests(TestCase):
         self.assertContains(response, "Noch keine KI-Zusammenfassung vorhanden")
         self.assertContains(response, "Betrag: 123 EUR")
 
-    def test_linked_task_is_shown(self):
+    def test_detail_no_longer_lists_linked_tasks(self):
+        """Aufgaben sind auf dem Rückzug (CLAUDE.md): die Detailseite zeigt
+
+        keinen "Verknüpfte Aufgaben"-Block mehr, und der Aufruf lädt die
+        Aufgaben deshalb auch nicht mehr. Der Test hält beides fest -- der
+        Block, damit er nicht beim nächsten Umbau zurückkommt, und der
+        fehlende Kontext, damit die Query nicht still wieder mitläuft.
+        """
         task = Task.objects.create(title="Rechnung bezahlen", kind=Task.Kind.PAY)
         task.departments.add(self.dept_a)
         task.documents.add(self.doc)
@@ -1204,20 +1211,8 @@ class DocumentDetailViewTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertContains(response, "Rechnung bezahlen")
-
-    def test_task_outside_visibility_is_not_shown(self):
-        other_dept = Department.objects.create(name="Dept C")
-        task = Task.objects.create(
-            title="Privater Task", visibility=Task.Visibility.PRIVATE
-        )
-        task.departments.add(other_dept)
-        task.documents.add(self.doc)
-
-        self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
-
-        self.assertNotContains(response, "Privater Task")
+        self.assertNotContains(response, "Rechnung bezahlen")
+        self.assertNotIn("tasks", response.context)
 
     def test_correspondent_link_to_hub_is_shown(self):
         """Covers #1098: from the document, the Kontakt-Hub (#1041) should
