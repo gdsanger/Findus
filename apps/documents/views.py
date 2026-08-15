@@ -710,7 +710,10 @@ def document_reference_assign(request, pk, scope, target_id):
         "documents/partials/_detail_references_assigned.html",
         {
             **_references_context(request.user, document),
-            "action_status_choices": Document.ActionStatus.choices,
+            # Der Out-of-Band-Swap rendert den Zuordnungs-Block mit -- der ist
+            # seit dem Inline-Umbau direkt bearbeitbar und braucht deshalb
+            # auch hier die Auswahllisten.
+            **_meta_context(document),
         },
     )
 
@@ -737,7 +740,7 @@ def document_detail(request, pk):
             document.parent_id is not None
             and visible_documents.filter(pk=document.parent_id).exists()
         ),
-        "action_status_choices": Document.ActionStatus.choices,
+        **_meta_context(document),
     }
     return render(request, "documents/detail.html", context)
 
@@ -1001,7 +1004,14 @@ def document_child_detach(request, pk, child_id):
     return redirect("documents:detail", pk=child.pk)
 
 
-def _meta_edit_context(document, quick_create_error=None):
+def _meta_context(document, quick_create_error=None):
+    """Context for `_detail_meta.html` -- the Zuordnung block on the detail
+    page.
+
+    Since the block is directly editable (no "Zuordnung bearbeiten" toggle
+    and no second edit partial anymore), the display context *is* the edit
+    context: every render needs the option lists and the current selection.
+    """
     return {
         "document": document,
         "all_correspondents": Correspondent.objects.all(),
@@ -1010,6 +1020,7 @@ def _meta_edit_context(document, quick_create_error=None):
         "direction_choices": Document.Direction.choices,
         "sphere_choices": Document.Sphere.choices,
         "tax_relevance_choices": Document.TaxRelevance.choices,
+        "action_status_choices": Document.ActionStatus.choices,
         "selected_correspondent_id": document.correspondent_id,
         "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
         "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
@@ -1018,22 +1029,13 @@ def _meta_edit_context(document, quick_create_error=None):
 
 
 @login_required
-def document_meta_edit(request, pk):
-    """Render the editable Absender/Vorgang/Tag assignment form (#1016,
-    #1021) -- swapped into `#document-meta` in place of the read-only view.
-    """
-    document = _visible_document(request.user, pk)
-    return render(request, "documents/partials/_detail_meta_edit.html", _meta_edit_context(document))
-
-
-@login_required
 @require_POST
 def document_action_status(request, pk):
     """Set `Document.action_status` (#1057) from the list row or detail --
 
     a dedicated single-field endpoint rather than routing through
-    `document_meta`, since the badge+dropdown control needs to save on
-    every change without the "Zuordnung bearbeiten" edit form being open.
+    `document_meta`, because the control renders as a badge+dropdown pair
+    that also sits in the list rows, far away from the Zuordnung block.
     """
     document = _visible_document(request.user, pk)
     action_status = request.POST.get("action_status", "").strip()
@@ -1134,73 +1136,128 @@ def document_reprocess(request, pk):
     )
 
 
+_META_FIELDS = (
+    "correspondent",
+    "direction",
+    "sphere",
+    "tax_relevance",
+    "document_date",
+    "vorgaenge",
+    "tags",
+)
+
+
+def _requested_meta_fields(post):
+    """Which Zuordnungs-Felder this POST wants to change.
+
+    Every inline control sends a `field` marker alongside its value, so a
+    single-field save touches exactly that field and leaves the rest alone.
+    The marker isn't cosmetic: an emptied multi-select (Vorgänge/Tags)
+    submits nothing at all, so without it "alles abgewählt" and "Feld gar
+    nicht mitgeschickt" would look identical on the server.
+
+    Without any marker the request is read the old way -- whatever field
+    names are present get written -- which keeps a plain full form POST
+    (no HTMX/JS) working.
+    """
+    marked = {field for field in post.getlist("field") if field in _META_FIELDS}
+    if marked:
+        return marked
+    return {field for field in _META_FIELDS if field in post}
+
+
+def _drop_metadata_source(document, key):
+    """Remove a `*_source` provenance marker (#1112/#1113) from `metadata` in
+    place and report which model field that dirtied, so the caller can pass it
+    to `save(update_fields=...)`.
+    """
+    if not document.metadata.get(key):
+        return []
+    metadata = dict(document.metadata)
+    metadata.pop(key, None)
+    document.metadata = metadata
+    return ["metadata"]
+
+
+def _submitted_ids(post, name):
+    """IDs of a submitted multi-select -- an empty selection means "keine",
+    not "unverändert" (the `field` marker already told us the field is meant).
+    """
+    return [value for value in post.getlist(name) if value.isdigit()]
+
+
 @login_required
 def document_meta(request, pk):
     """Display partial for `#document-meta` -- also the save target: a POST
-    here sets Absender/Vorgänge/Tags, then re-renders the same read-only
-    view.
+    here sets the submitted Zuordnungs-Felder, then re-renders the block.
     """
     document = _visible_document(request.user, pk)
     if request.method == "POST":
-        correspondent_id = request.POST.get("correspondent", "").strip()
-        document.correspondent = (
-            get_object_or_404(Correspondent, pk=correspondent_id)
-            if correspondent_id.isdigit()
-            else None
-        )
-        direction = request.POST.get("direction", "").strip()
-        if direction in Document.Direction.values:
-            document.direction = direction
+        fields = _requested_meta_fields(request.POST)
+        changed = []
+        if "correspondent" in fields:
+            correspondent_id = request.POST.get("correspondent", "").strip()
+            document.correspondent = (
+                get_object_or_404(Correspondent, pk=correspondent_id)
+                if correspondent_id.isdigit()
+                else None
+            )
+            changed.append("correspondent")
+        if "direction" in fields:
+            direction = request.POST.get("direction", "").strip()
+            if direction in Document.Direction.values:
+                document.direction = direction
+                changed.append("direction")
         # Sphäre (#1112) / private ESt-Absetzbarkeit (#1113): ein manuelles
         # Speichern ist die Nutzerentscheidung, die jede Re-Analyse ab jetzt
-        # respektiert -- deshalb weiter unten auch die "noch nicht
+        # respektiert -- deshalb jeweils auch das "noch nicht
         # bestaetigt"-Kennzeichen (`*_source`) aus `metadata` entfernen,
-        # damit die KI-Badges im Detail verschwinden.
-        sphere = request.POST.get("sphere", "").strip()
-        if sphere in Document.Sphere.values:
-            document.sphere = sphere
+        # damit das KI-Badge am bestätigten Feld verschwindet.
+        if "sphere" in fields:
+            sphere = request.POST.get("sphere", "").strip()
+            if sphere in Document.Sphere.values:
+                document.sphere = sphere
+                changed.append("sphere")
+                changed.extend(_drop_metadata_source(document, "sphere_source"))
         # Aendert sich die Steuerrelevanz gegenueber dem gespeicherten Wert,
         # wird die KI-Begruendung verworfen -- sie begruendete die alte,
         # jetzt ueberstimmte Einschaetzung.
-        tax_relevance = request.POST.get("tax_relevance", "").strip()
-        if tax_relevance in Document.TaxRelevance.values:
-            if tax_relevance != document.tax_relevance:
-                document.tax_relevance_reason = ""
-            document.tax_relevance = tax_relevance
-        if document.metadata.get("sphere_source") or document.metadata.get(
-            "tax_relevance_source"
-        ):
-            metadata = dict(document.metadata)
-            metadata.pop("sphere_source", None)
-            metadata.pop("tax_relevance_source", None)
-            document.metadata = metadata
-        document_date = request.POST.get("document_date", "").strip()
-        if not document_date:
-            document.document_date = None
-        else:
-            try:
-                document.document_date = datetime.date.fromisoformat(document_date)
-            except ValueError:
-                pass
-        document.save(
-            update_fields=[
-                "correspondent",
-                "direction",
-                "sphere",
-                "tax_relevance",
-                "tax_relevance_reason",
-                "document_date",
-                "metadata",
-                "updated_at",
-            ]
-        )
-        document.vorgaenge.set(request.POST.getlist("vorgaenge"))
-        document.tags.set(request.POST.getlist("tags"))
+        if "tax_relevance" in fields:
+            tax_relevance = request.POST.get("tax_relevance", "").strip()
+            if tax_relevance in Document.TaxRelevance.values:
+                if tax_relevance != document.tax_relevance:
+                    document.tax_relevance_reason = ""
+                    changed.append("tax_relevance_reason")
+                document.tax_relevance = tax_relevance
+                changed.append("tax_relevance")
+                changed.extend(
+                    _drop_metadata_source(document, "tax_relevance_source")
+                )
+        if "document_date" in fields:
+            document_date = request.POST.get("document_date", "").strip()
+            if not document_date:
+                document.document_date = None
+                changed.append("document_date")
+            else:
+                try:
+                    document.document_date = datetime.date.fromisoformat(document_date)
+                except ValueError:
+                    pass
+                else:
+                    changed.append("document_date")
+        if changed:
+            document.save(update_fields=[*dict.fromkeys(changed), "updated_at"])
+        if "vorgaenge" in fields:
+            document.vorgaenge.set(_submitted_ids(request.POST, "vorgaenge"))
+        if "tags" in fields:
+            document.tags.set(_submitted_ids(request.POST, "tags"))
         # Zuordnen heißt: "diese Nummern gehören hierher" (#1100). Eine
         # entfernte Zuordnung nimmt die gelernte Kennung *nicht* wieder
         # mit -- der Vorgang hat sein Aktenzeichen dann trotzdem, und was
-        # er nicht behalten soll, wird an seinem Hub entfernt.
-        learn_references_from_document(document)
+        # er nicht behalten soll, wird an seinem Hub entfernt. Nur die
+        # Zuordnungsfelder lösen das aus; ein geändertes Datum lernt nichts.
+        if fields & {"correspondent", "vorgaenge"}:
+            learn_references_from_document(document)
     return _render_meta(request, document)
 
 
@@ -1229,6 +1286,9 @@ def document_meta_quick_create(request, pk, kind):
     A blank name used to be silently dropped, which looked from the user's
     side like the button did nothing (#1064) -- it now reports back a
     visible error next to the field it belongs to instead.
+
+    Answers with the Zuordnungs-Block itself, so the new Kontakt/Vorgang/Tag
+    is immediately selected in its dropdown.
     """
     if kind not in _QUICK_CREATE_KINDS:
         raise Http404(f"Unbekannte Zuordnungsart: {kind}")
@@ -1236,10 +1296,9 @@ def document_meta_quick_create(request, pk, kind):
     document = _visible_document(request.user, pk)
     # Each quick-create block carries a kind-specific field name
     # (`correspondent_name`/`vorgang_name`/`tag_name`) rather than a shared
-    # `name`. All three blocks live inside the same <form>, which HTMX
-    # serialises in full on every POST -- with a shared `name` the two empty
-    # blocks collided with the filled one and Django's QueryDict.get() picked
-    # the last (empty) value, so the typed name never reached the server (#1064).
+    # `name` -- a leftover safeguard from the days of one big <form> around
+    # all three blocks, where a shared `name` made the empty blocks shadow
+    # the filled one and the typed name never reached the server (#1064).
     name = request.POST.get(f"{kind}_name", "").strip()
     dimension = request.POST.get(f"{kind}_dimension", "").strip()
     quick_create_error = None
@@ -1268,18 +1327,14 @@ def document_meta_quick_create(request, pk, kind):
             "dimension": dimension,
         }
 
-    return render(
-        request,
-        "documents/partials/_detail_meta_edit.html",
-        _meta_edit_context(document, quick_create_error=quick_create_error),
-    )
+    return _render_meta(request, document, quick_create_error=quick_create_error)
 
 
-def _render_meta(request, document):
+def _render_meta(request, document, quick_create_error=None):
     return render(
         request,
-        "documents/partials/_detail_meta.html",
-        {"document": document, "action_status_choices": Document.ActionStatus.choices},
+        "documents/partials/_detail_meta_response.html",
+        _meta_context(document, quick_create_error=quick_create_error),
     )
 
 

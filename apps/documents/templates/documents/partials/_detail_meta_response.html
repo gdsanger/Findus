@@ -1,0 +1,9 @@
+{% comment %}
+Antwort auf eine Änderung in der Zuordnung: der Block selbst plus der
+Schnellzugriff oben auf der Seite als Out-of-Band-Swap -- Kontakt und
+Vorgänge stehen an beiden Stellen, und seit die Felder direkt bearbeitbar
+sind, passiert das bei jeder einzelnen Änderung statt einmal pro
+Formular-Speicherung.
+{% endcomment %}
+{% include "documents/partials/_detail_meta.html" %}
+{% include "documents/partials/_detail_hub_links.html" with hub_links_oob=True %}

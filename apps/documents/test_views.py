@@ -1,5 +1,6 @@
 import datetime
 import io
+import re
 import shutil
 import tempfile
 from datetime import date
@@ -2233,7 +2234,12 @@ class DocumentChildDetachViewTests(TestCase):
 
 
 class DocumentMetaEditTests(TestCase):
-    """Covers the nice-to-have HTMX editing of Vorgang/Tag assignments."""
+    """Covers the directly editable Zuordnungs-Block: every field renders as
+    its own control and saves itself via HTMX.
+
+    A save carries a `field` marker and must touch only that field -- the
+    checks below therefore always assert what stayed untouched, too.
+    """
 
     def setUp(self):
         self.dept_a = Department.objects.create(name="Dept A")
@@ -2254,38 +2260,47 @@ class DocumentMetaEditTests(TestCase):
         )
         self.doc.departments.add(self.dept_a)
 
-    def test_edit_form_shows_current_selection(self):
+    def test_block_shows_current_selection(self):
         self.doc.vorgaenge.add(self.vorgang)
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
-        self.assertContains(response, "selected")
+        self.assertContains(response, f'value="{self.vorgang.id}" selected')
         self.assertContains(response, self.vorgang.name)
 
-    def test_edit_form_shows_correspondent_options_and_current_selection(self):
+    def test_block_shows_correspondent_options_and_current_selection(self):
         correspondent = Correspondent.objects.create(name="Acme GmbH")
         self.doc.correspondent = correspondent
         self.doc.save(update_fields=["correspondent"])
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
         self.assertContains(response, "Acme GmbH")
         self.assertContains(response, f'value="{correspondent.id}" selected')
 
-    def test_edit_form_shows_current_direction(self):
+    def test_block_shows_current_direction(self):
         self.doc.direction = Document.Direction.AUSGANG
         self.doc.save(update_fields=["direction"])
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
         self.assertContains(response, f'value="{Document.Direction.AUSGANG}" selected')
 
-    def test_edit_form_outside_visibility_returns_404(self):
+    def test_block_has_no_separate_edit_toggle(self):
+        """Die Felder sind direkt bearbeitbar -- ohne den früheren
+        "Zuordnung bearbeiten"-Umweg.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Zuordnung bearbeiten")
+
+    def test_block_outside_visibility_returns_404(self):
         self.client.force_login(self.user_b)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
         self.assertEqual(response.status_code, 404)
 
@@ -2293,7 +2308,11 @@ class DocumentMetaEditTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta", args=[self.doc.id]),
-            {"vorgaenge": [self.vorgang.id], "tags": [self.tag.id]},
+            {
+                "field": ["vorgaenge", "tags"],
+                "vorgaenge": [self.vorgang.id],
+                "tags": [self.tag.id],
+            },
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2307,7 +2326,8 @@ class DocumentMetaEditTests(TestCase):
 
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta", args=[self.doc.id]), {"correspondent": correspondent.id}
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "correspondent", "correspondent": correspondent.id},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2319,30 +2339,56 @@ class DocumentMetaEditTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta", args=[self.doc.id]),
-            {"direction": Document.Direction.EINGANG},
+            {"field": "direction", "direction": Document.Direction.EINGANG},
         )
 
         self.assertEqual(response.status_code, 200)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.direction, Document.Direction.EINGANG)
-        self.assertContains(response, "Eingang")
+        self.assertContains(response, f'value="{Document.Direction.EINGANG}" selected')
+
+    def test_post_of_one_field_keeps_the_other_assignments(self):
+        """Ein Feld speichern heißt: nur dieses Feld. Vor dem Inline-Umbau
+        kam immer das ganze Formular, ein Einzel-POST hätte den Rest
+        geleert.
+        """
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+        self.doc.correspondent = correspondent
+        self.doc.save(update_fields=["correspondent"])
+        self.doc.vorgaenge.add(self.vorgang)
+        self.doc.tags.add(self.tag)
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "direction", "direction": Document.Direction.EINGANG},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.direction, Document.Direction.EINGANG)
+        self.assertEqual(self.doc.correspondent, correspondent)
+        self.assertEqual(list(self.doc.vorgaenge.all()), [self.vorgang])
+        self.assertEqual(list(self.doc.tags.all()), [self.tag])
 
     def test_post_with_invalid_direction_keeps_previous_value(self):
         self.doc.direction = Document.Direction.AUSGANG
         self.doc.save(update_fields=["direction"])
 
         self.client.force_login(self.user_a)
-        self.client.post(reverse("documents:meta", args=[self.doc.id]), {"direction": "bogus"})
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "direction", "direction": "bogus"},
+        )
 
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.direction, Document.Direction.AUSGANG)
 
-    def test_edit_form_shows_current_sphere(self):
+    def test_block_shows_current_sphere(self):
         self.doc.sphere = Document.Sphere.GESCHAEFTLICH
         self.doc.save(update_fields=["sphere"])
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
         self.assertContains(response, f'value="{Document.Sphere.GESCHAEFTLICH}" selected')
 
@@ -2350,7 +2396,7 @@ class DocumentMetaEditTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta", args=[self.doc.id]),
-            {"sphere": Document.Sphere.GESCHAEFTLICH},
+            {"field": "sphere", "sphere": Document.Sphere.GESCHAEFTLICH},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2363,7 +2409,10 @@ class DocumentMetaEditTests(TestCase):
         self.doc.save(update_fields=["sphere"])
 
         self.client.force_login(self.user_a)
-        self.client.post(reverse("documents:meta", args=[self.doc.id]), {"sphere": "bogus"})
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "sphere", "sphere": "bogus"},
+        )
 
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.sphere, Document.Sphere.PRIVAT)
@@ -2379,7 +2428,7 @@ class DocumentMetaEditTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta", args=[self.doc.id]),
-            {"sphere": Document.Sphere.PRIVAT},
+            {"field": "sphere", "sphere": Document.Sphere.PRIVAT},
         )
 
         self.doc.refresh_from_db()
@@ -2387,23 +2436,36 @@ class DocumentMetaEditTests(TestCase):
         self.assertNotIn("sphere_source", self.doc.metadata)
         self.assertNotContains(response, "KI-Vorschlag")
 
-    def test_edit_form_shows_tax_relevance_select(self):
+    def test_block_shows_tax_relevance_select(self):
         self.doc.tax_relevance = Document.TaxRelevance.VIELLEICHT
         self.doc.save(update_fields=["tax_relevance"])
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
         self.assertContains(response, 'name="tax_relevance"')
         self.assertContains(
             response, f'value="{Document.TaxRelevance.VIELLEICHT}" selected'
         )
 
+    def test_block_hides_tax_relevance_select_for_business_document(self):
+        """Bei einem geschäftlichen Beleg ist die private ESt-Absetzbarkeit
+        kein Feld, sondern eine Feststellung (#1113).
+        """
+        self.doc.sphere = Document.Sphere.GESCHAEFTLICH
+        self.doc.save(update_fields=["sphere"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
+
+        self.assertNotContains(response, 'name="tax_relevance"')
+        self.assertContains(response, "Nicht zutreffend")
+
     def test_post_updates_tax_relevance(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta", args=[self.doc.id]),
-            {"tax_relevance": Document.TaxRelevance.JA},
+            {"field": "tax_relevance", "tax_relevance": Document.TaxRelevance.JA},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2416,7 +2478,8 @@ class DocumentMetaEditTests(TestCase):
 
         self.client.force_login(self.user_a)
         self.client.post(
-            reverse("documents:meta", args=[self.doc.id]), {"tax_relevance": "bogus"}
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "tax_relevance", "tax_relevance": "bogus"},
         )
 
         self.doc.refresh_from_db()
@@ -2442,7 +2505,11 @@ class DocumentMetaEditTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta", args=[self.doc.id]),
-            {"sphere": Document.Sphere.PRIVAT, "tax_relevance": Document.TaxRelevance.NEIN},
+            {
+                "field": ["sphere", "tax_relevance"],
+                "sphere": Document.Sphere.PRIVAT,
+                "tax_relevance": Document.TaxRelevance.NEIN,
+            },
         )
 
         self.doc.refresh_from_db()
@@ -2451,32 +2518,36 @@ class DocumentMetaEditTests(TestCase):
         self.assertNotIn("tax_relevance_source", self.doc.metadata)
         self.assertNotContains(response, "KI-Vorschlag")
 
-    def test_edit_form_shows_current_document_date(self):
+    def test_block_shows_current_document_date(self):
         self.doc.document_date = date(2026, 1, 15)
         self.doc.save(update_fields=["document_date"])
 
         self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:meta_edit", args=[self.doc.id]))
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
         self.assertContains(response, 'value="2026-01-15"')
 
     def test_post_updates_document_date(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta", args=[self.doc.id]), {"document_date": "2026-01-15"}
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "document_date", "document_date": "2026-01-15"},
         )
 
         self.assertEqual(response.status_code, 200)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.document_date, date(2026, 1, 15))
-        self.assertContains(response, "15.01.2026")
+        self.assertContains(response, 'value="2026-01-15"')
 
     def test_post_can_clear_document_date(self):
         self.doc.document_date = date(2026, 1, 15)
         self.doc.save(update_fields=["document_date"])
 
         self.client.force_login(self.user_a)
-        self.client.post(reverse("documents:meta", args=[self.doc.id]), {"document_date": ""})
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "document_date", "document_date": ""},
+        )
 
         self.doc.refresh_from_db()
         self.assertIsNone(self.doc.document_date)
@@ -2487,7 +2558,8 @@ class DocumentMetaEditTests(TestCase):
 
         self.client.force_login(self.user_a)
         self.client.post(
-            reverse("documents:meta", args=[self.doc.id]), {"document_date": "not-a-date"}
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "document_date", "document_date": "not-a-date"},
         )
 
         self.doc.refresh_from_db()
@@ -2496,7 +2568,8 @@ class DocumentMetaEditTests(TestCase):
     def test_post_with_non_numeric_correspondent_clears_instead_of_500(self):
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:meta", args=[self.doc.id]), {"correspondent": "not-a-number"}
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "correspondent", "correspondent": "not-a-number"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2508,24 +2581,81 @@ class DocumentMetaEditTests(TestCase):
         self.doc.save(update_fields=["correspondent"])
 
         self.client.force_login(self.user_a)
-        self.client.post(reverse("documents:meta", args=[self.doc.id]), {})
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "correspondent", "correspondent": ""},
+        )
 
         self.doc.refresh_from_db()
         self.assertIsNone(self.doc.correspondent)
 
     def test_post_can_clear_assignments(self):
+        """Eine leer geräumte Mehrfachauswahl schickt gar nichts mit -- erst
+        die `field`-Markierung macht daraus ein "alles abwählen".
+        """
         self.doc.vorgaenge.add(self.vorgang)
 
         self.client.force_login(self.user_a)
-        self.client.post(reverse("documents:meta", args=[self.doc.id]), {})
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]), {"field": "vorgaenge"}
+        )
 
         self.doc.refresh_from_db()
         self.assertEqual(list(self.doc.vorgaenge.all()), [])
 
+    def test_post_without_field_marker_writes_the_submitted_names(self):
+        """Ohne HTMX (ein einfacher Formular-POST) zählt, welche Feldnamen
+        mitkommen -- die Markierung ist nur der genauere Weg.
+        """
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"direction": Document.Direction.EINGANG},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.direction, Document.Direction.EINGANG)
+
+    def test_post_refreshes_the_hub_links_out_of_band(self):
+        """Kontakt und Vorgänge stehen auch im Schnellzugriff über der Seite
+        (#1098) -- der zieht bei jeder Inline-Änderung mit, statt bis zum
+        nächsten Seitenaufbau die alte Zuordnung zu zeigen.
+        """
+        correspondent = Correspondent.objects.create(name="Acme GmbH")
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "correspondent", "correspondent": correspondent.id},
+        )
+
+        self.assertContains(response, 'id="document-hub-links"')
+        self.assertContains(response, 'hx-swap-oob="true"')
+        self.assertContains(
+            response,
+            reverse("documents:correspondent_detail", args=[correspondent.id]),
+        )
+
+    def test_hub_links_stay_in_the_page_as_swap_target_when_unassigned(self):
+        """Ohne Zuordnung bleibt der Schnellzugriff als (verstecktes)
+        Swap-Ziel stehen -- sonst hätte die erste Zuweisung nichts zu
+        tauschen.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        opening_tag = re.search(
+            r"<nav[^>]*id=\"document-hub-links\"[^>]*>", response.content.decode()
+        )
+        self.assertIsNotNone(opening_tag)
+        self.assertIn("hidden", opening_tag.group(0))
+        self.assertNotContains(response, "findus-detail-hub-link-group")
+
     def test_post_outside_visibility_returns_404(self):
         self.client.force_login(self.user_b)
         response = self.client.post(
-            reverse("documents:meta", args=[self.doc.id]), {"vorgaenge": [self.vorgang.id]}
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "vorgaenge", "vorgaenge": [self.vorgang.id]},
         )
 
         self.assertEqual(response.status_code, 404)

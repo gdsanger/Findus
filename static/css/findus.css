@@ -875,20 +875,52 @@ body {
     margin-bottom: var(--findus-space-4);
 }
 
+/* Zuordnung: ein Feld pro Zeile, untereinander -- vorher standen sie als
+   umbrechende Flex-Reihe nebeneinander. Mit direkt bearbeitbaren Feldern
+   (Selects, Datum, Schnellanlage) braucht jede Zeile ihre eigene Breite,
+   sonst zerfasert der Block bei jedem Wechsel der Feldbreiten. */
 .findus-detail-meta-list {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--findus-space-5);
+    flex-direction: column;
+    gap: var(--findus-space-3);
     margin: 0;
+}
+
+.findus-detail-meta-row {
+    display: grid;
+    gap: var(--findus-space-1);
 }
 
 .findus-detail-meta-list dt {
     color: var(--findus-text-muted);
     font-size: var(--findus-font-size-sm);
+    font-weight: 400;
+}
+
+.findus-detail-meta-list dt .form-label {
+    margin-bottom: 0;
+    color: inherit;
+    font-size: inherit;
 }
 
 .findus-detail-meta-list dd {
     margin: 0;
+    max-width: 32rem;
+}
+
+/* Der Zuordnungs-Block steht in einer schmalen Spalte: die Schnellanlage
+   bekommt hier eine kleinere Mindestbreite, damit Eingabefeld und Button
+   nebeneinander passen statt umzubrechen. */
+.findus-detail-meta-list .findus-quick-create .form-control {
+    flex-basis: 7rem;
+}
+
+@media (min-width: 768px) {
+    .findus-detail-meta-row {
+        grid-template-columns: 9rem minmax(0, 1fr);
+        align-items: baseline;
+        column-gap: var(--findus-space-3);
+    }
 }
 
 .findus-action-status-control {
@@ -1094,6 +1126,12 @@ body {
     margin-bottom: var(--findus-space-4);
 }
 
+/* Ohne Zuordnung bleibt der Block als (leeres) Swap-Ziel im DOM stehen --
+   `display: flex` würde `hidden` sonst überstimmen. */
+.findus-detail-hub-links[hidden] {
+    display: none;
+}
+
 .findus-detail-hub-link-group {
     display: flex;
     flex-wrap: wrap;
@@ -1156,19 +1194,6 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: var(--findus-space-2);
-}
-
-.findus-detail-meta-header {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: var(--findus-space-3);
-}
-
-.findus-detail-meta-edit-fields {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--findus-space-4);
-    margin-bottom: var(--findus-space-3);
 }
 
 .findus-detail-meta-edit-actions {
