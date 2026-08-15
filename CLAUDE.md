@@ -227,6 +227,19 @@ Funktion.
   Build-Schritt: ein kleines, rein delegiertes Skript
   (`document-meta-tokens.js`) bindet auf `document`-Ebene statt auf
   einzelne Elemente, damit es jeden HTMX-Swap des Blocks übersteht.
+- **Ein-Klick-Umschalter für `Document.action_status` in den Übersichten**
+  (Kachel, Liste, Timeline, Wiedervorlagen; #1137): eigener Endpunkt
+  `document_action_status_toggle`, getrennt vom bestehenden
+  `document_action_status` — dessen Select+Badge-Kontrolle bleibt allein
+  dem Detail vorbehalten, wo die dritte, feinere Ausprägung (`keine`)
+  gepflegt wird. Der neue Zustand wird im Toggle-Endpunkt **immer** aus dem
+  gespeicherten Wert abgeleitet, nie aus einem mitgeschickten
+  Wunschzustand — sonst kippt der Zustand bei zwei schnellen Klicks
+  unkontrolliert. Ein gemeinsames Partial (`_action_status_toggle.html`,
+  echtes `<button>` mit `aria-pressed`) bindet in alle vier Ansichten ein,
+  damit sie nicht auseinanderlaufen; die Swap-Kennung `#document-status-
+  <pk>` bleibt bewusst je Eintrag eindeutig, damit ein Klick nur seine
+  eigene Kachel/Zeile tauscht, nie die ganze Liste.
 
 ## Bewusst nicht gebaut
 
