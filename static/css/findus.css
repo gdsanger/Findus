@@ -982,7 +982,13 @@ body {
    Vorschau. Über `grid-template-areas` gesteuert, damit die Bereiche am
    Handy in der Reihenfolge Zusammenfassung → Vorschau → Tabs stapeln,
    obwohl die Vorschau im Markup zuletzt steht. Ab `lg` zwei gleich breite
-   Spalten; die Vorschau spannt beide Zeilen der linken Spalte. */
+   Spalten; die Vorschau spannt alle Zeilen der linken Spalte.
+   Die dritte Zeile ("." / `1fr`) ist bewusst leer (#1127): ohne sie
+   verteilt der Grid-Algorithmus die Extrahöhe, die die hohe Vorschau
+   gegenüber Zusammenfassung + Tabs braucht, auf die `auto`-Zeilen der
+   linken Spalte und bläht dadurch die Tabs-Zeile auf, statt sie an ihrem
+   eigenen Inhalt auszurichten. Mit der `1fr`-Füllzeile bleiben Zusammenfassung
+   und Tabs auf ihrer Content-Höhe; der Rest sammelt sich unten. */
 .findus-detail-grid {
     display: grid;
     align-items: start;
@@ -997,10 +1003,12 @@ body {
 @media (min-width: 992px) {
     .findus-detail-grid {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-rows: auto auto 1fr;
         gap: var(--findus-space-6);
         grid-template-areas:
             "summary preview"
-            "tabs    preview";
+            "tabs    preview"
+            ".       preview";
     }
 }
 
@@ -1012,6 +1020,10 @@ body {
 .findus-detail-tabs-area {
     grid-area: tabs;
     min-width: 0;
+    /* Explizit, obwohl vom Grid-`align-items: start` geerbt (#1127):
+       fixiert die Tabs-Leiste am oberen Rand ihrer Zeile, unabhängig
+       davon, wie viel Höhe die Zeile durch die Vorschau-Spalte erhält. */
+    align-self: start;
 }
 
 .findus-detail-preview-area {
