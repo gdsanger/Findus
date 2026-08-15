@@ -37,7 +37,7 @@ from apps.ingest.mail_body import (
     render_body_pdf,
 )
 from apps.ingest.schedules import MAIL_INGEST_SCHEDULE_NAME, sync_mail_ingest_schedule
-from apps.ingest.service import MailAttachment, ingest_file, ingest_mail
+from apps.ingest.service import MailAttachment, ingest_eml_file, ingest_file, ingest_mail
 
 # Ein Body mit genug Woertern, um den Substanz-Check (Default-Schwelle 8)
 # zu bestehen -- gemeinsame Fixture fuer die Connector- und Service-Tests.
@@ -994,3 +994,309 @@ class IngestMailServiceTests(TestCase):
         self.assertEqual(leit.text_content, "")
         mock_body_enqueue.assert_not_called()
         self.assertEqual(Document.objects.filter(parent=leit).count(), 1)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class EmlIngestServiceTests(TestCase):
+    """`ingest_eml_file` (#1133): eine `.eml` wird selbst zum Leitdokument
+    (Original bleibt als Datei erhalten, anders als `ingest_mail`s aus dem
+    Body generiertes PDF), ihre Anhaenge zu Unterdokumenten."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_simple_text_mail_creates_document_with_metadata(self, mock_enqueue):
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="Anna Beispiel <anna@example.com>",
+            body_text=SUBSTANTIAL_BODY,
+            message_id="<simple-1@example.com>",
+        )
+
+        result = ingest_eml_file(
+            BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertTrue(result.created)
+        self.assertFalse(result.duplicate)
+        document = result.document
+        self.assertEqual(document.title, "Rechnung")
+        self.assertEqual(document.correspondent.email, "anna@example.com")
+        self.assertEqual(document.correspondent.name, "Anna Beispiel")
+        self.assertEqual(document.direction, Document.Direction.EINGANG)
+        self.assertEqual(document.metadata["message_id"], "<simple-1@example.com>")
+        self.assertEqual(document.metadata["mail_from"], "anna@example.com")
+        self.assertEqual(document.metadata["mail_to"], "ingest@findus.example")
+        self.assertEqual(document.metadata["mail_subject"], "Rechnung")
+        self.assertEqual(document.metadata["mime_type"], "message/rfc822")
+        self.assertEqual(document.original_filename, "mail.eml")
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.PENDING)
+        self.assertIsNone(document.parent_id)
+        mock_enqueue.assert_called_with(document.id)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_sender_marked_as_self_is_outgoing(self, mock_enqueue):
+        Correspondent.objects.create(name="Ich", email="me@example.com", is_self=True)
+        raw = _build_email_bytes(
+            subject="Antwort", sender="me@example.com", body_text=SUBSTANTIAL_BODY
+        )
+
+        result = ingest_eml_file(
+            BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertEqual(result.document.direction, Document.Direction.AUSGANG)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_multiple_attachments_become_children(self, mock_enqueue):
+        department = Department.objects.create(name="IT")
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="anna@example.com",
+            body_text=SUBSTANTIAL_BODY,
+            attachments=[
+                ("invoice.pdf", b"content-1", "application", "pdf"),
+                ("contract.pdf", b"content-2", "application", "pdf"),
+            ],
+        )
+
+        result = ingest_eml_file(
+            BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD, department=department
+        )
+
+        parent = result.document
+        children = Document.objects.filter(parent=parent)
+        self.assertEqual(children.count(), 2)
+        for child in children:
+            self.assertEqual(child.child_role, Document.ChildRole.MAIL_ATTACHMENT)
+            self.assertEqual(child.correspondent.email, "anna@example.com")
+            self.assertEqual(child.departments.get().name, "IT")
+        self.assertEqual(Document.objects.count(), 3)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_multipart_alternative_body_parts_are_not_treated_as_attachments(self, mock_enqueue):
+        raw = _build_email_bytes(
+            subject="Hallo",
+            sender="anna@example.com",
+            body_text=SUBSTANTIAL_BODY,
+            body_html=f"<p>{SUBSTANTIAL_BODY}</p>",
+        )
+
+        ingest_eml_file(BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD)
+
+        self.assertEqual(Document.objects.count(), 1)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_multipart_related_inline_image_is_not_a_child_document(self, mock_enqueue):
+        message = EmailMessage()
+        message["Subject"] = "Mit Signatur"
+        message["From"] = "anna@example.com"
+        message["To"] = "ingest@findus.example"
+        message["Message-ID"] = "<related-1@example.com>"
+        message.set_content(SUBSTANTIAL_BODY)
+        message.add_alternative(
+            f"<p>{SUBSTANTIAL_BODY}</p><img src='cid:logo1@findus.test'>", subtype="html"
+        )
+        html_part = message.get_payload()[1]
+        html_part.add_related(
+            _png_bytes(300, 300), maintype="image", subtype="png", cid="<logo1@findus.test>"
+        )
+        message.add_attachment(
+            b"%PDF-1.4 content", maintype="application", subtype="pdf", filename="invoice.pdf"
+        )
+
+        result = ingest_eml_file(
+            BytesIO(message.as_bytes()), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        children = Document.objects.filter(parent=result.document)
+        self.assertEqual(children.count(), 1)
+        self.assertEqual(children.get().original_filename, "invoice.pdf")
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_missing_subject_gets_fallback_title(self, mock_enqueue):
+        raw = _build_email_bytes(
+            subject="", sender="Anna Beispiel <anna@example.com>", body_text=SUBSTANTIAL_BODY
+        )
+
+        result = ingest_eml_file(
+            BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertNotEqual(result.document.title.strip(), "")
+        self.assertIn("Anna Beispiel", result.document.title)
+        self.assertTrue(result.document.title.startswith("E-Mail von"))
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_broken_date_header_is_processed_without_raising(self, mock_enqueue):
+        message = EmailMessage()
+        message["Subject"] = "Kaputtes Datum"
+        message["From"] = "anna@example.com"
+        message["Date"] = "not-a-real-date"
+        message.set_content(SUBSTANTIAL_BODY)
+
+        result = ingest_eml_file(
+            BytesIO(message.as_bytes()), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertTrue(result.created)
+        self.assertIsNone(result.document.document_date)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_missing_date_header_is_processed_without_raising(self, mock_enqueue):
+        message = EmailMessage()
+        message["Subject"] = "Ohne Datum"
+        message["From"] = "anna@example.com"
+        message.set_content(SUBSTANTIAL_BODY)
+
+        result = ingest_eml_file(
+            BytesIO(message.as_bytes()), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertTrue(result.created)
+        self.assertIsNone(result.document.document_date)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_valid_date_header_sets_document_date(self, mock_enqueue):
+        message = EmailMessage()
+        message["Subject"] = "Mit Datum"
+        message["From"] = "anna@example.com"
+        message["Date"] = "Tue, 01 Jul 2025 10:00:00 +0200"
+        message.set_content(SUBSTANTIAL_BODY)
+
+        result = ingest_eml_file(
+            BytesIO(message.as_bytes()), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertEqual(result.document.document_date.isoformat(), "2025-07-01")
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_corrupted_eml_still_creates_a_document(self, mock_enqueue):
+        garbage = b"\x00\x01not really an email at all\xff\xfe"
+
+        result = ingest_eml_file(
+            BytesIO(garbage), filename="broken.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertTrue(result.created)
+        self.assertNotEqual(result.document.title.strip(), "")
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_umlauts_and_encoding_roundtrip(self, mock_enqueue):
+        message = EmailMessage()
+        message["Subject"] = "Rückmeldung zur Bestätigung"
+        message["From"] = "Ängström Müller <müller@example.com>"
+        text = "Grüße, hier steht ein Betrag für die Überweisung äöüß."
+        message.set_content(text, charset="iso-8859-1")
+
+        result = ingest_eml_file(
+            BytesIO(message.as_bytes()), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertEqual(result.document.title, "Rückmeldung zur Bestätigung")
+        self.assertIn("Müller", result.document.correspondent.name)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_second_ingest_with_same_message_id_is_a_duplicate(self, mock_enqueue):
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="anna@example.com",
+            body_text=SUBSTANTIAL_BODY,
+            message_id="<dup-eml-1@example.com>",
+        )
+
+        first = ingest_eml_file(BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD)
+        second = ingest_eml_file(
+            BytesIO(raw), filename="mail-copy.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertTrue(first.created)
+        self.assertTrue(second.duplicate)
+        self.assertFalse(second.created)
+        self.assertEqual(second.document.id, first.document.id)
+        self.assertEqual(Document.objects.count(), 1)
+
+    @patch("apps.ingest.service._enqueue_body_processing", return_value="task-body")
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_message_id_dedup_across_imap_and_eml_upload(self, mock_enqueue, mock_body_enqueue):
+        """Dieselbe Mail zuerst per Postfach-Ueberwachung (`ingest_mail`),
+        danach nochmal als `.eml`-Upload (`ingest_eml_file`) -- beide Wege
+        teilen sich dieselbe Message-ID-Dedup-Pruefung (#1133)."""
+        message_id = "<cross-path-1@example.com>"
+
+        via_mail = ingest_mail(
+            body=SUBSTANTIAL_BODY,
+            body_content_type="text/plain",
+            attachments=[],
+            mail_metadata={"message_id": message_id, "mail_subject": "Rechnung"},
+        )
+        self.assertTrue(via_mail.created)
+
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="anna@example.com",
+            body_text=SUBSTANTIAL_BODY,
+            message_id=message_id,
+        )
+        via_eml = ingest_eml_file(
+            BytesIO(raw), filename="mail.eml", source=Document.Source.UPLOAD
+        )
+
+        self.assertTrue(via_eml.duplicate)
+        self.assertFalse(via_eml.created)
+        self.assertEqual(via_eml.document.id, via_mail.leitdokument.id)
+        self.assertEqual(Document.objects.count(), 1)
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_explicit_correspondent_overrides_sender_resolution(self, mock_enqueue):
+        contact = Correspondent.objects.create(name="Vorgabe", email="vorgabe@example.com")
+        raw = _build_email_bytes(
+            subject="Rechnung", sender="anna@example.com", body_text=SUBSTANTIAL_BODY
+        )
+
+        result = ingest_eml_file(
+            BytesIO(raw),
+            filename="mail.eml",
+            source=Document.Source.UPLOAD,
+            correspondent=contact,
+        )
+
+        self.assertEqual(result.document.correspondent_id, contact.id)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class EmlFolderConnectorTests(TestCase):
+    """`.eml` via Ordner-Ueberwachung (#1133) -- derselbe `ingest_eml_file`,
+    nur ueber `scan_folder` angestossen; die MIME-Erkennung entscheidet den
+    Pfad (`sniff_mime_type`), nicht nur die Dateiendung."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="findus-ingest-folder-eml-"))
+        self.addCleanup(shutil.rmtree, self.tmp_dir, ignore_errors=True)
+        self.folder = WatchFolder(path=self.tmp_dir, department="IT")
+
+    @patch("apps.ingest.service._enqueue_processing", return_value="task-1")
+    def test_eml_dropped_in_folder_creates_leitdokument_plus_attachment(self, mock_enqueue):
+        raw = _build_email_bytes(
+            subject="Rechnung",
+            sender="anna@example.com",
+            body_text=SUBSTANTIAL_BODY,
+            attachments=[("invoice.pdf", b"%PDF-1.4 content", "application", "pdf")],
+        )
+        (self.tmp_dir / "mail.eml").write_bytes(raw)
+
+        scan_folder(self.folder)
+
+        self.assertEqual(Document.objects.count(), 2)
+        parent = Document.objects.get(parent__isnull=True)
+        self.assertEqual(parent.title, "Rechnung")
+        self.assertEqual(parent.correspondent.email, "anna@example.com")
+        self.assertTrue((self.folder.processed_dir / "mail.eml").exists())

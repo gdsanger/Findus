@@ -9,6 +9,8 @@ has to know how to *fetch* a file and its provenance; it never touches
 
 from __future__ import annotations
 
+import email
+import email.policy
 import hashlib
 import logging
 import re
@@ -17,10 +19,12 @@ from io import BytesIO
 from typing import IO, Any, Literal, Optional
 
 from django.core.files import File
+from django.utils import timezone
 
 from apps.accounts.models import Department
 from apps.documents.mime import resolve_mime_type
 from apps.documents.models import Correspondent, Document
+from apps.documents.services import find_or_create_correspondent_by_email
 from apps.documents.text_sanitize import clean_text
 from apps.ingest.attachment_filter import filter_mail_attachments
 from apps.ingest.mail_body import (
@@ -28,6 +32,13 @@ from apps.ingest.mail_body import (
     clean_body,
     has_substance,
     render_body_pdf,
+)
+from apps.ingest.mail_parse import (
+    MailAttachment,
+    body_content,
+    collect_attachments,
+    parse_mail_date,
+    sender_email_and_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,22 +53,6 @@ class IngestResult:
     document: Document
     created: bool
     duplicate: bool
-
-
-@dataclass(frozen=True)
-class MailAttachment:
-    """Ein Mail-Anhang, normalisiert ueber beide Backends (IMAP/Graph) --
-    der Connector reicht nur Bytes + Herkunft, der Ingest kennt den Rest.
-
-    `content_id`/`inline` speisen den Grampf-Filter (#1081): Signatur-/
-    Deko-Bilder (Content-Disposition inline bzw. per `cid:` im Body
-    referenziert) werden gar nicht erst als Unterdokument angelegt."""
-
-    fileobj: IO[bytes]
-    filename: str
-    content_type: str = ""
-    content_id: str = ""
-    inline: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +71,19 @@ def _hash_and_size(fileobj: IO[bytes]) -> tuple[str, int]:
         size += len(chunk)
     fileobj.seek(0)
     return digest.hexdigest(), size
+
+
+def sniff_mime_type(fileobj: IO[bytes], *, filename: str, content_type: str = "") -> str:
+    """Peek at the first chunk of `fileobj` to resolve its MIME type without
+    consuming the stream (#1077 `resolve_mime_type`, content-first) -- lets
+    a connector decide *before* ingest which path applies (#1133): `.eml`
+    mail-envelopes (`message/rfc822`) via `ingest_eml_file`, everything else
+    via plain `ingest_file` (which resolves the same MIME type again once
+    it has already deduped -- cheap, and keeps both functions
+    self-contained rather than threading the result through)."""
+    header = fileobj.read(_HASH_CHUNK_SIZE)
+    fileobj.seek(0)
+    return resolve_mime_type(header, filename=filename, declared=content_type)
 
 
 def _handle_duplicate(
@@ -323,16 +331,17 @@ def ingest_mail(
     Mail wird nicht ein zweites Mal angelegt (Idempotenz-Netz neben dem
     Seen/Read-Flag der Connectoren). `fill_body=False` (Mailbox-Schalter
     `ingest_body`) erzwingt die Huelle auch bei substanziellem Body.
+
+    Bewusst *nicht* auf `kind=mail_body` eingeschraenkt: dieselbe Mail kann
+    auch als `.eml` hochgeladen/abgelegt worden sein (`ingest_eml_file`,
+    #1133) -- die traegt dieselbe Message-ID in `metadata`, aber
+    `kind=document` (sie behaelt das Original, statt ein Body-PDF zu
+    generieren). Beide Wege muessen sich gegenseitig erkennen, sonst
+    laeuft die Mail zweimal ins Archiv, je nachdem welcher Weg zuerst war.
     """
     message_id = (mail_metadata.get("message_id") or "").strip()
     if message_id:
-        existing = (
-            Document.objects.filter(
-                kind=Document.Kind.MAIL_BODY, metadata__message_id=message_id
-            )
-            .roots()
-            .first()
-        )
+        existing = Document.objects.filter(metadata__message_id=message_id).roots().first()
         if existing is not None:
             logger.info(
                 "Ingest-Mail: Duplikat message_id=%s erkannt -> Document %s",
@@ -396,3 +405,192 @@ def ingest_mail(
         duplicate=False,
         attachments=attachment_results,
     )
+
+
+def _fallback_eml_title(sender_name: str, sender_email_addr: str, parsed_date) -> str:
+    """Ersatztitel fuer eine `.eml` ohne (nutzbaren) Betreff (#1133) -- nie
+    ein leerer Titel. `parsed_date` ist bereits das Ergebnis von
+    `mail_parse.parse_mail_date`; fehlt es, zaehlt der Ingest-Zeitpunkt."""
+    who = (sender_name or sender_email_addr or "unbekannt").strip()
+    when = parsed_date or timezone.now()
+    if timezone.is_aware(when):
+        when = timezone.localtime(when)
+    return f"E-Mail von {who} vom {when.strftime('%d.%m.%Y')}"[:255]
+
+
+def _eml_document_date(parsed_date):
+    """`Document.document_date` aus dem geparsten `Date`-Header, in der
+    lokalen Zeitzone (CLAUDE.md: nie UTC) -- oder `None`, wenn der Header
+    fehlte/unparsbar war. `None` lassen (statt den Ingest-Zeitpunkt
+    einzutragen) ist hier bewusst: `Document.display_date` faellt fuer ein
+    leeres `document_date` ohnehin schon auf `created_at` zurueck (siehe
+    Model-Property) -- genau der gewuenschte Ingest-Zeitpunkt-Fallback,
+    ohne ihn ein zweites Mal zu kodieren."""
+    if parsed_date is None:
+        return None
+    if timezone.is_aware(parsed_date):
+        return timezone.localtime(parsed_date).date()
+    return parsed_date.date()
+
+
+def ingest_eml_file(
+    fileobj: IO[bytes],
+    *,
+    filename: str,
+    source: str,
+    department: Optional[Department] = None,
+    owner: Optional[Any] = None,
+    visibility: Optional[str] = None,
+    origin_metadata: Optional[dict] = None,
+    on_duplicate: OnDuplicate = "skip",
+    correspondent: Optional[Correspondent] = None,
+) -> IngestResult:
+    """Ingest a `.eml` file as a Document that keeps the raw message as its
+    original file, plus its attachments as Unterdokumente (#1133).
+
+    Anders als `ingest_mail` (IMAP/Graph, kein "Original" -- dort wird ein
+    PDF *aus* dem Body gerendert): eine hochgeladene/abgelegte `.eml` ist
+    selbst die Originaldatei und bleibt es (Anforderung "das Original
+    bleibt als Datei erhalten"). Deshalb laeuft der Leitdokument-Anlage
+    hier ueber das normale `ingest_file` (sha256-Dedup, Storage, Enqueue
+    der Extraktions-Kaskade -- `apps.documents.extraction` liest
+    `message/rfc822` genau wie jeden anderen Typ), nicht ueber
+    `_create_mail_leitdokument`s PDF-Generierung.
+
+    Wiederverwendet dieselbe Header-/Body-/Anhang-Auswertung wie der
+    IMAP-Connector (`apps.ingest.mail_parse`), damit die beiden Wege nicht
+    auseinanderlaufen. Jeder Auswertungsschritt faengt seine eigenen
+    Fehler ab und faellt auf "nichts erkannt" zurueck -- eine kaputte
+    Mail bekommt trotzdem ein Document, mit so viel Kontext wie sich lesen
+    liess, nie eine durchschlagende Exception.
+
+    Dedup zusaetzlich zum sha256-Vergleich in `ingest_file` ueber die
+    `Message-ID`: dieselbe Mail, einmal per Postfach-Ueberwachung geholt
+    (`ingest_mail`) und einmal als `.eml` abgelegt, hat unterschiedliche
+    Bytes, traegt aber dieselbe Message-ID in `metadata`.
+    """
+    raw = fileobj.read()
+    fileobj.seek(0)
+
+    try:
+        msg = email.message_from_bytes(raw, policy=email.policy.default)
+    except Exception:
+        logger.exception("Ingest-EML: Nachricht konnte nicht geparst werden (%s)", filename)
+        msg = email.message_from_bytes(b"", policy=email.policy.default)
+
+    try:
+        sender_email_addr, sender_name = sender_email_and_name(msg)
+    except Exception:
+        logger.exception("Ingest-EML: Absender-Header nicht lesbar (%s)", filename)
+        sender_email_addr, sender_name = "", ""
+
+    subject = (msg.get("Subject", "") or "").strip()
+    message_id = (msg.get("Message-ID", "") or "").strip()
+    mail_date_raw = msg.get("Date", "") or ""
+    parsed_date = parse_mail_date(mail_date_raw)
+    if not parsed_date:
+        logger.info(
+            "Ingest-EML: %s (%s) -- Fallback auf Ingest-Zeitpunkt (%s)",
+            "Date-Header unparsbar" if mail_date_raw else "kein Date-Header",
+            mail_date_raw or "-",
+            filename,
+        )
+
+    mail_metadata = dict(origin_metadata or {})
+    mail_metadata.update(
+        {
+            "message_id": message_id,
+            "mail_from": sender_email_addr,
+            "mail_to": msg.get("To", "") or "",
+            "mail_cc": msg.get("Cc", "") or "",
+            "mail_subject": subject,
+            "mail_date": mail_date_raw,
+        }
+    )
+
+    if message_id:
+        existing = Document.objects.filter(metadata__message_id=message_id).roots().first()
+        if existing is not None:
+            logger.info(
+                "Ingest-EML: Duplikat message_id=%s erkannt -> Document %s",
+                message_id,
+                existing.id,
+            )
+            return IngestResult(document=existing, created=False, duplicate=True)
+
+    resolved_correspondent = correspondent or find_or_create_correspondent_by_email(
+        sender_email_addr, sender_name
+    )
+
+    title = subject or _fallback_eml_title(sender_name, sender_email_addr, parsed_date)
+
+    result = ingest_file(
+        BytesIO(raw),
+        filename=filename,
+        source=source,
+        title=title,
+        department=department,
+        owner=owner,
+        visibility=visibility,
+        content_type="message/rfc822",
+        origin_metadata=mail_metadata,
+        on_duplicate=on_duplicate,
+        correspondent=resolved_correspondent,
+    )
+    if not result.created:
+        # sha256-Duplikat (keine Message-ID oder keine getroffen) -- wie
+        # jeder andere Duplikat-Treffer nicht neu verkindern (siehe
+        # `ingest_file`-Docstring).
+        return result
+
+    document = result.document
+    update_fields = ["direction"]
+    document.direction = (
+        Document.Direction.AUSGANG
+        if resolved_correspondent is not None and resolved_correspondent.is_self
+        else Document.Direction.EINGANG
+    )
+    document_date = _eml_document_date(parsed_date)
+    if document_date is not None:
+        document.document_date = document_date
+        update_fields.append("document_date")
+    document.save(update_fields=update_fields)
+
+    try:
+        cid_body, _cid_body_content_type = body_content(msg)
+    except Exception:
+        logger.exception(
+            "Ingest-EML: Body-Auswertung fuer den Grampf-Filter fehlgeschlagen (%s)", filename
+        )
+        cid_body = None
+
+    try:
+        attachments = collect_attachments(msg)
+    except Exception:
+        logger.exception("Ingest-EML: Anhang-Erkennung fehlgeschlagen (%s)", filename)
+        attachments = []
+
+    attachments = filter_mail_attachments(attachments, body=cid_body)
+    for attachment in attachments:
+        ingest_file(
+            attachment.fileobj,
+            filename=attachment.filename,
+            source=source,
+            department=department,
+            owner=owner,
+            visibility=visibility or document.visibility,
+            content_type=attachment.content_type,
+            origin_metadata=dict(mail_metadata),
+            on_duplicate=on_duplicate,
+            correspondent=resolved_correspondent,
+            parent=document,
+            child_role=Document.ChildRole.MAIL_ATTACHMENT,
+        )
+
+    logger.info(
+        "Ingest-EML: Document %s angelegt (message_id=%s, anhaenge=%s)",
+        document.id,
+        message_id or "-",
+        len(attachments),
+    )
+    return result

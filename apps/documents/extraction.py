@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 _PDF_MIME = "application/pdf"
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_EML_MIME = "message/rfc822"
 
 _VISION_PROMPT = (
     "Transkribiere den gesamten lesbaren Text dieser Dokumentseite "
@@ -204,6 +205,36 @@ def _extract_plain_text(data: bytes) -> list[_PageResult]:
     return [_PageResult(text=text, method=Document.ExtractionMethod.TEXT_LAYER)]
 
 
+def _extract_eml(data: bytes) -> list[_PageResult]:
+    """Mail-Body -> Text (#1133). Vorrang hat `text/plain`; fehlt er, wird
+    der `text/html`-Teil ueber `mail_body.html_to_text` in Klartext
+    umgewandelt -- nie rohes HTML in `text_content`. Anders als
+    `mail_body.clean_body()` (Ingest der IMAP/Graph-Mails, #1070) werden
+    zitierte Vorgaenger-Mails/Signaturen *nicht* abgeschnitten: ein
+    hochgeladenes `.eml` ist die Originaldatei, ihr Text soll vollstaendig
+    durchsuchbar bleiben (Anforderung #4). Eine kaputte Nachricht liefert
+    leeren Text statt einer Exception -- `email.message_from_bytes` mit
+    `policy.default` ist bereits selbst defect-tolerant, dieser Fang ist
+    nur das letzte Sicherheitsnetz."""
+    import email
+    import email.policy
+
+    from apps.ingest.mail_body import html_to_text
+
+    content, content_type = "", ""
+    try:
+        msg = email.message_from_bytes(data, policy=email.policy.default)
+        body_part = msg.get_body(preferencelist=("plain", "html"))
+        if body_part is not None:
+            content = body_part.get_content() or ""
+            content_type = body_part.get_content_type()
+    except Exception:
+        logger.exception("Extraktion: EML-Body konnte nicht gelesen werden")
+
+    text = html_to_text(content) if "html" in content_type.lower() else content
+    return [_PageResult(text=text, method=Document.ExtractionMethod.TEXT_LAYER)]
+
+
 def _dispatch(
     data: bytes, mime_type: str, vision_provider_factory: VisionProviderFactory
 ) -> tuple[list[_PageResult], int]:
@@ -213,11 +244,14 @@ def _dispatch(
         return _extract_image(data, vision_provider_factory), 1
     if mime_type == _DOCX_MIME:
         return _extract_docx(data), 1
+    if mime_type == _EML_MIME:
+        return _extract_eml(data), 1
     if mime_type.startswith("text/"):
         return _extract_plain_text(data), 1
     raise ValueError(
         f"Extraktion: nicht unterstuetzter Dateityp '{mime_type}'. "
-        "Unterstuetzt werden PDF, Bilder (PNG/JPG/TIFF), Word (DOCX) und Textdateien."
+        "Unterstuetzt werden PDF, Bilder (PNG/JPG/TIFF), Word (DOCX), "
+        "Textdateien und E-Mails (EML)."
     )
 
 

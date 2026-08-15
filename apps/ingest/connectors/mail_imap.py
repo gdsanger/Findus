@@ -29,8 +29,6 @@ import imaplib
 import logging
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import parseaddr
-from io import BytesIO
 from typing import Optional
 
 from django.conf import settings
@@ -38,7 +36,8 @@ from django.conf import settings
 from apps.accounts.models import Department
 from apps.documents.models import Document
 from apps.documents.services import find_or_create_correspondent_by_email
-from apps.ingest.service import MailAttachment, ingest_mail
+from apps.ingest.mail_parse import body_content, collect_attachments, sender_email_and_name
+from apps.ingest.service import ingest_mail
 
 logger = logging.getLogger(__name__)
 
@@ -110,41 +109,6 @@ def _mark_seen(connection: imaplib.IMAP4, message_id: bytes) -> None:
     connection.store(message_id, "+FLAGS", "\\Seen")
 
 
-def _sender_email_and_name(msg: EmailMessage) -> tuple[str, str]:
-    name, address = parseaddr(msg.get("From", ""))
-    return address, name
-
-
-def _body_content(msg) -> tuple[Optional[str], Optional[str]]:
-    """Return `(content, content_type)` of the mail's preferred body part, or `(None, None)`."""
-    body_part = msg.get_body(preferencelist=("html", "plain"))
-    if body_part is None:
-        return None, None
-    content = body_part.get_content()
-    if not content:
-        return None, None
-    return content, body_part.get_content_type()
-
-
-def _collect_attachments(msg) -> list[MailAttachment]:
-    attachments: list[MailAttachment] = []
-    for part in msg.iter_attachments():
-        payload = part.get_payload(decode=True)
-        if not payload:
-            continue
-        disposition = (part.get_content_disposition() or "").strip().lower()
-        attachments.append(
-            MailAttachment(
-                fileobj=BytesIO(payload),
-                filename=part.get_filename() or "attachment",
-                content_type=part.get_content_type(),
-                content_id=part.get("Content-ID", "") or "",
-                inline=disposition == "inline",
-            )
-        )
-    return attachments
-
-
 def scan_mailbox(mailbox: ImapMailbox) -> None:
     """One polling pass over a single configured IMAP mailbox."""
 
@@ -157,9 +121,9 @@ def scan_mailbox(mailbox: ImapMailbox) -> None:
                 if msg is None:
                     continue
 
-                sender_email, sender_name = _sender_email_and_name(msg)
+                sender_email, sender_name = sender_email_and_name(msg)
                 correspondent = find_or_create_correspondent_by_email(sender_email, sender_name)
-                body, body_content_type = _body_content(msg)
+                body, body_content_type = body_content(msg)
                 mail_metadata = {
                     "message_id": msg.get("Message-ID", ""),
                     "mail_from": sender_email,
@@ -171,7 +135,7 @@ def scan_mailbox(mailbox: ImapMailbox) -> None:
                 result = ingest_mail(
                     body=body,
                     body_content_type=body_content_type or "",
-                    attachments=_collect_attachments(msg),
+                    attachments=collect_attachments(msg),
                     mail_metadata=mail_metadata,
                     department=department,
                     visibility=mailbox.visibility,
