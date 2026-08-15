@@ -10,6 +10,7 @@ aendert `CLAUDE.md` im selben PR (siehe dort, "Pflegeregel").
 
 from __future__ import annotations
 
+import json
 import tempfile
 from unittest.mock import patch
 
@@ -20,12 +21,13 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Department
-from apps.ai.providers.fake import FakeEmbeddingProvider
+from apps.ai.providers.fake import FakeEmbeddingProvider, FakeGenerationProvider
 
 from . import urls as documents_urls
 from .analysis import analyze_document
-from .models import Chunk, Document, DocumentComment
+from .models import Chunk, Document, DocumentComment, Vorgang
 from .processing import process_document
+from .recommendations import generate_vorgang_recommendations
 from .thumbnails import generate_thumbnail_for_document
 
 User = get_user_model()
@@ -72,6 +74,43 @@ class CommentsAreNotEmbeddedTests(TestCase):
             any("Streng vertrauliche Notiz" in content for content in contents),
             "Kommentartext ist in einem Chunk gelandet -- Kommentare duerfen nicht embedded werden",
         )
+
+
+class CommentsAreUsedAsVorgangRecommendationContextTests(TestCase):
+    """Die zweite Haelfte der Kommentar-Regel (siehe oben): nicht embedded,
+
+    aber sehr wohl als Prompt-Kontext fuer die Handlungsempfehlungen eines
+    Vorgangs -- als eigener, benannter Abschnitt, nicht vermischt mit den
+    Dokumentbloecken (#1132, CLAUDE.md "Pipelines & Services").
+    """
+
+    def test_comment_reaches_the_recommendation_prompt_as_its_own_section(self):
+        department = Department.objects.create(name="Buchhaltung")
+        user = User.objects.create_user(username="alice", password="x")
+        user.departments.add(department)
+
+        vorgang = Vorgang.objects.create(name="Forderung Acme")
+        document = Document.objects.create(
+            title="Rechnung", summary="Kurz.", visibility=Document.Visibility.DEPARTMENT
+        )
+        document.departments.add(department)
+        document.vorgaenge.add(vorgang)
+        DocumentComment.objects.create(
+            document=document, body="Bereits vollstaendig beglichen."
+        )
+
+        provider = FakeGenerationProvider(
+            reply=json.dumps({"lage": "Erledigt.", "empfehlungen": []})
+        )
+        generate_vorgang_recommendations(vorgang.pk, user.pk, generation_provider=provider)
+
+        prompt = provider.calls[0][-1].content
+        self.assertIn(
+            "Notizen des Nutzers zu diesen Dokumenten",
+            prompt,
+            "Kommentare muessen als eigener, benannter Abschnitt im Prompt stehen",
+        )
+        self.assertIn("Bereits vollstaendig beglichen.", prompt)
 
 
 class AllDocumentEndpointsScopeByVisibilityTests(TestCase):

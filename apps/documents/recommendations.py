@@ -27,6 +27,17 @@ ausloesende Nutzer ohnehin sehen darf (`user_id` wandert deshalb mit in
 den Worker-Job) -- eine Empfehlung darf kein Dokument zitieren, das der
 Nutzer nicht oeffnen kann.
 
+Dokumente sagen nur, was jemand *geschickt* hat -- nicht, was der Nutzer
+damit schon *gemacht* hat. Deshalb bekommt der Prompt zusaetzlich einen
+eigenen, benannten Abschnitt "Notizen des Nutzers zu diesen Dokumenten"
+(`build_vorgang_comment_context`, #1132): die juengsten Kommentare aller
+gesendeten Dokumente, offene Wiedervorlagen unabhaengig von ihrem Alter
+immer dabei. Das ist die zweite Haelfte der CLAUDE.md-Regel "Kommentare
+werden nicht embedded, aber sehr wohl als Prompt-Kontext verwendet" --
+nicht indexiert (#1125), aber hier gezielt als Kontext, klar getrennt von
+den Dokumentbloecken und mit Vorrang bei Widerspruch, weil der Kommentar
+der aktuellere Stand ist.
+
 JSON-Robustheit wie in #1028: `generate_json` (defensives Parsen ->
 Repair -> ein Retry). Schlaegt es trotzdem fehl, wird das *sichtbar*
 (`status="failed"` + `error` im Panel) statt still zu verpuffen -- anders
@@ -57,7 +68,13 @@ from django.utils import timezone
 
 from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
 
-from .models import Document, Vorgang, VorgangRecommendation, VorgangRecommendationRun
+from .models import (
+    Document,
+    DocumentComment,
+    Vorgang,
+    VorgangRecommendation,
+    VorgangRecommendationRun,
+)
 from .text_sanitize import clean_json
 
 logger = logging.getLogger(__name__)
@@ -94,7 +111,18 @@ _SYSTEM_PROMPT = (
     "Jede Empfehlung MUSS mindestens eine Quelle nennen. Erfinde keine "
     "Sachverhalte, die aus den Zusammenfassungen/Key-Facts nicht "
     "hervorgehen -- gib lieber weniger Empfehlungen aus. Ist nichts zu "
-    "tun, gib eine leere Liste zurueck."
+    "tun, gib eine leere Liste zurueck.\n"
+    "Ein Abschnitt \"Notizen des Nutzers zu diesen Dokumenten\" ist KEIN "
+    "Dokumentinhalt, sondern der Handlungsstand aus Sicht des Nutzers: gib "
+    "eine Notiz nie als Aussage des Absenders/Ausstellers wieder. "
+    "Widerspricht sich eine Notiz mit einem Dokument (z. B. Zahlungsziel im "
+    "Dokument vs. \"bereits bezahlt\" in der Notiz), gilt die Notiz -- sie "
+    "ist der aktuellere Stand. Ist eine Handlung laut einer Notiz bereits "
+    "erledigt, empfiehl sie nicht erneut. Ist eine Handlung durch eine "
+    "offene Wiedervorlage (Kennzeichnung \"ueberfaellig\"/\"heute "
+    "faellig\"/\"geplant\") bereits eingeplant, nenne sie -- falls "
+    "ueberhaupt -- als bereits geplant mit ihrem Wiedervorlage-Datum, nicht "
+    "als neuen offenen Punkt."
 )
 
 # Die Lage-Einschaetzung stand frueher als erster Schluessel im Schema und
@@ -152,6 +180,102 @@ def _document_block(document: Document, max_summary_chars: int) -> str:
     return "\n".join(lines)
 
 
+def _followup_label(comment: DocumentComment) -> str:
+    """Ueberfaellig/heute faellig/geplant -- Textform von
+    `DocumentComment.is_overdue`/`is_due_today` fuer den Prompt (#1132).
+    """
+    if comment.is_overdue:
+        return "ueberfaellig"
+    if comment.is_due_today:
+        return "heute faellig"
+    return "geplant"
+
+
+def _comment_line(comment: DocumentComment, *, show_author: bool) -> str:
+    """Eine Zeile der Notizen-Sektion: Datum, Dokument, ggf. Autor, Text,
+    ggf. Wiedervorlage mit Status.
+
+    Absolute Datumsangaben (`15.08.2026`), nicht relativ -- die Antwort
+    soll nicht davon abhaengen, wann der Prompt gebaut wurde.
+    """
+    created = timezone.localtime(comment.created_at).date()
+    line = f"{created.strftime('%d.%m.%Y')} [{comment.document.title}]"
+    if show_author and comment.author_id:
+        line += f" ({comment.author.get_username()})"
+    line += f": {comment.body.strip()}"
+    if comment.follow_up_date is not None:
+        line += (
+            f" -- Wiedervorlage {comment.follow_up_date.strftime('%d.%m.%Y')} "
+            f"({_followup_label(comment)})"
+        )
+    return line
+
+
+def _basis_comments(documents: list[Document]) -> list[DocumentComment]:
+    """Kommentare der Basis-Dokumente, chronologisch (aeltestes zuerst).
+
+    Kein eigener Sichtbarkeits-Check: `documents` kommt bereits aus
+    `_basis_documents`/`_limited`, ist also schon auf das begrenzt, was der
+    anfragende Nutzer sehen darf *und* was tatsaechlich als Dokumentblock im
+    Prompt steht -- ein Kommentar zu einem herausgekuerzten Dokument wuerde
+    im Prompt auf einen Titel verweisen, der dort gar nicht auftaucht.
+    """
+    document_ids = [document.pk for document in documents]
+    if not document_ids:
+        return []
+    return list(
+        DocumentComment.objects.filter(document_id__in=document_ids)
+        .select_related("document", "author")
+        .order_by("created_at")
+    )
+
+
+def _limited_comments(
+    comments: list[DocumentComment], limit: int
+) -> list[DocumentComment]:
+    """Bei vielen Kommentaren nur die juengsten `limit` behalten -- offene
+
+    Wiedervorlagen bleiben unabhaengig von ihrem Alter immer dabei: ein
+    geplanter Termin ist relevanter als eine beilaeufige Notiz von gestern
+    (#1132). Die Reihenfolge (chronologisch) bleibt dabei erhalten.
+    """
+    recent = comments[-limit:] if len(comments) > limit else comments
+    kept_ids = {comment.pk for comment in recent}
+    kept_ids.update(comment.pk for comment in comments if comment.follow_up_date is not None)
+    return [comment for comment in comments if comment.pk in kept_ids]
+
+
+def build_vorgang_comment_context(documents: list[Document], limit: int) -> list[str]:
+    """Der Abschnitt "Notizen des Nutzers zu diesen Dokumenten" -- als
+
+    eigene, testbare Funktion gebaut statt inline im Prompt-String, damit
+    sich pruefen laesst, was tatsaechlich hineingeht, ohne ein Modell
+    aufzurufen (#1132).
+
+    Bewusst ein eigener, benannter Abschnitt statt Vermischung mit den
+    Dokumentbloecken: Kommentare sind Notizen UEBER ein Dokument, keine
+    Dokumentinhalte (CLAUDE.md "Pipelines & Services"). Fehlen Kommentare
+    komplett, ist das Ergebnis eine leere Liste -- der Prompt bleibt dann
+    unveraendert zum Stand vor #1132.
+    """
+    comments = _limited_comments(_basis_comments(documents), limit)
+    if not comments:
+        return []
+
+    distinct_authors = {comment.author_id for comment in comments if comment.author_id}
+    show_author = len(distinct_authors) > 1
+
+    lines = [
+        "",
+        "Notizen des Nutzers zu diesen Dokumenten (chronologisch; das sind "
+        "Notizen UEBER die Dokumente, kein Dokumentinhalt -- bei Widerspruch "
+        "zwischen einer Notiz und einem Dokument gilt die Notiz, sie ist der "
+        "aktuellere Stand):",
+    ]
+    lines.extend(_comment_line(comment, show_author=show_author) for comment in comments)
+    return lines
+
+
 def _basis_documents(vorgang, user):
     """Die Dokumente des Vorgangs, die der Nutzer sehen darf -- chronologisch
     (aeltestes zuerst), damit das Modell den Verlauf in der Reihenfolge
@@ -203,6 +327,11 @@ def _build_messages(vorgang, documents: list[Document], max_items: int) -> list[
     context.append("")
     context.append("Dokumente des Vorgangs (chronologisch, aeltestes zuerst):")
     context.extend(_document_block(document, max_summary_chars) for document in documents)
+    context.extend(
+        build_vorgang_comment_context(
+            documents, settings.FINDUS_VORGANG_RECOMMENDATION_MAX_COMMENTS
+        )
+    )
     return [
         Message(
             role="system",
