@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
-from apps.ingest.service import ingest_file
+from apps.ingest.service import ingest_eml_file, ingest_file, sniff_mime_type
 
 from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
@@ -388,16 +388,33 @@ def _ingest_uploaded_file(user, departments, visibility, uploaded_file, *, corre
         }
 
     try:
-        result = ingest_file(
-            uploaded_file,
-            filename=uploaded_file.name,
-            source=Document.Source.UPLOAD,
-            department=departments[0] if departments else None,
-            owner=user,
-            visibility=visibility,
-            content_type=uploaded_file.content_type or "",
-            correspondent=correspondent,
+        mime_type = sniff_mime_type(
+            uploaded_file, filename=uploaded_file.name, content_type=uploaded_file.content_type or ""
         )
+        if mime_type == "message/rfc822":
+            # `.eml` (#1133): Mail als Leitdokument, Anhaenge als
+            # Unterdokumente -- derselbe Ingest-Kontrakt, nur ein anderer
+            # Einstiegspunkt als ein gewoehnlicher Upload.
+            result = ingest_eml_file(
+                uploaded_file,
+                filename=uploaded_file.name,
+                source=Document.Source.UPLOAD,
+                department=departments[0] if departments else None,
+                owner=user,
+                visibility=visibility,
+                correspondent=correspondent,
+            )
+        else:
+            result = ingest_file(
+                uploaded_file,
+                filename=uploaded_file.name,
+                source=Document.Source.UPLOAD,
+                department=departments[0] if departments else None,
+                owner=user,
+                visibility=visibility,
+                content_type=uploaded_file.content_type or "",
+                correspondent=correspondent,
+            )
     except Exception:
         logger.exception("Upload: Ingest fehlgeschlagen für %s", uploaded_file.name)
         return {

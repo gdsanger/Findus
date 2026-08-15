@@ -130,6 +130,64 @@ class ExtractDocumentTextLayerTests(TestCase):
         self.assertEqual(result.extraction_method, Document.ExtractionMethod.TEXT_LAYER)
         self.assertIn("deutscher Testsatz", result.text_content)
 
+    def test_eml_prefers_plain_text_over_html(self):
+        from email.message import EmailMessage
+
+        message = EmailMessage()
+        message["Subject"] = "Hallo"
+        message["From"] = "anna@example.com"
+        message.set_content(_GERMAN_PARAGRAPH)
+        message.add_alternative(f"<p>{_GERMAN_PARAGRAPH}</p><b>fett</b>", subtype="html")
+        document = _make_document(
+            filename="mail.eml", data=message.as_bytes(), mime_type="message/rfc822"
+        )
+
+        result = extract_document(document.id, vision_provider=FakeVisionProvider())
+
+        self.assertEqual(result.extraction_method, Document.ExtractionMethod.TEXT_LAYER)
+        self.assertEqual(result.text_content.strip(), _GERMAN_PARAGRAPH)
+        self.assertNotIn("<b>", result.text_content)
+
+    def test_eml_without_plain_text_converts_html_to_readable_text(self):
+        from email.message import EmailMessage
+
+        message = EmailMessage()
+        message["Subject"] = "Nur HTML"
+        message["From"] = "anna@example.com"
+        message.set_content(
+            f"<html><body><p>{_GERMAN_PARAGRAPH}</p></body></html>",
+            subtype="html",
+        )
+        document = _make_document(
+            filename="mail.eml", data=message.as_bytes(), mime_type="message/rfc822"
+        )
+
+        result = extract_document(document.id, vision_provider=FakeVisionProvider())
+
+        self.assertIn("deutscher Testsatz", result.text_content)
+        self.assertNotIn("<p>", result.text_content)
+        self.assertNotIn("<html>", result.text_content)
+
+    def test_eml_keeps_quoted_history_unlike_mail_body_cleaning(self):
+        """Anders als `mail_body.clean_body()` (Ingest der IMAP/Graph-Mails)
+        schneidet die `.eml`-Extraktion zitierte Vorgaengermails NICHT ab
+        (Anforderung #1133/#4) -- die Originaldatei soll vollstaendig
+        durchsuchbar bleiben."""
+        from email.message import EmailMessage
+
+        body = f"{_GERMAN_PARAGRAPH}\n\n> Am 01.01.2026 schrieb Anna:\n> alter Verlauf hier drin"
+        message = EmailMessage()
+        message["Subject"] = "Antwort"
+        message["From"] = "anna@example.com"
+        message.set_content(body)
+        document = _make_document(
+            filename="mail.eml", data=message.as_bytes(), mime_type="message/rfc822"
+        )
+
+        result = extract_document(document.id, vision_provider=FakeVisionProvider())
+
+        self.assertIn("alter Verlauf hier drin", result.text_content)
+
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
 @override_settings(FINDUS_EXTRACTION_MIN_CHARS_PER_PAGE=20, FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE=60)

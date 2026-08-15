@@ -19,7 +19,7 @@ from django.conf import settings
 
 from apps.accounts.models import Department
 from apps.documents.models import Document
-from apps.ingest.service import ingest_file
+from apps.ingest.service import ingest_eml_file, ingest_file, sniff_mime_type
 
 logger = logging.getLogger(__name__)
 
@@ -107,15 +107,30 @@ def scan_folder(folder: WatchFolder) -> None:
 
         try:
             with file_path.open("rb") as fileobj:
-                result = ingest_file(
-                    fileobj,
-                    filename=file_path.name,
-                    source=Document.Source.FOLDER,
-                    department=department,
-                    visibility=folder.visibility,
-                    origin_metadata={"ingest_folder": str(folder.path)},
-                    on_duplicate=folder.on_duplicate,
-                )
+                mime_type = sniff_mime_type(fileobj, filename=file_path.name)
+                if mime_type == "message/rfc822":
+                    # `.eml` (#1133): Mail als Leitdokument, Anhaenge als
+                    # Unterdokumente -- derselbe Ingest-Kontrakt, nur ein
+                    # anderer Einstiegspunkt als eine gewoehnliche Datei.
+                    result = ingest_eml_file(
+                        fileobj,
+                        filename=file_path.name,
+                        source=Document.Source.FOLDER,
+                        department=department,
+                        visibility=folder.visibility,
+                        origin_metadata={"ingest_folder": str(folder.path)},
+                        on_duplicate=folder.on_duplicate,
+                    )
+                else:
+                    result = ingest_file(
+                        fileobj,
+                        filename=file_path.name,
+                        source=Document.Source.FOLDER,
+                        department=department,
+                        visibility=folder.visibility,
+                        origin_metadata={"ingest_folder": str(folder.path)},
+                        on_duplicate=folder.on_duplicate,
+                    )
             _move_with_unique_name(file_path, folder.processed_dir)
             logger.info(
                 "Ingest-Ordner: %s -> Document %s (created=%s, duplicate=%s)",
