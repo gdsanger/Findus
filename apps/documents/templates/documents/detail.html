@@ -137,30 +137,7 @@ werden muss.
                     KI-generiert – maßgeblich bleibt das Original.
                 </p>
                 <p class="findus-detail-summary-text">{{ document.summary }}</p>
-
-                <div class="findus-detail-keyfacts">
-                    <h3 class="findus-section-subtitle">
-                        Kern-Infos <span class="badge text-bg-info">KI-extrahiert</span>
-                    </h3>
-                    <dl class="findus-detail-meta-list">
-                        <div>
-                            <dt>Kontakt</dt>
-                            <dd>
-                                {% if document.correspondent %}{{ document.correspondent.name }}{% elif document.key_facts.sender_name %}{{ document.key_facts.sender_name }}{% else %}—{% endif %}
-                            </dd>
-                        </div>
-                        <div><dt>Datum</dt><dd>{{ document.document_date|date:"d.m.Y"|default:"—" }}</dd></div>
-                        <div><dt>Typ</dt><dd>{{ document.key_facts.document_type|default:"—" }}</dd></div>
-                        <div>
-                            <dt>Betrag/Frist</dt>
-                            <dd>
-                                {% if document.key_facts.amount %}{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}{% else %}—{% endif %}
-                                {% if document.key_facts.due_date %} · fällig {{ document.key_facts.due_date }}{% endif %}
-                            </dd>
-                        </div>
-                        <div><dt>Sprache</dt><dd>{{ document.metadata.language|language_label }}</dd></div>
-                    </dl>
-                </div>                
+                          
                 {% else %}
                 <p class="text-muted">
                     Noch keine KI-Zusammenfassung vorhanden. Es wird der Rohtext aus der Extraktion angezeigt.
