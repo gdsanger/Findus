@@ -84,6 +84,11 @@ nutzt diese Kachel nicht -- siehe `_search_results.html`.
                 {{ document.get_processing_status_display }}
             </span>
             {% include "documents/partials/_action_status_control.html" %}
+            {% if document.has_due_comment %}
+            <span class="badge text-bg-warning" title="Mindestens eine Wiedervorlage ist fällig">
+                Wiedervorlage fällig
+            </span>
+            {% endif %}
         </div>
     </div>
 

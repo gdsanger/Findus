@@ -1,0 +1,48 @@
+{% comment %}
+Eine einzelne Chronik-Zeile (#1125) -- eigenständig über `hx-target="#comment-
+{{ comment.pk }}"` swapbar, damit Bearbeiten/Abbrechen eines Eintrags die
+übrigen, gerade gelesenen Kommentare nicht verdrängt. Erwartet `document` +
+`comment` im Kontext.
+{% endcomment %}
+<div class="d-flex justify-content-between align-items-start gap-2 {% if comment.is_overdue %}border-start border-danger border-3 ps-2{% elif comment.is_due_today %}border-start border-warning border-3 ps-2{% endif %}">
+    <div>
+        <p class="mb-1" style="white-space: pre-wrap;">{{ comment.body }}</p>
+        <p class="mb-0 small text-muted">
+            {{ comment.author.get_username|default:"—" }}
+            ·
+            <span title="{{ comment.created_at|date:'d.m.Y H:i' }}">vor {{ comment.created_at|timesince }}</span>
+            {% if comment.follow_up_date %}
+            · Wiedervorlage: {{ comment.follow_up_date|date:"d.m.Y" }}
+            {% if comment.remind %}
+            <span
+                title="{% if comment.reminded_at %}Erinnerung versendet am {{ comment.reminded_at|date:'d.m.Y H:i' }}{% else %}Erinnerung aktiv{% endif %}"
+            >🔔</span>
+            {% endif %}
+            {% if comment.is_overdue %}
+            <span class="badge text-bg-danger">Überfällig</span>
+            {% elif comment.is_due_today %}
+            <span class="badge text-bg-warning">Heute fällig</span>
+            {% endif %}
+            {% endif %}
+        </p>
+    </div>
+    {% if comment.author_id == request.user.id %}
+    <div class="btn-group btn-group-sm flex-shrink-0" role="group">
+        <button
+            type="button"
+            class="btn btn-outline-secondary"
+            hx-get="{% url 'documents:document_comment_edit_form' document.pk comment.pk %}"
+            hx-target="#comment-{{ comment.pk }}"
+            hx-swap="innerHTML"
+        >Bearbeiten</button>
+        <button
+            type="button"
+            class="btn btn-outline-danger"
+            hx-post="{% url 'documents:document_comment_delete' document.pk comment.pk %}"
+            hx-target="#document-comments"
+            hx-swap="innerHTML"
+            hx-confirm="Kommentar wirklich löschen?"
+        >Löschen</button>
+    </div>
+    {% endif %}
+</div>

@@ -1,0 +1,60 @@
+{% load documents_extras %}
+{% if comments %}
+<ul class="list-group list-group-flush mb-2">
+    {% for comment in comments %}
+    <li id="comment-{{ comment.pk }}" class="list-group-item bg-transparent">
+        {% include "documents/partials/_comment_row.html" %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">Noch keine Kommentare.</p>
+{% endif %}
+
+{% comment %}
+Eigenes `id`-Scoping (#1125): `hx-include="#quick-create-comment"` fasst
+ausschließlich dieses Formular an. Ein Pflichtfeld (`body`), das über
+`hx-include` mit einem fremden Formular geteilt würde, würde bei leerem
+Fremdfeld still `htmx:validation:halted` auslösen -- kein Request, toter
+Button, ohne dass im Kommentar-Block selbst etwas falsch wäre.
+{% endcomment %}
+<div class="findus-quick-create" id="quick-create-comment">
+    {% if comment_form.errors %}
+    <div class="findus-quick-create-error text-danger small w-100">
+        {% for field in comment_form %}
+        {% for error in field.errors %}<div>{{ field.label }}: {{ error }}</div>{% endfor %}
+        {% endfor %}
+    </div>
+    {% endif %}
+    <textarea
+        name="body"
+        class="form-control form-control-sm"
+        rows="2"
+        placeholder="Neuer Kommentar …"
+    >{% if comment_form %}{{ comment_form.body.value|default_if_none:"" }}{% endif %}</textarea>
+    <input
+        type="date"
+        name="follow_up_date"
+        class="form-control form-control-sm"
+        aria-label="Wiedervorlage"
+        value="{% if comment_form %}{{ comment_form.follow_up_date.value|default_if_none:"" }}{% endif %}"
+    >
+    <div class="form-check form-check-inline">
+        <input
+            type="checkbox"
+            name="remind"
+            id="comment-remind"
+            class="form-check-input"
+            {% if comment_form.remind.value %}checked{% endif %}
+        >
+        <label class="form-check-label" for="comment-remind">Erinnern</label>
+    </div>
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        hx-post="{% url 'documents:document_comment_create' document.pk %}"
+        hx-include="#quick-create-comment"
+        hx-target="#document-comments"
+        hx-swap="innerHTML"
+    >+ Kommentar hinzufügen</button>
+</div>

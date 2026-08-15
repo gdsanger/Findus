@@ -1,0 +1,51 @@
+{% comment %}
+Bearbeiten-Ansicht eines einzelnen Kommentars (#1125) -- eigenständiges
+`<form>` statt eines geteilten `hx-include`-Ziels wie beim Quick-Create:
+Speichern/Abbrechen betreffen ausschließlich diese eine Zeile
+(`#comment-{{ comment.pk }}`), die übrige Chronik bleibt unberührt. Erwartet
+`document`, `comment`, `form` im Kontext.
+{% endcomment %}
+<form
+    hx-post="{% url 'documents:document_comment_update' document.pk comment.pk %}"
+    hx-target="#comment-{{ comment.pk }}"
+    hx-swap="innerHTML"
+>
+    {% if form.errors %}
+    <div class="findus-quick-create-error text-danger small mb-1">
+        {% for field in form %}
+        {% for error in field.errors %}<div>{{ field.label }}: {{ error }}</div>{% endfor %}
+        {% endfor %}
+    </div>
+    {% endif %}
+    <textarea name="body" class="form-control form-control-sm mb-1" rows="2">{{ form.body.value|default_if_none:"" }}</textarea>
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+        <input
+            type="date"
+            name="follow_up_date"
+            class="form-control form-control-sm"
+            style="max-width: 10rem;"
+            aria-label="Wiedervorlage"
+            value="{{ form.follow_up_date.value|default_if_none:"" }}"
+        >
+        <div class="form-check form-check-inline mb-0">
+            <input
+                type="checkbox"
+                name="remind"
+                id="comment-remind-{{ comment.pk }}"
+                class="form-check-input"
+                {% if form.remind.value %}checked{% endif %}
+            >
+            <label class="form-check-label" for="comment-remind-{{ comment.pk }}">Erinnern</label>
+        </div>
+    </div>
+    <div class="btn-group btn-group-sm">
+        <button type="submit" class="btn btn-outline-secondary">Speichern</button>
+        <button
+            type="button"
+            class="btn btn-outline-secondary"
+            hx-get="{% url 'documents:document_comment_cancel_edit' document.pk comment.pk %}"
+            hx-target="#comment-{{ comment.pk }}"
+            hx-swap="innerHTML"
+        >Abbrechen</button>
+    </div>
+</form>

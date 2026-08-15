@@ -1,3 +1,4 @@
+import datetime
 import io
 import shutil
 import tempfile
@@ -10,6 +11,7 @@ from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import Department
 from apps.ai.providers.base import EmbeddingResult
@@ -18,6 +20,7 @@ from .models import (
     Chunk,
     Correspondent,
     Document,
+    DocumentComment,
     DocumentLink,
     SuggestionStatus,
     Tag,
@@ -269,6 +272,75 @@ class DocumentListViewTests(TestCase):
 
         self.assertContains(response, 'id="filter-action-status"')
         self.assertContains(response, 'name="action_status"')
+
+    def test_filter_bar_includes_follow_up_dropdown(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, 'id="filter-follow-up"')
+        self.assertContains(response, 'name="follow_up"')
+
+    def test_filter_by_follow_up_due_excludes_document_without_due_comment(self):
+        """Covers requirement #2 (#1125): "fällig" narrows to documents with
+
+        at least one comment whose `follow_up_date` has arrived, same
+        "filters narrow, never widen" principle as every other filter here.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"), {"follow_up": "due"})
+
+        self.assertNotContains(response, "Rechnung Acme")
+
+    def test_filter_by_follow_up_due_includes_document_with_overdue_comment(self):
+        DocumentComment.objects.create(
+            document=self.own_doc,
+            body="Kündigungsfrist prüfen",
+            follow_up_date=timezone.localdate() - datetime.timedelta(days=1),
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"), {"follow_up": "due"})
+
+        self.assertContains(response, "Rechnung Acme")
+
+    def test_filter_by_follow_up_due_excludes_future_follow_up(self):
+        DocumentComment.objects.create(
+            document=self.own_doc,
+            body="Verlängerung prüfen",
+            follow_up_date=timezone.localdate() + datetime.timedelta(days=30),
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"), {"follow_up": "due"})
+
+        self.assertNotContains(response, "Rechnung Acme")
+
+    def test_multiple_due_comments_do_not_duplicate_the_document_row(self):
+        """Two due comments on the same document must still surface it
+
+        exactly once -- the `Exists`/`distinct()` annotation guards against
+        the join fan-out a plain `filter(comments__...)` would cause. Counts
+        table rows (`<tr>`), same technique as
+        `test_child_document_does_not_get_its_own_top_level_row`: one header
+        row plus one data row, not two data rows for the same document.
+        """
+        DocumentComment.objects.create(
+            document=self.own_doc,
+            body="Erste Wiedervorlage",
+            follow_up_date=timezone.localdate(),
+        )
+        DocumentComment.objects.create(
+            document=self.own_doc,
+            body="Zweite Wiedervorlage",
+            follow_up_date=timezone.localdate(),
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:home"), {"follow_up": "due", "view": ""}, HTTP_HX_REQUEST="true"
+        )
+
+        self.assertEqual(response.content.count(b"<tr>"), 2)
 
     def test_filter_by_sphere_excludes_non_matching(self):
         self.own_doc.sphere = Document.Sphere.PRIVAT
@@ -663,6 +735,36 @@ class DocumentGridViewTests(TestCase):
 
         self.assertContains(response, reverse("documents:delete", args=[self.doc.id]))
         self.assertContains(response, "dropdown-item text-danger")
+
+    def test_card_shows_due_comment_indicator(self):
+        DocumentComment.objects.create(
+            document=self.doc,
+            body="Kündigungsfrist prüfen",
+            follow_up_date=timezone.localdate(),
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "Wiedervorlage fällig")
+
+    def test_card_hides_due_comment_indicator_without_due_comment(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "Wiedervorlage fällig")
+
+    def test_card_hides_due_comment_indicator_for_future_follow_up(self):
+        DocumentComment.objects.create(
+            document=self.doc,
+            body="Verlängerung prüfen",
+            follow_up_date=timezone.localdate() + datetime.timedelta(days=30),
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "Wiedervorlage fällig")
 
 
 class DocumentSearchViewTests(TestCase):

@@ -515,6 +515,12 @@ FINDUS_AI_PROVIDERS = {
 FINDUS_MAIL_BACKEND = env("FINDUS_MAIL_BACKEND", "smtp")
 FINDUS_MAIL_FROM_ADDRESS = env("FINDUS_MAIL_FROM_ADDRESS", "findus@localhost")
 
+# Absolute Basis-URL fuer Links in Benachrichtigungsmails (#1125) -- ein
+# Hintergrundjob hat keinen `request`, aus dem sich `build_absolute_uri`
+# speisen liesse, deshalb ein eigenes, explizit konfiguriertes Setting statt
+# eines aus ALLOWED_HOSTS geratenen Schemas/Hosts.
+FINDUS_BASE_URL = env("FINDUS_BASE_URL", "http://localhost:8000")
+
 FINDUS_MAIL_TIMEOUT_SECONDS = float(env("FINDUS_MAIL_TIMEOUT_SECONDS", "30"))
 FINDUS_MAIL_MAX_RETRIES = int(env("FINDUS_MAIL_MAX_RETRIES", "3"))
 FINDUS_MAIL_RETRY_BACKOFF_SECONDS = float(env("FINDUS_MAIL_RETRY_BACKOFF_SECONDS", "0.5"))
