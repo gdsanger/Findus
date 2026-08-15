@@ -87,6 +87,24 @@ Funktion.
 - HTMX-Swap-Verträge sind bindend: `#document-list-region` für die
   Dokumentliste, `#comment-<pk>` für den Einzel-Swap je Kommentar. Partials
   bleiben klein und einzeln austauschbar.
+- **Ein Swap-Partial rahmt sich nicht selbst ein.** Card-/Section-Rahmen
+  gehören in die einbindende Seite, *um* die Swap-Region herum, nie in das
+  Partial, das in sie hineingetauscht wird. Zwei Gründe, beide schon
+  passiert: der Pending-Poller in `_document_list.html` tauscht sich per
+  `hx-swap="outerHTML"` gegen genau diese Antwort aus — ein Rahmen im
+  Partial läge nach jedem 4-Sekunden-Lauf eine Ebene tiefer in der vorigen
+  Card; und ein Rahmen innerhalb eines `{% if %}` geht im leeren Zweig gar
+  nicht erst auf, dessen `</div>` aber trotzdem zu. Am Rahmen der Seite
+  hängen zudem automatisch alle Partials, die in dieselbe Region kommen
+  können (`_document_list`, `_document_followups`, `_search_results`).
+- Hub-Seiten (Vorgang, Kontakt, Tag) teilen ein Layout: Aktionszeile oben,
+  darunter `col-lg-3` Stammdaten (dauerhaft offenes Formular, Chips und
+  Kennzahlen im `card-footer`) neben `col-lg-9` Dokumentbereich. Immer
+  `col-lg-*`, nie nacktes `col-*` — sonst bleibt die Stammdatenspalte auch
+  auf dem Telefon ein Viertel breit und ihre Felder unbedienbar.
+- Wer ein Collapse/Tab auflöst, entfernt auch seinen Auslöser: ein Button
+  mit `data-bs-target` auf eine nicht mehr existierende ID ist wieder ein
+  „toter Button" — er tut sichtbar nichts und meldet nichts.
 - Formulare je Bereich isolieren — ein leeres Pflichtfeld in einem inaktiven
   Tab/Formular löst sonst still `htmx:validation:halted` aus und der Button
   im aktiven Tab tut scheinbar nichts (#1103, „toter Button").
@@ -105,7 +123,10 @@ Damit es niemand „nachrüstet":
   Aktenplan, keine Versionierung, keine Freigabe-Workflows, keine
   Aufbewahrungsfristen, kein Peer-to-Peer-Teilen.
 - Aufgaben (`Task`) sind auf dem Rückzug; neue Funktionalität hängt an
-  Dokument-Kommentaren, nicht an Aufgaben.
+  Dokument-Kommentaren, nicht an Aufgaben. Der Vorgang-Hub listet deshalb
+  keine „Verknüpften Aufgaben" mehr — was aus einer Handlungsempfehlung
+  übernommen wurde, verlinkt das Empfehlungs-Panel selbst („Aufgabe
+  öffnen").
 
 ## Pflegeregel
 

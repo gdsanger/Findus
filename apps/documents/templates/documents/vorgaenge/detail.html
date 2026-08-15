@@ -3,58 +3,62 @@
 {% block title %}{{ vorgang.name }} – Vorgang – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title=vorgang.name %}
-<section class="findus-section">
-    <div class="findus-hub-actions">               
-                {% comment %}
-                Zweiter Einstieg in den Brief-Assistenten (#1095) -- ohne
-                Bezugsdokument, dafür mit dem Vorgang als Kontext.
-                {% endcomment %}
-                <a
-                    class="btn btn-sm btn-outline-secondary"
-                    href="{% url 'documents:letter_draft_start' %}?vorgang={{ vorgang.pk }}"
+
+<section class="findus-section findus-hub-actions">
+    {% comment %}
+    Zweiter Einstieg in den Brief-Assistenten (#1095) -- ohne
+    Bezugsdokument, dafür mit dem Vorgang als Kontext.
+    {% endcomment %}
+    <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{% url 'documents:letter_draft_start' %}?vorgang={{ vorgang.pk }}"
+    >
+        Schreiben erstellen
+    </a>
+    {# Fokus-Graph (#1091) mit diesem Vorgang als Startknoten. #}
+    <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{% url 'documents:graph' %}?type=vorgang&amp;id={{ vorgang.pk }}"
+    >
+        Im Graph anzeigen
+    </a>
+    <div class="dropdown d-inline-block">
+        <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
+            aria-label="Weitere Aktionen"
+        >
+            &hellip;
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li>
+                <form
+                    method="post"
+                    action="{% url 'documents:vorgang_delete' vorgang.pk %}"
+                    onsubmit="return confirm('Vorgang „{{ vorgang.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
                 >
-                    Schreiben erstellen
-                </a>
-                {# Fokus-Graph (#1091) mit diesem Vorgang als Startknoten. #}
-                <a
-                    class="btn btn-sm btn-outline-secondary"
-                    href="{% url 'documents:graph' %}?type=vorgang&amp;id={{ vorgang.pk }}"
-                >
-                    Im Graph anzeigen
-                </a>
-            
-                <div class="dropdown d-inline-block">
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-outline-secondary"
-                        data-bs-toggle="dropdown"
-                        aria-expanded="false"
-                        aria-label="Weitere Aktionen"
-                    >
-                        &hellip;
-                    </button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li>
-                            <form
-                                method="post"
-                                action="{% url 'documents:vorgang_delete' vorgang.pk %}"
-                                onsubmit="return confirm('Vorgang „{{ vorgang.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
-                            >
-                                {% csrf_token %}
-                                <button type="submit" class="dropdown-item text-danger">Löschen</button>
-                            </form>
-                        </li>
-                    </ul>
-                </div>
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item text-danger">Löschen</button>
+                </form>
+            </li>
+        </ul>
     </div>
 </section>
-<div class="row">
-    <div class="col-3">
-     
+
+{% comment %}
+Zweispaltiger Hub: links die dauerhaft offenen Stammdaten (kein
+Collapse-Umweg mehr), rechts alles Dokumentbezogene. `col-lg-*` statt
+`col-*`, sonst bliebe die Stammdaten-Spalte auch auf dem Telefon bei
+einem Viertel Breite stehen und die Formularfelder wären unbedienbar.
+{% endcomment %}
+<div class="row g-3">
+    <div class="col-12 col-lg-3">
         <div class="card">
             <div class="card-header">Vorgangsdaten</div>
             <div class="card-body">
-                <form method="post" class="findus-card findus-task-form">
+                <form method="post" class="findus-task-form">
                     {% csrf_token %}
                     {% include "documents/partials/_form_fields.html" %}
                     <div class="findus-detail-meta-edit-actions">
@@ -63,57 +67,70 @@
                 </form>
             </div>
             <div class="card-footer">
-              
-                <span class="badge {{ vorgang.status|vorgang_status_badge_class }} fw-normal">{{ vorgang.get_status_display }}</span>
-                {% if vorgang.department %}<span class="badge text-bg-secondary fw-normal">{{ vorgang.department.name }}</span>{% endif %}
-            </div>         
+                <div class="findus-chip-row">
+                    <span class="badge {{ vorgang.status|vorgang_status_badge_class }} fw-normal">{{ vorgang.get_status_display }}</span>
+                    {% if vorgang.department %}<span class="badge text-bg-secondary fw-normal">{{ vorgang.department.name }}</span>{% endif %}
+                </div>
+                <dl class="findus-detail-meta-list mt-3 mb-0">
+                    <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
+                    <div><dt>Angelegt</dt><dd>{{ vorgang.created_at|date:"d.m.Y" }}</dd></div>
+                </dl>
+            </div>
         </div>
     </div>
-    <div class="col-9">
 
-        <div class="collapse{% if form.errors %} show{% endif %}" id="vorgangsdaten-edit">
-           
-        </div>
-
+    <div class="col-12 col-lg-9">
         <section class="findus-section">
             {% url 'documents:vorgang_upload' vorgang.pk as upload_url %}
             {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url compact=True %}
         </section>
 
-
-
-        {% include "documents/partials/_filter_bar.html" %}
-
-       
         <section class="findus-section">
-            <div id="document-list-region">
-                {% include "documents/partials/_document_list.html" %}
+            {% include "documents/partials/_filter_bar.html" %}
+        </section>
+
+        {% comment %}
+        Der Card-Rahmen steht *um* `#document-list-region`, nicht im
+        Listen-Partial: die Region ist das HTMX-Swap-Ziel (innerHTML), der
+        Rahmen überlebt so jeden Swap und gilt gleichermaßen für die
+        Wiedervorlagen-/Treffer-Partials, die hier ebenfalls landen können.
+        {% endcomment %}
+        <section class="findus-section">
+            <div class="card">
+                <div class="card-header">Dokumente</div>
+                <div class="card-body">
+                    <div id="document-list-region">
+                        {% include "documents/partials/_document_list.html" %}
+                    </div>
+                </div>
             </div>
         </section>
 
-
-
-        <div class="card">
-            <div class="card-header">Fallbezogene Kennungen</div>
-            <div class="card-body">
-                {% comment %}
-                Die fallbezogenen Kennungen dieses Vorgangs (#1100) -- Grundlage
-                dafür, dass ein neues Dokument mit derselben Nummer hier
-                vorgeschlagen wird.
-                {% endcomment %}
-                <div id="vorgang-references">
-                    {% include "documents/partials/_owner_references.html" %}
+        <section class="findus-section">
+            <div class="card">
+                <div class="card-header">Fallbezogene Kennungen</div>
+                <div class="card-body">
+                    {% comment %}
+                    Die fallbezogenen Kennungen dieses Vorgangs (#1100) -- Grundlage
+                    dafür, dass ein neues Dokument mit derselben Nummer hier
+                    vorgeschlagen wird. Das `id`-Div ist Pflicht: es ist das
+                    HTMX-Ziel von "+ Kennung hinzufügen"/"Entfernen" im Partial.
+                    {% endcomment %}
+                    <div id="vorgang-references">
+                        {% include "documents/partials/_owner_references.html" %}
+                    </div>
                 </div>
             </div>
-        </div>
+        </section>
 
-
-        <div class="card">
-            <div class="card-header">Handlungsempfehlungen</div>
-            <div class="card-body">
-            {% include "documents/partials/_vorgang_recommendations.html" %}
+        <section class="findus-section">
+            <div class="card">
+                <div class="card-header">Handlungsempfehlungen</div>
+                <div class="card-body">
+                    {% include "documents/partials/_vorgang_recommendations.html" %}
+                </div>
             </div>
-        </div>
+        </section>
     </div>
 </div>
 {% endblock %}

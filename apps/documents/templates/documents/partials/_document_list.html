@@ -1,8 +1,13 @@
 {% load documents_extras %}
+{% comment %}
+Kein Card-Rahmen in diesem Partial: der Rahmen sitzt in den einbindenden
+Seiten *um* `#document-list-region` herum. Innerhalb des Partials wäre er
+doppelt fehleranfällig -- der Pending-Poller unten tauscht sich per
+`outerHTML` gegen genau diese Antwort aus, würde also bei jedem Lauf eine
+weitere Card in die vorige schachteln, und im leeren Zweig unten ginge der
+Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
+{% endcomment %}
 {% if page_obj %}
- <div class="card">
-            <div class="card-header">Dokumente</div>
-                <div class="card-body">
 <div
     {% if has_pending %}
     hx-get="{{ list_url }}?{{ query_without_page }}&page={{ page_obj.number }}"
@@ -143,5 +148,3 @@
     {% endif %}
 </p>
 {% endif %}
-            </div>
-        </div>
