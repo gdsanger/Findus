@@ -123,10 +123,12 @@ Damit es niemand „nachrüstet":
   Aktenplan, keine Versionierung, keine Freigabe-Workflows, keine
   Aufbewahrungsfristen, kein Peer-to-Peer-Teilen.
 - Aufgaben (`Task`) sind auf dem Rückzug; neue Funktionalität hängt an
-  Dokument-Kommentaren, nicht an Aufgaben. Der Vorgang-Hub listet deshalb
-  keine „Verknüpften Aufgaben" mehr — was aus einer Handlungsempfehlung
-  übernommen wurde, verlinkt das Empfehlungs-Panel selbst („Aufgabe
-  öffnen").
+  Dokument-Kommentaren, nicht an Aufgaben. **Kein „Verknüpfte
+  Aufgaben"-Block mehr** — weder am Vorgang-Hub noch an der
+  Dokument-Detailseite, und damit auch keine Aufgaben-Schnellanlage von
+  dort. Aufgaben leben nur noch auf ihren eigenen Seiten (`/tasks/…`); was
+  aus einer Handlungsempfehlung übernommen wurde, verlinkt das
+  Empfehlungs-Panel selbst („Aufgabe öffnen").
 
 ## Pflegeregel
 

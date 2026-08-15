@@ -97,7 +97,6 @@ urlpatterns = [
     path("tags/<int:pk>/delete/", tag_views.tag_delete, name="tag_delete"),
     path("documents/upload/", views.document_upload, name="upload"),
     path("documents/<int:pk>/", views.document_detail, name="detail"),
-    path("documents/<int:pk>/tasks/create/", views.document_task_create, name="document_task_create"),
     path(
         "documents/<int:pk>/comments/create/",
         comment_views.document_comment_create,

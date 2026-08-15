@@ -979,7 +979,7 @@ class DocumentDetailViewTests(TestCase):
         for label in [
             "Details",
             "Kommentare",
-            "Verknüpfungen &amp; Kontext",
+            "Verknüpfungen",
             "Ähnliche Dokumente",
             "Unterdokumente",
         ]:
@@ -1158,8 +1158,19 @@ class DocumentDetailViewTests(TestCase):
 
     def test_summary_and_key_facts_are_shown_as_primary_view(self):
         """Covers #1024: once a KI-Analyse (#1020) has produced a summary,
-        it -- plus the Key-Facts panel -- is the primary view, not the raw
-        markdown/text.
+
+        it -- plus die Key-Facts -- ist die primäre Ansicht.
+
+        Die Key-Facts stehen seit dem Detail-Umbau nicht mehr in einem
+        eigenen Panel über der Zusammenfassung, sondern im Zuordnungs-Block:
+        Kontakt/Datum/Sprache als bearbeitbare Felder (das Datum deshalb
+        ISO-formatiert im `<input type="date">`, nicht mehr als `d.m.Y`),
+        Typ und Betrag/Frist als nicht editierbare Zeilen mit
+        "KI-extrahiert"-Badge. Der frühere Ausklapper "Volltext anzeigen"
+        ist mit dem Umbau entfallen -- das Original liegt daneben in der
+        Vorschau, der extrahierte Rohtext wird nur noch gezeigt, solange es
+        keine Zusammenfassung gibt (siehe
+        `test_fallback_to_raw_text_when_no_summary_yet`).
         """
         self.doc.markdown = "# Rechnung Acme\n\nBetrag: **123 EUR**"
         self.doc.summary = "Rechnung von Acme über 123 EUR, fällig am 01.02.2026."
@@ -1179,11 +1190,10 @@ class DocumentDetailViewTests(TestCase):
         self.assertContains(response, "Rechnung von Acme über 123 EUR, fällig am 01.02.2026.")
         self.assertContains(response, "KI-extrahiert")
         self.assertContains(response, "Rechnung")
-        self.assertContains(response, "15.01.2026")
+        self.assertContains(response, 'value="2026-01-15"')
         self.assertContains(response, "123 EUR")
         self.assertContains(response, "2026-02-01")
         self.assertContains(response, "KI-generiert")
-        self.assertContains(response, "Volltext anzeigen")
 
     def test_fallback_to_raw_text_when_no_summary_yet(self):
         """No KI-Analyse (#1020) has run yet -- the raw extraction result
@@ -1196,7 +1206,14 @@ class DocumentDetailViewTests(TestCase):
         self.assertContains(response, "Noch keine KI-Zusammenfassung vorhanden")
         self.assertContains(response, "Betrag: 123 EUR")
 
-    def test_linked_task_is_shown(self):
+    def test_detail_no_longer_lists_linked_tasks(self):
+        """Aufgaben sind auf dem Rückzug (CLAUDE.md): die Detailseite zeigt
+
+        keinen "Verknüpfte Aufgaben"-Block mehr, und der Aufruf lädt die
+        Aufgaben deshalb auch nicht mehr. Der Test hält beides fest -- der
+        Block, damit er nicht beim nächsten Umbau zurückkommt, und der
+        fehlende Kontext, damit die Query nicht still wieder mitläuft.
+        """
         task = Task.objects.create(title="Rechnung bezahlen", kind=Task.Kind.PAY)
         task.departments.add(self.dept_a)
         task.documents.add(self.doc)
@@ -1204,20 +1221,8 @@ class DocumentDetailViewTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertContains(response, "Rechnung bezahlen")
-
-    def test_task_outside_visibility_is_not_shown(self):
-        other_dept = Department.objects.create(name="Dept C")
-        task = Task.objects.create(
-            title="Privater Task", visibility=Task.Visibility.PRIVATE
-        )
-        task.departments.add(other_dept)
-        task.documents.add(self.doc)
-
-        self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
-
-        self.assertNotContains(response, "Privater Task")
+        self.assertNotContains(response, "Rechnung bezahlen")
+        self.assertNotIn("tasks", response.context)
 
     def test_correspondent_link_to_hub_is_shown(self):
         """Covers #1098: from the document, the Kontakt-Hub (#1041) should

@@ -17,7 +17,6 @@ from apps.ingest.service import ingest_file
 
 from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
-from .forms import TaskForm
 from .models import (
     Correspondent,
     Document,
@@ -26,7 +25,6 @@ from .models import (
     DocumentReference,
     SuggestionStatus,
     Tag,
-    Task,
     Vorgang,
     follow_up_week_end,
     link_documents,
@@ -41,7 +39,6 @@ from .reference_matching import (
 )
 from .references import set_reference, shared_reference_groups
 from .retrieval import DocumentRetrievalService
-from .task_views import task_departments_and_visibility
 
 FOLLOW_UP_FILTER_CHOICES = [
     ("due", "Nur fällige"),
@@ -459,17 +456,6 @@ def _visible_document(user, pk):
     )
 
 
-def _document_tasks_context(user, document, quick_create_form=None):
-    return {
-        "document": document,
-        "tasks": Task.objects.visible_to(user)
-        .filter(documents=document)
-        .prefetch_related("checklist_items"),
-        "task_kind_choices": Task.Kind.choices,
-        "quick_create_form": quick_create_form,
-    }
-
-
 def _children_context(user, document):
     visible_documents = Document.objects.visible_to(user)
     return {
@@ -826,7 +812,7 @@ def document_detail(request, pk):
     visible_documents = Document.objects.visible_to(request.user)
 
     context = {
-        **_document_tasks_context(request.user, document),
+        "document": document,
         **document_comments_context(request.user, document),
         **_analysis_status_context(document),
         **_children_context(request.user, document),
@@ -845,42 +831,6 @@ def document_detail(request, pk):
         **_meta_context(document),
     }
     return render(request, "documents/detail.html", context)
-
-
-@login_required
-@require_POST
-def document_task_create(request, pk):
-    """Create a Task straight from the document detail page (#1023) --
-
-    same quick-create-without-context-switch principle as
-    `document_meta_quick_create`, just producing a `Task` linked to this
-    document instead of assigning an existing Absender/Vorgang/Tag.
-
-    Validated through the same `TaskForm` as the full `/tasks/create/` flow
-    (#1045) -- building the `Task` straight from raw POST data let an
-    unparsable `due_date` reach `DateField.to_python` unvalidated at
-    `.save()` time and raise an uncaught `ValidationError` (500), instead of
-    a clean inline error next to the quick-create fields.
-    """
-    document = _visible_document(request.user, pk)
-    data = request.POST.copy()
-    data.setdefault("status", Task.Status.OPEN)
-    form = TaskForm(data)
-    if form.is_valid():
-        task = form.save(commit=False)
-        task.owner = request.user
-        departments, visibility = task_departments_and_visibility(request.user)
-        task.visibility = visibility
-        task.save()
-        task.departments.set(departments)
-        task.documents.add(document)
-        form = None
-
-    return render(
-        request,
-        "documents/partials/_detail_tasks.html",
-        _document_tasks_context(request.user, document, quick_create_form=form),
-    )
 
 
 def _stream_original(document, *, as_attachment):

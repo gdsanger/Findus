@@ -195,6 +195,41 @@ Klick-Trigger.
                 </div>
             </dd>
         </div>
+        {% comment %}
+        Kern-Infos aus der KI-Analyse (#1024). Sie standen bis zum
+        Detail-Umbau in einem eigenen "Kern-Infos"-Panel über der
+        Zusammenfassung; dessen übrige Zeilen (Kontakt, Datum, Sprache)
+        sind hier oben ohnehin schon -- und zwar direkt bearbeitbar, also
+        besser. Typ, Betrag und Frist hatten aber keine zweite Heimat und
+        wären mit dem Panel unsichtbar geworden, obwohl `key_facts` sie
+        weiterhin extrahiert und speichert. Deshalb hier, mit Badge: anders
+        als die Felder darüber sind sie nichts, was von Hand gepflegt wird.
+        {% endcomment %}
+        {% if document.key_facts.document_type or document.key_facts.amount or document.key_facts.due_date %}
+        <div class="findus-detail-meta-row">
+            <dt>Typ <span class="badge text-bg-info">KI-extrahiert</span></dt>
+            <dd>{{ document.key_facts.document_type|default:"—" }}</dd>
+        </div>
+        <div class="findus-detail-meta-row">
+            <dt>Betrag/Frist <span class="badge text-bg-info">KI-extrahiert</span></dt>
+            <dd>
+                {% comment %}
+                Betrag und Währung bleiben bewusst auf einer Zeile: ein
+                Umbruch dazwischen wäre zwar gerendert dasselbe (HTML faltet
+                Whitespace), stünde aber als "123\n EUR" im Markup -- und
+                damit fände eine Prüfung auf "123 EUR" den Betrag nicht mehr.
+                {% endcomment %}
+                {% if document.key_facts.amount %}
+                {{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}
+                {% else %}
+                —
+                {% endif %}
+                {% if document.key_facts.due_date %}
+                · fällig {{ document.key_facts.due_date }}
+                {% endif %}
+            </dd>
+        </div>
+        {% endif %}
         <div class="findus-detail-meta-row">
             <dt>Status</dt>
             <dd>{{ document.get_processing_status_display }}</dd>

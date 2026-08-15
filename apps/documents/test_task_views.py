@@ -471,10 +471,15 @@ class ChecklistItemViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-class DocumentTaskCreateViewTests(TestCase):
-    """Covers requirement #5 (#1023): a task can be created directly from
+class TaskDueDateParsingTests(TestCase):
+    """Datumsregeln von `TaskForm` (#1045).
 
-    the document detail page, already linked to that document.
+    Diese beiden Fälle hingen bis zum Wegfall des "Verknüpfte
+    Aufgaben"-Blocks am Schnellanlage-Endpunkt der Dokument-Detailseite.
+    Geprüft wird die Regel, nicht der Endpunkt -- sie gilt seither am
+    verbliebenen `/tasks/create/`, und der Grund dahinter (nie roh aus
+    `request.POST` ins Model, siehe CLAUDE.md "UI-Konventionen") betrifft
+    jeden Weg, auf dem eine Aufgabe entsteht.
     """
 
     def setUp(self):
@@ -482,62 +487,44 @@ class DocumentTaskCreateViewTests(TestCase):
         self.user_a = User.objects.create_user(username="alice", password="x")
         self.user_a.departments.add(self.dept_a)
 
-        self.document = Document.objects.create(title="Rechnung Acme")
-        self.document.departments.add(self.dept_a)
-
-    def test_creates_task_linked_to_document(self):
-        self.client.force_login(self.user_a)
-        response = self.client.post(
-            reverse("documents:document_task_create", args=[self.document.pk]),
-            {"title": "Rechnung zahlen", "kind": Task.Kind.PAY, "due_date": ""},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        task = Task.objects.get(title="Rechnung zahlen")
-        self.assertIn(self.document, task.documents.all())
-        self.assertEqual(task.owner, self.user_a)
-        self.assertContains(response, "Rechnung zahlen")
-
-    def test_blank_title_creates_nothing(self):
-        self.client.force_login(self.user_a)
-        response = self.client.post(
-            reverse("documents:document_task_create", args=[self.document.pk]),
-            {"title": "", "kind": Task.Kind.PAY, "due_date": ""},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(Task.objects.count(), 0)
-        self.assertContains(response, "Titel")
-
     def test_unparsable_due_date_shows_inline_error_instead_of_crashing(self):
-        """An unparsable `due_date` used to reach `DateField.to_python`
+        """Ein unparsbares `due_date` erreichte über ein rohes
 
-        unvalidated through a raw `Task.objects.create()` and raise an
-        uncaught `ValidationError` (500) -- it must now surface as a clean
-        form error on the still-intact "Verknüpfte Aufgaben" block.
+        `Task.objects.create()` ungeprüft `DateField.to_python` und warf
+        eine unbehandelte `ValidationError` (500). Es muss stattdessen als
+        Formularfehler zurückkommen.
         """
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("documents:document_task_create", args=[self.document.pk]),
-            {"title": "Rechnung zahlen", "kind": Task.Kind.PAY, "due_date": "not-a-date"},
+            reverse("documents:task_create"),
+            {
+                "title": "Rechnung zahlen",
+                "kind": Task.Kind.PAY,
+                "status": Task.Status.OPEN,
+                "due_date": "not-a-date",
+            },
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Task.objects.count(), 0)
-        self.assertContains(response, "quick-create-task")
-        self.assertContains(response, "Rechnung zahlen")
+        self.assertTrue(response.context["form"].errors["due_date"])
 
     def test_german_formatted_due_date_is_accepted(self):
-        """`de-de` is the project locale (`LANGUAGE_CODE`), so `TaskForm`
+        """`de-de` ist die Projekt-Locale (`LANGUAGE_CODE`), `TaskForm`
 
-        parses `10.08.2026` the same way the full `/tasks/create/` form
-        does -- a raw `Task.objects.create(due_date="10.08.2026")` would
-        have rejected this as an invalid `DateField` value.
+        parst `10.08.2026` entsprechend -- ein rohes
+        `Task.objects.create(due_date="10.08.2026")` hätte den Wert als
+        ungültiges `DateField` abgelehnt.
         """
         self.client.force_login(self.user_a)
         self.client.post(
-            reverse("documents:document_task_create", args=[self.document.pk]),
-            {"title": "Rechnung zahlen", "kind": Task.Kind.PAY, "due_date": "10.08.2026"},
+            reverse("documents:task_create"),
+            {
+                "title": "Rechnung zahlen",
+                "kind": Task.Kind.PAY,
+                "status": Task.Status.OPEN,
+                "due_date": "10.08.2026",
+            },
         )
 
         task = Task.objects.get(title="Rechnung zahlen")
