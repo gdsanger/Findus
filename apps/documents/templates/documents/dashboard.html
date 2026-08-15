@@ -72,46 +72,48 @@
 
 <section class="findus-section">
     <div class="findus-hub-header">
-        <h2 class="findus-section-title mb-0">Aufgaben</h2>
-        <a href="{% url 'documents:task_list' %}" class="btn btn-sm btn-outline-secondary">Alle Aufgaben</a>
+        <h2 class="findus-section-title mb-0">Wiedervorlagen</h2>
+        <a href="{% url 'documents:home' %}?view=wiedervorlagen" class="btn btn-sm btn-outline-secondary">Alle Wiedervorlagen</a>
     </div>
-    <p class="text-muted">
-        {{ task_stats.open }} offen
-        {% if task_stats.overdue %}· <span class="text-danger">{{ task_stats.overdue }} überfällig</span>{% endif %}
-        {% if open_tasks %}· nächste Fälligkeit: {{ open_tasks.0.due_date|date:"d.m.Y"|default:"ohne Frist" }}{% endif %}
-    </p>
-    <div class="findus-card table-responsive p-0">
-        <table class="table table-hover align-middle mb-0">
-            <thead>
-                <tr>
-                    <th>Titel</th>
-                    <th>Art</th>
-                    <th>Fällig</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for task in open_tasks %}
-                <tr>
-                    <td><a href="{% url 'documents:task_detail' task.pk %}">{{ task.title }}</a></td>
-                    <td>{{ task.get_kind_display }}</td>
-                    <td>
-                        {% if task.due_date %}
-                        <span
-                            class="badge {% if task.due_date < today %}text-bg-danger{% elif task.due_date <= due_soon_until %}text-bg-warning{% else %}text-bg-secondary{% endif %}"
-                        >
-                            {{ task.due_date|date:"d.m.Y" }}
-                        </span>
-                        {% else %}
-                        —
-                        {% endif %}
-                    </td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="3" class="text-muted">Keine offenen Aufgaben.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+    {% if follow_ups %}
+    <ul class="findus-followup-items">
+        {% for entry in follow_ups %}
+        <li class="findus-followup-item{% if entry.is_overdue %} findus-followup-item--overdue{% elif entry.is_due_today %} findus-followup-item--today{% endif %}">
+            <div class="findus-followup-item-body">
+                <div class="findus-followup-item-header">
+                    <span class="findus-followup-item-date">{{ entry.follow_up_date|date:"d.m.Y" }}</span>
+                    {% if entry.is_overdue %}
+                    <span class="badge text-bg-danger">Überfällig</span>
+                    {% endif %}
+                    {% if entry.remind and entry.reminded_at %}
+                    <span class="badge text-bg-secondary" title="Erinnerungsmail wurde bereits verschickt">
+                        Erinnert
+                    </span>
+                    {% elif entry.remind %}
+                    <span class="badge text-bg-info" title="Erinnerungsmail ist geplant">
+                        Erinnerung geplant
+                    </span>
+                    {% endif %}
+                </div>
+                <p class="findus-followup-item-comment">{{ entry.body }}</p>
+                <div class="findus-followup-item-meta">
+                    <a class="findus-followup-item-title" href="{% url 'documents:detail' entry.document.pk %}">
+                        {{ entry.document.title }}
+                    </a>
+                    {% if entry.document.correspondent %}
+                    <a
+                        class="findus-followup-item-correspondent"
+                        href="{% url 'documents:correspondent_detail' entry.document.correspondent.pk %}"
+                    >{{ entry.document.correspondent.name }}</a>
+                    {% endif %}
+                </div>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">Keine offenen Wiedervorlagen.</p>
+    {% endif %}
 </section>
 
 <section class="findus-section">
