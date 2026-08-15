@@ -27,6 +27,9 @@
             class="findus-nav-link{% if request.resolver_match.url_name == 'home' and not request.GET.action_status %} active{% endif %}"
         >
             Dokumente
+            {% if due_follow_up_count %}
+            <span class="badge text-bg-warning findus-nav-badge" title="Überfällige und heute fällige Wiedervorlagen">{{ due_follow_up_count }}</span>
+            {% endif %}
         </a>
     </li>
     <li>

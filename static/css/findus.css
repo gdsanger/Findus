@@ -623,6 +623,120 @@ body {
     }
 }
 
+/* Wiedervorlagen-Ansicht (#1129) -- dokumentübergreifende Terminliste,
+   gruppiert nach Fälligkeit. Teilt sich Card-/Badge-Look mit der
+   Timeline-Ansicht (gleiche Variablen); "Überfällig" ist deutlich
+   hervorgehoben (Warnfarbe am Rand), "Später" gedämpft. Das Dashboard-Widget
+   (#1130) zeigt dieselben `.findus-followup-item`-Karten ungruppiert in
+   einer flachen Liste -- dafuer die `--overdue`/`--today`-Modifier direkt
+   am Item statt nur ueber die Gruppen-Klasse. */
+.findus-followups {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-5);
+}
+
+.findus-followup-group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+    margin: 0 0 var(--findus-space-3);
+    font-weight: 600;
+}
+
+.findus-followup-group--overdue .findus-followup-group-title {
+    color: var(--bs-danger);
+}
+
+.findus-followup-group--later {
+    opacity: 0.7;
+}
+
+.findus-followup-items {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.findus-followup-item {
+    display: flex;
+    gap: var(--findus-space-3);
+    padding: var(--findus-space-3) var(--findus-space-4);
+    background-color: var(--findus-surface);
+    border: 1px solid var(--findus-border);
+    border-left: 3px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+}
+
+.findus-followup-group--overdue .findus-followup-item,
+.findus-followup-item--overdue {
+    border-left-color: var(--bs-danger);
+}
+
+.findus-followup-group--today .findus-followup-item,
+.findus-followup-item--today {
+    border-left-color: var(--bs-warning);
+}
+
+.findus-followup-item-thumb {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    overflow: hidden;
+    background-color: var(--findus-surface-raised);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-sm);
+}
+
+.findus-followup-item-thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.findus-followup-item-thumb-placeholder {
+    color: var(--findus-text-muted);
+}
+
+.findus-followup-item-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.findus-followup-item-header {
+    display: flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+}
+
+.findus-followup-item-date {
+    font-weight: 600;
+}
+
+.findus-followup-item-comment {
+    margin: var(--findus-space-1) 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.findus-followup-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-2);
+    font-size: var(--findus-font-size-sm);
+}
+
+.findus-followup-item-correspondent {
+    color: var(--findus-text-muted);
+}
+
 /* Semantic search results ---------------------------------------------- */
 .findus-search-results {
     display: flex;

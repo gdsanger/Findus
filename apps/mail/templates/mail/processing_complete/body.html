@@ -1,6 +1,11 @@
-<p>Hallo,</p>
-<p>die Verarbeitung von <strong>{{ document_name }}</strong> ist abgeschlossen.</p>
+{% extends "mail/base_email.html" %}
+
+{% block content %}
+<h1 style="margin:0 0 12px 0; font-family:Arial,Helvetica,sans-serif; font-size:19px; font-weight:bold; color:#2b2a28;">Verarbeitung abgeschlossen</h1>
+<p style="margin:0 0 20px 0; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:1.5; color:#2b2a28;">Die Verarbeitung von <strong>{{ document_name }}</strong> ist abgeschlossen.</p>
 {% if document_url %}
-<p><a href="{{ document_url }}">Dokument ansehen</a></p>
+{% include "mail/_button.html" with url=document_url label="Dokument ansehen" %}
 {% endif %}
-<p>-- Findus</p>
+{% endblock %}
+
+{% block footer_reason %}Du bekommst diese Nachricht, weil Findus die Verarbeitung dieses Dokuments für dich abgeschlossen hat.{% endblock %}

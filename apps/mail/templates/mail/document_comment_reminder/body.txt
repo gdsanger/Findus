@@ -2,7 +2,10 @@ Hallo,
 
 folgende Wiedervorlagen sind fällig:
 {% for item in items %}
-- {{ item.document_title }} ({{ item.follow_up_date|date:"d.m.Y" }}): {{ item.body }}
-  {{ item.document_url }}
+- {{ item.document_title }}{% if item.is_overdue %} (ÜBERFÄLLIG seit {{ item.follow_up_date|date:"d.m.Y" }}){% else %} (fällig heute, {{ item.follow_up_date|date:"d.m.Y" }}){% endif %}
+  {{ item.body }}
+  Dokument ansehen: {{ item.document_url }}
 {% endfor %}
--- Findus
+--
+Findus
+Du bekommst diese Nachricht, weil du zu diesem Dokument eine Wiedervorlage mit Erinnerung hinterlegt hast.

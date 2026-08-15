@@ -111,6 +111,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.documents.context_processors.open_action_status_count",
+                "apps.documents.context_processors.due_follow_up_count",
             ],
         },
     },
@@ -377,6 +378,15 @@ FINDUS_VORGANG_RECOMMENDATION_MAX_SUMMARY_CHARS = int(
 )
 FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS = int(
     env("FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS", "8")
+)
+
+# Wie viele der juengsten Kommentare (ueber alle Dokumente des Vorgangs
+# hinweg) zusaetzlich in den Prompt wandern (#1132) -- offene Wiedervorlagen
+# zaehlen dabei nicht mit und sind unabhaengig von ihrem Alter immer dabei
+# (apps.documents.recommendations._limited_comments), ein Vorgang mit
+# hundert Notizen soll den Prompt trotzdem nicht sprengen.
+FINDUS_VORGANG_RECOMMENDATION_MAX_COMMENTS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_MAX_COMMENTS", "30")
 )
 
 # Output-Budget für den Empfehlungs-Call (#1096). Die Antwort ist ein

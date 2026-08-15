@@ -11,11 +11,16 @@ from apps.ai.providers.fake import FakeGenerationProvider
 from .models import (
     Correspondent,
     Document,
+    DocumentComment,
     Vorgang,
     VorgangRecommendation,
     VorgangRecommendationRun,
 )
-from .recommendations import generate_vorgang_recommendations, is_stale_for
+from .recommendations import (
+    build_vorgang_comment_context,
+    generate_vorgang_recommendations,
+    is_stale_for,
+)
 
 User = get_user_model()
 
@@ -351,6 +356,50 @@ class VorgangRecommendationGenerationTests(TestCase):
         )
         self.assertIn("hoechstens 3 kurze Saetze", system_prompt)
 
+    def test_prompt_includes_comments_in_their_own_labeled_section(self):
+        DocumentComment.objects.create(
+            document=self.newer, body="Bereits am 12.08.2026 vollstaendig bezahlt."
+        )
+        provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
+
+        generate_vorgang_recommendations(
+            self.vorgang.pk, self.user.pk, generation_provider=provider
+        )
+
+        prompt = provider.calls[0][-1].content
+        self.assertIn("Notizen des Nutzers zu diesen Dokumenten", prompt)
+        self.assertIn("Bereits am 12.08.2026 vollstaendig bezahlt.", prompt)
+        self.assertLess(
+            prompt.index("Dokumente des Vorgangs"),
+            prompt.index("Notizen des Nutzers"),
+            "Notizen stehen als eigener Abschnitt hinter den Dokumentbloecken",
+        )
+
+    def test_comment_of_a_hidden_document_never_reaches_the_prompt(self):
+        hidden = self._document(
+            "Interne Notiz", datetime.date(2026, 7, 15), summary="geheim", visible=False
+        )
+        DocumentComment.objects.create(document=hidden, body="Darf niemand sehen.")
+        provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
+
+        generate_vorgang_recommendations(
+            self.vorgang.pk, self.user.pk, generation_provider=provider
+        )
+
+        prompt = provider.calls[0][-1].content
+        self.assertNotIn("Darf niemand sehen.", prompt)
+
+    def test_system_prompt_gives_notes_precedence_over_documents(self):
+        provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
+
+        generate_vorgang_recommendations(
+            self.vorgang.pk, self.user.pk, generation_provider=provider
+        )
+
+        system_prompt = provider.calls[0][0].content
+        self.assertIn("gilt die Notiz", system_prompt)
+        self.assertIn("bereits erledigt, empfiehl sie nicht erneut", system_prompt)
+
     def test_empty_basis_costs_no_generate_call(self):
         empty_vorgang = Vorgang.objects.create(name="Leerer Vorgang")
         provider = FakeGenerationProvider(reply=_reply(sources=[]))
@@ -362,6 +411,133 @@ class VorgangRecommendationGenerationTests(TestCase):
         self.assertEqual(provider.calls, [])
         self.assertEqual(run.status, VorgangRecommendationRun.Status.READY)
         self.assertEqual(run.recommendations.count(), 0)
+
+
+class VorgangCommentContextTests(TestCase):
+    """Covers `build_vorgang_comment_context` (#1132) in isolation --
+
+    Kontextaufbau, Kuerzung und Sichtbarkeit lassen sich hier pruefen, ohne
+    ein Modell aufzurufen (der Prompt-Inhalt wird geprueft, nicht die
+    Modellantwort).
+    """
+
+    def setUp(self):
+        self.department = Department.objects.create(name="Buchhaltung")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.department)
+
+        self.vorgang = Vorgang.objects.create(name="Forderung Acme")
+        self.document = Document.objects.create(
+            title="Rechnung 42",
+            document_date=datetime.date(2026, 7, 1),
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        self.document.departments.add(self.department)
+        self.document.vorgaenge.add(self.vorgang)
+
+    def test_no_comments_yield_no_section(self):
+        self.assertEqual(build_vorgang_comment_context([self.document], 30), [])
+
+    def test_comment_is_dated_titled_and_attributed_to_its_document(self):
+        DocumentComment.objects.create(
+            document=self.document, body="Am 12.08.2026 ueberwiesen."
+        )
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertIn("Notizen des Nutzers zu diesen Dokumenten", lines[1])
+        self.assertTrue(any("Am 12.08.2026 ueberwiesen." in line for line in lines))
+        self.assertTrue(any(self.document.title in line for line in lines))
+
+    def test_overdue_follow_up_is_labeled(self):
+        DocumentComment.objects.create(
+            document=self.document,
+            body="Nachfassen.",
+            follow_up_date=timezone.localdate() - datetime.timedelta(days=3),
+        )
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertTrue(any("(ueberfaellig)" in line for line in lines))
+
+    def test_follow_up_due_today_is_labeled(self):
+        DocumentComment.objects.create(
+            document=self.document,
+            body="Heute entscheiden.",
+            follow_up_date=timezone.localdate(),
+        )
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertTrue(any("(heute faellig)" in line for line in lines))
+
+    def test_future_follow_up_is_labeled_planned(self):
+        DocumentComment.objects.create(
+            document=self.document,
+            body="Rueckmeldung abwarten.",
+            follow_up_date=timezone.localdate() + datetime.timedelta(days=5),
+        )
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertTrue(any("(geplant)" in line for line in lines))
+
+    def test_comments_beyond_the_limit_are_dropped(self):
+        old = DocumentComment.objects.create(document=self.document, body="Alte Notiz.")
+        DocumentComment.objects.filter(pk=old.pk).update(
+            created_at=timezone.now() - datetime.timedelta(days=90)
+        )
+        DocumentComment.objects.create(document=self.document, body="Neue Notiz.")
+
+        lines = build_vorgang_comment_context([self.document], 1)
+
+        self.assertFalse(any("Alte Notiz." in line for line in lines))
+        self.assertTrue(any("Neue Notiz." in line for line in lines))
+
+    def test_open_follow_up_survives_the_limit_regardless_of_age(self):
+        old_planned = DocumentComment.objects.create(
+            document=self.document,
+            body="Alte, aber geplante Notiz.",
+            follow_up_date=timezone.localdate() + datetime.timedelta(days=1),
+        )
+        DocumentComment.objects.filter(pk=old_planned.pk).update(
+            created_at=timezone.now() - datetime.timedelta(days=90)
+        )
+        DocumentComment.objects.create(document=self.document, body="Neuere Notiz.")
+        DocumentComment.objects.create(document=self.document, body="Noch neuere Notiz.")
+
+        lines = build_vorgang_comment_context([self.document], 1)
+
+        self.assertTrue(any("Alte, aber geplante Notiz." in line for line in lines))
+
+    def test_author_is_omitted_when_there_is_only_one(self):
+        DocumentComment.objects.create(document=self.document, body="Notiz.", author=self.user)
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertFalse(any(self.user.get_username() in line for line in lines))
+
+    def test_author_is_shown_when_several_contributed(self):
+        other = User.objects.create_user(username="bob", password="x")
+        DocumentComment.objects.create(document=self.document, body="Notiz A.", author=self.user)
+        DocumentComment.objects.create(document=self.document, body="Notiz B.", author=other)
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertTrue(any(self.user.get_username() in line for line in lines))
+        self.assertTrue(any(other.get_username() in line for line in lines))
+
+    def test_comments_of_documents_outside_the_basis_are_excluded(self):
+        other_document = Document.objects.create(
+            title="Anderes Dokument", visibility=Document.Visibility.DEPARTMENT
+        )
+        other_document.departments.add(self.department)
+        other_document.vorgaenge.add(self.vorgang)
+        DocumentComment.objects.create(document=other_document, body="Fremde Notiz.")
+
+        lines = build_vorgang_comment_context([self.document], 30)
+
+        self.assertFalse(any("Fremde Notiz." in line for line in lines))
 
 
 class VorgangRecommendationStalenessTests(TestCase):

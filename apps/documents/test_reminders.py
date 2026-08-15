@@ -104,6 +104,32 @@ class SendDueCommentRemindersTests(TestCase):
         self.assertIn("Erste Wiedervorlage", sent.text_body)
         self.assertIn("Zweite Wiedervorlage", sent.text_body)
 
+    def test_overdue_and_due_today_are_distinguished_in_mail_body(self):
+        DocumentComment.objects.create(
+            document=self.document,
+            body="Heute fällig",
+            follow_up_date=self.today,
+            remind=True,
+            author=self.author,
+        )
+        other_document = Document.objects.create(title="Versicherung")
+        DocumentComment.objects.create(
+            document=other_document,
+            body="Bereits überfällig",
+            follow_up_date=self.today - datetime.timedelta(days=3),
+            remind=True,
+            author=self.author,
+        )
+
+        send_due_comment_reminders()
+
+        sent = self.fake_backend.sent[0]
+        self.assertIn("fällig heute", sent.text_body)
+        self.assertIn("ÜBERFÄLLIG", sent.text_body)
+        self.assertIsNotNone(sent.html_body)
+        self.assertIn("Fällig heute", sent.html_body)
+        self.assertIn("Überfällig seit", sent.html_body)
+
     def test_comment_without_remind_is_not_sent(self):
         DocumentComment.objects.create(
             document=self.document,

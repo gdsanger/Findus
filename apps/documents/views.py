@@ -28,6 +28,7 @@ from .models import (
     Tag,
     Task,
     Vorgang,
+    follow_up_week_end,
     link_documents,
     normalize_reference_value,
     tax_relevance_filter_q,
@@ -59,33 +60,20 @@ PENDING_STATUSES = {
 }
 
 
-def filtered_documents(request):
-    """Apply the combinable Absender/Vorgang/Tag/Status filters (#1014) on
-    top of the visibility scope -- filters narrow what's already visible,
-    they never widen it.
+def _combinable_document_filters(request, documents):
+    """Apply the combinable Absender/Vorgang/Tag/Status/Richtung/Sphäre/
 
-    Structured browsing shows only Leitdokumente (`.roots()`, #1069) --
-    Unterdokumente hängen eingeklappt darunter (see `_document_list.html`)
-    statt als eigene Top-Level-Zeile aufzutauchen. Semantic search
-    (`_search_hits`) intentionally does *not* use this: a hit inside a
-    Unterdokument must surface on its own there.
+    Steuerlich/Erledigung filters (#1014) on top of whatever base queryset
+    the caller already scoped -- filters narrow, they never widen. Shared
+    between `filtered_documents` (Kachel/Liste/Timeline) and
+    `_followup_entries` (Wiedervorlagen-Ansicht, #1129), which starts from a
+    differently scoped `Document`-Queryset but needs the exact same
+    narrowing.
+
+    Returns `(documents, vorgang_id, tag_id)` -- the two ids are handed back
+    because `filtered_documents` needs them again to decide whether a
+    `.distinct()` is required for its M2M-join fan-out.
     """
-    documents = (
-        Document.objects.visible_to(request.user)
-        .roots()
-        .select_related("correspondent")
-        .prefetch_related(
-            "vorgaenge",
-            "tags",
-            Prefetch(
-                "children",
-                queryset=Document.objects.visible_to(request.user).select_related(
-                    "correspondent"
-                ),
-            ),
-        )
-    )
-
     correspondent_id = request.GET.get("correspondent", "").strip()
     if correspondent_id:
         documents = documents.filter(correspondent_id=correspondent_id)
@@ -117,6 +105,38 @@ def filtered_documents(request):
     action_status = request.GET.get("action_status", "").strip()
     if action_status:
         documents = documents.filter(action_status=action_status)
+
+    return documents, vorgang_id, tag_id
+
+
+def filtered_documents(request):
+    """Apply the combinable Absender/Vorgang/Tag/Status filters (#1014) on
+    top of the visibility scope -- filters narrow what's already visible,
+    they never widen it.
+
+    Structured browsing shows only Leitdokumente (`.roots()`, #1069) --
+    Unterdokumente hängen eingeklappt darunter (see `_document_list.html`)
+    statt als eigene Top-Level-Zeile aufzutauchen. Semantic search
+    (`_search_hits`) intentionally does *not* use this: a hit inside a
+    Unterdokument must surface on its own there.
+    """
+    documents = (
+        Document.objects.visible_to(request.user)
+        .roots()
+        .select_related("correspondent")
+        .prefetch_related(
+            "vorgaenge",
+            "tags",
+            Prefetch(
+                "children",
+                queryset=Document.objects.visible_to(request.user).select_related(
+                    "correspondent"
+                ),
+            ),
+        )
+    )
+
+    documents, vorgang_id, tag_id = _combinable_document_filters(request, documents)
 
     today = timezone.localdate()
     follow_up = request.GET.get("follow_up", "").strip()
@@ -182,13 +202,92 @@ def _search_hits(request, query):
     )
 
 
+def _followup_entries(request):
+    """`DocumentComment`-Queryset für `view=wiedervorlagen` (#1129): gelistet
+
+    wird der einzelne Wiedervorlage-Eintrag, nicht das Dokument -- ein
+    Dokument mit zwei Terminen taucht zweimal auf.
+
+    Ausgeschlossen bleiben Wiedervorlagen erledigter Dokumente
+    (`action_status=erledigt`): Kommentare kennen keinen eigenen
+    Erledigt-Status (#1125, siehe `DocumentComment`-Klassendoc), das
+    Dokument abzuhaken ist die einzige Geste, die die Liste aufräumt --
+    sonst bliebe jede je gesetzte Wiedervorlage für immer "überfällig"
+    stehen. `keine`/`offen` bleiben beide sichtbar: nur ein explizites
+    "erledigt" räumt auf.
+
+    Dieselben kombinierbaren Filter wie `filtered_documents` schränken ein,
+    welche Dokumente berücksichtigt werden; der `follow_up`("fällig")-Filter
+    ist hier redundant (die Gruppierung zeigt bereits alles) und wird
+    ignoriert.
+    """
+    documents = Document.objects.open_visible_to(request.user)
+    documents, _vorgang_id, _tag_id = _combinable_document_filters(request, documents)
+
+    return (
+        DocumentComment.objects.with_follow_up()
+        .filter(document__in=documents)
+        .select_related("document", "document__correspondent")
+        .order_by("follow_up_date", "created_at")
+    )
+
+
+FOLLOW_UP_GROUP_LABELS = (
+    ("overdue", "Überfällig"),
+    ("today", "Heute"),
+    ("this_week", "Diese Woche"),
+    ("later", "Später"),
+)
+
+
+def _grouped_follow_up_entries(entries):
+    """Bucket an already-fetched, ascending-by-`follow_up_date` page of
+
+    Wiedervorlage-Einträge into Überfällig/Heute/Diese Woche/Später (#1129)
+    -- computed here, not as Datumsarithmetik in the template, and against
+    the same week boundary (`follow_up_week_end`) the `due_this_week`/
+    `due_later` queryset filters use, so the rule lives in exactly one
+    place. Empty groups are dropped: in dieser Ansicht ist die Liste selbst
+    der Inhalt, nicht ein fester Rahmen wie bei den Detail-Tabs (#1126).
+    """
+    today = timezone.localdate()
+    week_end = follow_up_week_end(today)
+    buckets = {key: [] for key, _label in FOLLOW_UP_GROUP_LABELS}
+
+    for entry in entries:
+        if entry.follow_up_date < today:
+            buckets["overdue"].append(entry)
+        elif entry.follow_up_date == today:
+            buckets["today"].append(entry)
+        elif entry.follow_up_date <= week_end:
+            buckets["this_week"].append(entry)
+        else:
+            buckets["later"].append(entry)
+
+    return [
+        {"key": key, "label": label, "entries": buckets[key]}
+        for key, label in FOLLOW_UP_GROUP_LABELS
+        if buckets[key]
+    ]
+
+
 @login_required
 def document_list(request):
     query = request.GET.get("q", "").strip()
+    # Kachel (Default)/Liste/Timeline (#1087/#1124) oder Wiedervorlagen
+    # (#1129) -- eine Suche gewinnt immer: eine Ranking-Ansicht und eine
+    # Terminliste lassen sich nicht sinnvoll übereinanderlegen, `q` schaltet
+    # deshalb auf die Trefferliste zurück, auch wenn `view=wiedervorlagen`
+    # in der URL steht (siehe `_document_followups.html`).
+    view = request.GET.get("view", "grid").strip()
+    is_followup_view = not query and view == "wiedervorlagen"
 
     if query:
         results = _search_hits(request, query)
         result_partial = "documents/partials/_search_results.html"
+    elif is_followup_view:
+        results = _followup_entries(request)
+        result_partial = "documents/partials/_document_followups.html"
     else:
         results = filtered_documents(request)
         result_partial = "documents/partials/_document_list.html"
@@ -199,10 +298,11 @@ def document_list(request):
     query_without_page = request.GET.copy()
     query_without_page.pop("page", None)
 
-    # Search hits (query set) wrap Document in a SearchHit, not a bare
-    # Document -- polling only applies to the plain list, so this is only
-    # ever computed for that branch.
-    has_pending = not query and any(
+    # Search hits (query set) wrap Document in a SearchHit, and the
+    # Wiedervorlagen-Ansicht lists DocumentComment, not Document -- polling
+    # only applies to the plain Document list, so this is only ever computed
+    # for that branch.
+    has_pending = not query and not is_followup_view and any(
         document.processing_status in PENDING_STATUSES for document in page_obj
     )
 
@@ -225,6 +325,7 @@ def document_list(request):
         "tax_relevance_filter_choices": Document.tax_relevance_filter_choices(),
         "action_status_choices": Document.ActionStatus.choices,
         "follow_up_choices": FOLLOW_UP_FILTER_CHOICES,
+        "follow_up_groups": _grouped_follow_up_entries(page_obj) if is_followup_view else [],
         "selected": {
             "correspondent": request.GET.get("correspondent", ""),
             "vorgang": request.GET.get("vorgang", ""),
@@ -236,9 +337,10 @@ def document_list(request):
             "action_status": request.GET.get("action_status", ""),
             "follow_up": request.GET.get("follow_up", ""),
             # Kachel/Grid ist der Default (#1124); "" = Liste, "timeline" =
-            # Zeitleiste (#1087). Der Wert steuert nur die Darstellung im
-            # gemeinsamen Listen-Partial, nicht das Filtern/Sortieren.
-            "view": request.GET.get("view", "grid").strip(),
+            # Zeitleiste (#1087), "wiedervorlagen" = Terminliste (#1129). Der
+            # Wert steuert nur die Darstellung im gemeinsamen Listen-Partial,
+            # nicht das Filtern/Sortieren.
+            "view": view,
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,

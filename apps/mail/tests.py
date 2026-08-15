@@ -8,6 +8,7 @@ issue's acceptance criterion ("kein echter Versand im Test").
 
 from __future__ import annotations
 
+import datetime
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
@@ -85,6 +86,54 @@ class TemplatingTests(SimpleTestCase):
         # falls through to a template-name that only exists under mail/.
         with self.assertRaises(Exception):
             render_mail("does-not-exist", {})
+
+    def test_html_body_uses_shared_layout(self):
+        """Both templates extend `mail/base_email.html` (#1128) -- wordmark,
+
+        clickable CTA button and footer should show up in either rendering.
+        """
+        rendered = render_mail(
+            "processing_complete",
+            {"document_name": "Rechnung.pdf", "document_url": "https://findus.example/d/1"},
+        )
+        self.assertIn(">Findus<", rendered.html_body)
+        self.assertIn('href="https://findus.example/d/1"', rendered.html_body)
+        self.assertIn("Dokument ansehen", rendered.html_body)
+        self.assertIn(
+            "Du bekommst diese Nachricht, weil Findus die Verarbeitung", rendered.html_body
+        )
+
+    def test_reminder_html_distinguishes_overdue_from_due_today(self):
+        rendered = render_mail(
+            "document_comment_reminder",
+            {
+                "count": 2,
+                "items": [
+                    {
+                        "document_title": "Mietvertrag",
+                        "body": "Kündigungsfrist beachten",
+                        "follow_up_date": datetime.date(2026, 1, 1),
+                        "document_url": "https://findus.example/d/1",
+                        "is_overdue": True,
+                    },
+                    {
+                        "document_title": "Versicherung",
+                        "body": "Police prüfen",
+                        "follow_up_date": datetime.date(2026, 8, 15),
+                        "document_url": "https://findus.example/d/2",
+                        "is_overdue": False,
+                    },
+                ],
+            },
+        )
+        self.assertIn(">Findus<", rendered.html_body)
+        self.assertIn('href="https://findus.example/d/1"', rendered.html_body)
+        self.assertIn('href="https://findus.example/d/2"', rendered.html_body)
+        self.assertIn("Überfällig seit", rendered.html_body)
+        self.assertIn("Fällig heute", rendered.html_body)
+        self.assertIn(
+            "Du bekommst diese Nachricht, weil du zu diesem Dokument", rendered.html_body
+        )
 
 
 class SendNotificationServiceTests(SimpleTestCase):
