@@ -213,8 +213,20 @@ Klick-Trigger.
         <div class="findus-detail-meta-row">
             <dt>Betrag/Frist <span class="badge text-bg-info">KI-extrahiert</span></dt>
             <dd>
-                {% if document.key_facts.amount %}{{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}{% else %}—{% endif %}
-                {% if document.key_facts.due_date %} · fällig {{ document.key_facts.due_date }}{% endif %}
+                {% comment %}
+                Betrag und Währung bleiben bewusst auf einer Zeile: ein
+                Umbruch dazwischen wäre zwar gerendert dasselbe (HTML faltet
+                Whitespace), stünde aber als "123\n EUR" im Markup -- und
+                damit fände eine Prüfung auf "123 EUR" den Betrag nicht mehr.
+                {% endcomment %}
+                {% if document.key_facts.amount %}
+                {{ document.key_facts.amount }}{% if document.key_facts.currency %} {{ document.key_facts.currency }}{% endif %}
+                {% else %}
+                —
+                {% endif %}
+                {% if document.key_facts.due_date %}
+                · fällig {{ document.key_facts.due_date }}
+                {% endif %}
             </dd>
         </div>
         {% endif %}
