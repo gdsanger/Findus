@@ -4,6 +4,7 @@ import re
 import shutil
 import tempfile
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
@@ -11,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -1311,6 +1312,46 @@ class DocumentDetailViewTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[child.id]))
 
         self.assertNotContains(response, "Geheime Mail")
+
+
+class DocumentDetailLayoutCssTests(SimpleTestCase):
+    """Regression für #1127: die Tabs-Leiste im Detail-Grid muss direkt
+    unter der Zusammenfassung stehen bleiben, unabhängig von der Höhe der
+    rechten Vorschau oder des aktiven Tab-Inhalts.
+    """
+
+    def _read_css(self):
+        css_path = Path(settings.BASE_DIR) / "static" / "css" / "findus.css"
+        return css_path.read_text(encoding="utf-8")
+
+    def test_desktop_grid_has_trailing_filler_row_so_tabs_stay_content_sized(self):
+        css = self._read_css()
+
+        media_block = re.search(
+            r"@media \(min-width: 992px\)\s*\{\s*\.findus-detail-grid\s*\{(?P<body>.*?)\n    \}",
+            css,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            media_block, "Desktop-Regel für .findus-detail-grid nicht gefunden."
+        )
+        body = media_block.group("body")
+
+        # Ohne die dritte, leere Zeile verteilt der Grid-Algorithmus die
+        # Extrahöhe der hohen Vorschau auf die `tabs`-Zeile und schiebt sie
+        # damit nach unten (siehe #1127). `auto auto 1fr` hält Zusammenfassung
+        # und Tabs auf ihrer eigenen Content-Höhe.
+        self.assertIn("grid-template-rows: auto auto 1fr;", body)
+        self.assertIn('"summary preview"', body)
+        self.assertIn('"tabs    preview"', body)
+        self.assertIn('".       preview"', body)
+
+    def test_tabs_area_is_pinned_to_the_top_of_its_row(self):
+        css = self._read_css()
+
+        rule = re.search(r"\.findus-detail-tabs-area\s*\{(?P<body>.*?)\}", css, re.DOTALL)
+        self.assertIsNotNone(rule, ".findus-detail-tabs-area Regel nicht gefunden.")
+        self.assertIn("align-self: start;", rule.group("body"))
 
 
 class DocumentActionStatusViewTests(TestCase):
