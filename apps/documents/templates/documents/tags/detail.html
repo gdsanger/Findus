@@ -38,12 +38,16 @@
 
 {% comment %}
 Derselbe zweispaltige Hub-Aufbau wie Vorgang und Kontakt: links die
-dauerhaft offenen Stammdaten, rechts alles Dokumentbezogene. `col-lg-*`
-statt `col-*`, sonst bliebe die Stammdaten-Spalte auch auf dem Telefon bei
-einem Viertel Breite stehen und die Formularfelder wären unbedienbar.
+dauerhaft offenen Stammdaten, rechts alles Dokumentbezogene. Immer die
+volle Leiter `col-12 col-md-4 col-lg-3`, nie ein nacktes `col-*`:
+unterhalb `md` stapeln beide Spalten auf volle Breite (sonst bliebe die
+Stammdaten-Spalte auch auf dem Telefon bei einem Viertel Breite stehen und
+die Formularfelder wären unbedienbar), im `md`-Bereich steht sie auf einem
+Drittel statt auf einem Viertel, weil ihre Felder bei 3/12 auf ihre
+Mindestbreite von 10rem zusammenfallen; ab `lg` gilt das gewohnte 3/9.
 {% endcomment %}
 <div class="row g-3">
-    <div class="col-12 col-lg-3">
+    <div class="col-12 col-md-4 col-lg-3">
         <div class="card">
             <div class="card-header">Tagdaten</div>
             <div class="card-body">
@@ -69,7 +73,7 @@ einem Viertel Breite stehen und die Formularfelder wären unbedienbar.
         </div>
     </div>
 
-    <div class="col-12 col-lg-9">
+    <div class="col-12 col-md-8 col-lg-9">
         <section class="findus-section">
             {% include "documents/partials/_filter_bar.html" %}
         </section>

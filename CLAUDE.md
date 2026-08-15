@@ -114,10 +114,16 @@ Funktion.
   (`show_followup_view`) und ein dort gespeicherter Wert wird auf einem Hub
   ignoriert statt still auf die Tabelle zurückzufallen.
 - Hub-Seiten (Vorgang, Kontakt, Tag) teilen ein Layout: Aktionszeile oben,
-  darunter `col-lg-3` Stammdaten (dauerhaft offenes Formular, Chips und
-  Kennzahlen im `card-footer`) neben `col-lg-9` Dokumentbereich. Immer
-  `col-lg-*`, nie nacktes `col-*` — sonst bleibt die Stammdatenspalte auch
-  auf dem Telefon ein Viertel breit und ihre Felder unbedienbar.
+  darunter die Stammdaten (dauerhaft offenes Formular, Chips und Kennzahlen
+  im `card-footer`) neben dem Dokumentbereich. Die Spaltenbreiten sind eine
+  **vollständige Leiter**, nie ein nacktes `col-*`:
+  `col-12 col-md-4 col-lg-3` links, `col-12 col-md-8 col-lg-9` rechts.
+  Jede Stufe hat einen Grund: unterhalb `md` stapeln beide Spalten (bei
+  einem festen Viertel wäre die Stammdatenspalte am Telefon ~90 px breit und
+  ihre Felder unbedienbar), im `md`-Bereich ein Drittel statt ein Viertel
+  (bei 3/12 fallen die Felder auf ihre `min-width: 10rem` zusammen), ab `lg`
+  das gewohnte 3/9. Abgesichert in `test_contracts.py`
+  (`HubColumnsStackBeforeMdTests`).
 - Wer ein Collapse/Tab auflöst, entfernt auch seinen Auslöser: ein Button
   mit `data-bs-target` auf eine nicht mehr existierende ID ist wieder ein
   „toter Button" — er tut sichtbar nichts und meldet nichts.
