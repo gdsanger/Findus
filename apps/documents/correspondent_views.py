@@ -143,6 +143,11 @@ def correspondent_detail(request, pk):
         "show_search": False,
         "show_correspondent": False,
         "show_vorgang_filter": True,
+        # Die Wiedervorlagen-Ansicht (#1129) gibt es nur auf Home: sie listet
+        # DocumentComment statt Document und hat hier keine Entsprechung. Der
+        # Umschalter wird deshalb ausgeblendet statt einen Knopf anzubieten,
+        # der still auf die Tabelle zurückfällt (CLAUDE.md, "toter Button").
+        "show_followup_view": False,
         "vorgaenge": Vorgang.objects.all(),
         "tags": Tag.objects.all(),
         "status_choices": Document.ProcessingStatus.choices,
@@ -156,7 +161,10 @@ def correspondent_detail(request, pk):
             "direction": request.GET.get("direction", ""),
             "sphere": request.GET.get("sphere", ""),
             "tax_relevance": request.GET.get("tax_relevance", ""),
-            "view": request.GET.get("view", "timeline").strip(),
+            # Kachel ist der Default -- derselbe wie auf Home (#1124), damit
+            # die Ansicht beim Wechsel Home <-> Hub nicht springt. "" =
+            # Liste, "timeline" = Zeitleiste (#1087).
+            "view": request.GET.get("view", "grid").strip(),
         },
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,

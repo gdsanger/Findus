@@ -585,6 +585,29 @@ class DocumentTimelineViewTests(TestCase):
         self.assertContains(response, "findus-view-toggle")
         self.assertContains(response, 'name="view"')
 
+    def test_view_toggle_offers_the_wiedervorlagen_mode(self):
+        """Home ist die einzige Seite, die die Wiedervorlagen-Ansicht (#1129)
+        rendern kann -- nur hier gehört ihr Umschalter hin. Die Hub-Seiten
+        blenden ihn aus (Gegenstück-Tests in den Hub-Testdateien).
+        """
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, 'data-view-value="wiedervorlagen"')
+
+    def test_view_choice_is_persisted_under_its_own_storage_key(self):
+        """Die Ansicht ist eine Benutzereinstellung, kein Filter: sie liegt
+
+        unter einem eigenen localStorage-Schlüssel im gemeinsamen Partial --
+        nicht im Filter-State von Home, den die Hub-Seiten gar nicht haben.
+        Der Test hält fest, dass die Persistenz überhaupt ausgeliefert wird;
+        das Wiederherstellen selbst passiert im Browser.
+        """
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(response, "findus:documents:view")
+
     def test_timeline_view_groups_by_month(self):
         self.client.force_login(self.user)
         response = self.client.get(reverse("documents:home"), {"view": "timeline"})

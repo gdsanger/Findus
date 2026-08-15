@@ -97,6 +97,22 @@ Funktion.
   nicht erst auf, dessen `</div>` aber trotzdem zu. Am Rahmen der Seite
   hängen zudem automatisch alle Partials, die in dieselbe Region kommen
   können (`_document_list`, `_document_followups`, `_search_results`).
+- **Die Dokumentliste hat genau einen Ansicht-Default: Kachel.** Er gilt auf
+  Home *und* auf allen Hub-Seiten (`view=grid`); "" ist die Tabelle,
+  `timeline` die Zeitleiste, `wiedervorlagen` die Terminliste. Ein
+  abweichender Default in einer der vier Views lässt die Ansicht beim
+  Wechsel Home ↔ Hub springen, obwohl der Umschalter unverändert dasteht.
+- Die gewählte Ansicht ist **kein Filter, sondern eine Einstellung**: sie
+  liegt seitenübergreifend in `localStorage` unter `findus:documents:view`
+  (gepflegt in `_filter_bar.html`, damit die Hub-Seiten nichts nachbauen),
+  *nicht* im Filter-State von Home (`findus:documents:filters`). Ein `view`
+  in der URL gewinnt immer — geteilte Links, Zurück-Navigation und
+  Pagination müssen zeigen, was sie sagen; localStorage ist nur der
+  Einstieg ohne Parameter. „Filter zurücksetzen" setzt die Ansicht deshalb
+  auch nicht mit zurück. Nur Home kann die Wiedervorlagen-Ansicht rendern
+  (sie listet `DocumentComment`), deshalb erscheint ihr Umschalter nur dort
+  (`show_followup_view`) und ein dort gespeicherter Wert wird auf einem Hub
+  ignoriert statt still auf die Tabelle zurückzufallen.
 - Hub-Seiten (Vorgang, Kontakt, Tag) teilen ein Layout: Aktionszeile oben,
   darunter `col-lg-3` Stammdaten (dauerhaft offenes Formular, Chips und
   Kennzahlen im `card-footer`) neben `col-lg-9` Dokumentbereich. Immer

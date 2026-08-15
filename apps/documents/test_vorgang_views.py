@@ -265,6 +265,30 @@ class VorgangDetailViewTests(TestCase):
         self.assertNotContains(response, "Belege einreichen")
         self.assertNotIn("tasks", response.context)
 
+    def test_document_list_defaults_to_grid_view(self):
+        """Kachel ist auch auf dem Vorgang-Hub der Default (#1124) -- dieselbe
+
+        Ansicht wie auf Home, damit sie beim Wechsel Home <-> Hub nicht
+        springt. Die Zeitleiste bleibt über den Umschalter erreichbar.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+
+        self.assertContains(response, "findus-doc-grid")
+        self.assertContains(response, "Rechnung Acme")
+        self.assertNotContains(response, "findus-timeline\"")
+
+    def test_view_toggle_hides_the_wiedervorlagen_mode(self):
+        """Die Wiedervorlagen-Ansicht (#1129) listet DocumentComment und gibt
+        es nur auf Home -- der Umschalter wird hier ausgeblendet statt einen
+        Knopf anzubieten, der still auf die Tabelle zurückfällt.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+
+        self.assertContains(response, 'data-view-value="grid"')
+        self.assertNotContains(response, 'data-view-value="wiedervorlagen"')
+
     def test_document_list_offers_timeline_view(self):
         """The Vorgang hub reuses the shared document-list block (#1087) --
 

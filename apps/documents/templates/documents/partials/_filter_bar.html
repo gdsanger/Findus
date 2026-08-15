@@ -142,12 +142,14 @@
                 data-view-value="timeline"
                 aria-pressed="{% if selected.view == "timeline" %}true{% else %}false{% endif %}"
             >Timeline</button>
+            {% if show_followup_view %}
             <button
                 type="button"
                 class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view == "wiedervorlagen" %} active{% endif %}"
                 data-view-value="wiedervorlagen"
                 aria-pressed="{% if selected.view == "wiedervorlagen" %}true{% else %}false{% endif %}"
             >Wiedervorlagen</button>
+            {% endif %}
         </div>
     </div>
     <div class="findus-filter-field findus-filter-actions">
@@ -164,18 +166,67 @@
 // Formular statt einer eigenen Navigation, damit ein Klick dieselbe
 // hx-get/hx-push-url-Mechanik wie jedes andere Filterfeld auslöst -- die
 // aktuell gesetzten Filter (#1039) bleiben also automatisch erhalten.
-// Der Sync der aktiven Schaltfläche läuft über `htmx:afterSwap` auf der
-// Ergebnisliste statt direkt im Klick-Handler, weil dieselbe Stelle auch den
-// Fall abdeckt, in dem Home die Ansicht aus localStorage wiederherstellt
-// (setzt den Hidden-Wert direkt, ohne über den Button-Klick zu laufen).
+//
+// Die gewählte Ansicht ist kein Filter, sondern eine Benutzereinstellung:
+// sie wird unter einem eigenen localStorage-Schlüssel gehalten und gilt
+// seitenübergreifend (Home, Vorgang-, Kontakt-, Tag-Hub). Deshalb sitzt sie
+// hier im gemeinsamen Partial und nicht im Filter-State von Home -- sonst
+// müsste jede Hub-Seite dieselbe Mechanik ein zweites Mal bauen, und die
+// Ansicht spränge beim Wechsel Home <-> Hub.
 (function () {
+    var STORAGE_KEY = "findus:documents:view";
+    // Muss dem Server-Default entsprechen (`view`-Parameter in
+    // `document_list`/den Hub-Views): nur eine davon abweichende Wahl ist
+    // eine gespeicherte Einstellung.
+    var DEFAULT_VIEW = "grid";
+    // Home baut die URL aus dem kompletten Filter-State selbst auf und löst
+    // den Swap dort aus -- hier dann nur den Wert setzen, sonst liefen zwei
+    // Requests gegen dieselbe Region.
+    var pageRestoresFilters = {% if page_restores_filters %}true{% else %}false{% endif %};
+
     var form = document.querySelector(".findus-filter-bar");
     var toggle = form ? form.querySelector(".findus-view-toggle") : null;
     var hidden = toggle ? toggle.querySelector("input[name='view']") : null;
-    var region = document.getElementById("document-list-region");
     var followUpField = document.getElementById("filter-follow-up-field");
     if (!form || !toggle || !hidden) {
         return;
+    }
+
+    function supportedViews() {
+        // Aus den gerenderten Schaltflächen abgeleitet statt fest verdrahtet:
+        // die Wiedervorlagen-Ansicht (#1129) gibt es nur auf Home, ein dort
+        // gespeicherter Wert darf einen Hub nicht in eine Ansicht zwingen,
+        // die er nicht rendern kann.
+        return Array.prototype.map.call(
+            toggle.querySelectorAll(".findus-view-toggle-btn"),
+            function (btn) { return btn.dataset.viewValue || ""; }
+        );
+    }
+
+    function readPreference() {
+        try {
+            var stored = window.localStorage.getItem(STORAGE_KEY);
+            // `null` = keine Wahl gespeichert; "" ist ein gültiger Wert (Liste).
+            if (stored === null || supportedViews().indexOf(stored) === -1) {
+                return null;
+            }
+            return stored;
+        } catch (err) {
+            /* localStorage nicht verfügbar (privater Modus) — ignorieren */
+            return null;
+        }
+    }
+
+    function writePreference(value) {
+        try {
+            if (value === DEFAULT_VIEW) {
+                window.localStorage.removeItem(STORAGE_KEY);
+            } else {
+                window.localStorage.setItem(STORAGE_KEY, value);
+            }
+        } catch (err) {
+            /* localStorage nicht verfügbar (privater Modus) — ignorieren */
+        }
     }
 
     function syncButtons() {
@@ -198,12 +249,55 @@
             return;
         }
         hidden.value = btn.dataset.viewValue || "";
+        writePreference(hidden.value);
         syncButtons();
         hidden.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    if (region) {
-        region.addEventListener("htmx:afterSwap", syncButtons);
+    // Der Sync der aktiven Schaltfläche hängt an `htmx:afterSwap` auf
+    // `document.body` (das Event blubbert) statt an `#document-list-region`:
+    // die Region steht im Markup *nach* dieser Datei und existiert beim
+    // Ausführen dieses Skripts noch gar nicht.
+    document.body.addEventListener("htmx:afterSwap", syncButtons);
+
+    function whenReady(fn) {
+        // htmx wird mit `defer` geladen und die Ergebnisregion folgt erst
+        // weiter unten im Markup -- beides steht erst zum DOMContentLoaded
+        // bereit.
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", fn);
+        } else {
+            fn();
+        }
+    }
+
+    // Gespeicherte Ansicht wiederherstellen. Eine `view`-Angabe in der URL
+    // gewinnt immer (geteilter Link, Zurück-Navigation, Pagination) --
+    // localStorage ist nur der Fallback für den Einstieg ohne Parameter.
+    var params = new URLSearchParams(window.location.search);
+    var preference = params.has("view") ? null : readPreference();
+    window.findusViewRestored = preference !== null && preference !== hidden.value;
+    if (preference !== null) {
+        hidden.value = preference;
+        syncButtons();
+    }
+    if (window.findusViewRestored && !pageRestoresFilters) {
+        whenReady(function () {
+            params.set("view", hidden.value);
+            var url = window.location.pathname + "?" + params.toString();
+            // Replace statt Push: der Einstieg ohne `view` und die
+            // wiederhergestellte Ansicht sind derselbe Seitenaufruf, ein
+            // Zurück darf nicht auf den Kachel-Default zurückfallen.
+            window.history.replaceState(window.history.state, "", url);
+            if (window.htmx) {
+                window.htmx.ajax("GET", url, {
+                    target: "#document-list-region",
+                    swap: "innerHTML",
+                });
+            } else {
+                window.location.replace(url);
+            }
+        });
     }
 
     // Tag-Badge-Klick in der Kachelansicht (#1124): statt eines eigenen
