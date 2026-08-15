@@ -42,24 +42,6 @@
     </li>
     <li>
         <a
-            href="{% url 'documents:task_list' %}"
-            class="findus-nav-link{% if 'task' in request.resolver_match.url_name %} active{% endif %}"
-        >
-            Aufgaben
-        </a>
-        <ul class="findus-nav-sublist">
-            <li>
-                <a
-                    href="{% url 'documents:task_template_list' %}"
-                    class="findus-nav-link findus-nav-link-sub{% if 'task_template' in request.resolver_match.url_name %} active{% endif %}"
-                >
-                    Vorlagen
-                </a>
-            </li>
-        </ul>
-    </li>
-    <li>
-        <a
             href="{% url 'documents:correspondent_list' %}"
             class="findus-nav-link{% if 'correspondent' in request.resolver_match.url_name %} active{% endif %}"
         >
