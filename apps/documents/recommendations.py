@@ -77,9 +77,9 @@ from apps.ai.providers import (
     get_generation_provider,
 )
 
+from .comment_context import build_comment_context
 from .models import (
     Document,
-    DocumentComment,
     Vorgang,
     VorgangRecommendation,
     VorgangRecommendationRun,
@@ -189,103 +189,27 @@ def _document_block(document: Document, max_summary_chars: int) -> str:
     return "\n".join(lines)
 
 
-def _followup_label(comment: DocumentComment) -> str:
-    """Ueberfaellig/heute faellig/geplant -- Textform von
-    `DocumentComment.is_overdue`/`is_due_today` fuer den Prompt (#1132).
+def build_vorgang_comment_context(documents: list[Document], limit: int) -> list[str]:
+    """Der Abschnitt "Notizen des Nutzers zu diesen Dokumenten" (#1132) --
+
+    duenne Vorgang-spezifische Ueberschrift ueber der geteilten
+    Auswahl-/Kuerzungslogik in `apps.documents.comment_context` (#1135,
+    seit dort auch die ausfuehrliche Zusammenfassung ihre Notizen-Sektion
+    bezieht).
     """
-    if comment.is_overdue:
-        return "ueberfaellig"
-    if comment.is_due_today:
-        return "heute faellig"
-    return "geplant"
-
-
-def _comment_line(comment: DocumentComment, *, show_author: bool) -> str:
-    """Eine Zeile der Notizen-Sektion: Datum, Dokument, ggf. Autor, Text,
-    ggf. Wiedervorlage mit Status.
-
-    Absolute Datumsangaben (`15.08.2026`), nicht relativ -- die Antwort
-    soll nicht davon abhaengen, wann der Prompt gebaut wurde.
-    """
-    created = timezone.localtime(comment.created_at).date()
-    line = f"{created.strftime('%d.%m.%Y')} [{comment.document.title}]"
-    if show_author and comment.author_id:
-        line += f" ({comment.author.get_username()})"
-    line += f": {comment.body.strip()}"
-    if comment.follow_up_date is not None:
-        line += (
-            f" -- Wiedervorlage {comment.follow_up_date.strftime('%d.%m.%Y')} "
-            f"({_followup_label(comment)})"
-        )
-    return line
-
-
-def _basis_comments(documents: list[Document]) -> list[DocumentComment]:
-    """Kommentare der Basis-Dokumente, chronologisch (aeltestes zuerst).
-
-    Kein eigener Sichtbarkeits-Check: `documents` kommt bereits aus
-    `_basis_documents`/`_limited`, ist also schon auf das begrenzt, was der
-    anfragende Nutzer sehen darf *und* was tatsaechlich als Dokumentblock im
-    Prompt steht -- ein Kommentar zu einem herausgekuerzten Dokument wuerde
-    im Prompt auf einen Titel verweisen, der dort gar nicht auftaucht.
-    """
-    document_ids = [document.pk for document in documents]
-    if not document_ids:
-        return []
-    return list(
-        DocumentComment.objects.filter(document_id__in=document_ids)
-        .select_related("document", "author")
-        .order_by("created_at")
+    return build_comment_context(
+        documents,
+        limit,
+        heading=(
+            "Notizen des Nutzers zu diesen Dokumenten (chronologisch; das sind "
+            "Notizen UEBER die Dokumente, kein Dokumentinhalt -- bei Widerspruch "
+            "zwischen einer Notiz und einem Dokument gilt die Notiz, sie ist der "
+            "aktuellere Stand):"
+        ),
     )
 
 
-def _limited_comments(
-    comments: list[DocumentComment], limit: int
-) -> list[DocumentComment]:
-    """Bei vielen Kommentaren nur die juengsten `limit` behalten -- offene
-
-    Wiedervorlagen bleiben unabhaengig von ihrem Alter immer dabei: ein
-    geplanter Termin ist relevanter als eine beilaeufige Notiz von gestern
-    (#1132). Die Reihenfolge (chronologisch) bleibt dabei erhalten.
-    """
-    recent = comments[-limit:] if len(comments) > limit else comments
-    kept_ids = {comment.pk for comment in recent}
-    kept_ids.update(comment.pk for comment in comments if comment.follow_up_date is not None)
-    return [comment for comment in comments if comment.pk in kept_ids]
-
-
-def build_vorgang_comment_context(documents: list[Document], limit: int) -> list[str]:
-    """Der Abschnitt "Notizen des Nutzers zu diesen Dokumenten" -- als
-
-    eigene, testbare Funktion gebaut statt inline im Prompt-String, damit
-    sich pruefen laesst, was tatsaechlich hineingeht, ohne ein Modell
-    aufzurufen (#1132).
-
-    Bewusst ein eigener, benannter Abschnitt statt Vermischung mit den
-    Dokumentbloecken: Kommentare sind Notizen UEBER ein Dokument, keine
-    Dokumentinhalte (CLAUDE.md "Pipelines & Services"). Fehlen Kommentare
-    komplett, ist das Ergebnis eine leere Liste -- der Prompt bleibt dann
-    unveraendert zum Stand vor #1132.
-    """
-    comments = _limited_comments(_basis_comments(documents), limit)
-    if not comments:
-        return []
-
-    distinct_authors = {comment.author_id for comment in comments if comment.author_id}
-    show_author = len(distinct_authors) > 1
-
-    lines = [
-        "",
-        "Notizen des Nutzers zu diesen Dokumenten (chronologisch; das sind "
-        "Notizen UEBER die Dokumente, kein Dokumentinhalt -- bei Widerspruch "
-        "zwischen einer Notiz und einem Dokument gilt die Notiz, sie ist der "
-        "aktuellere Stand):",
-    ]
-    lines.extend(_comment_line(comment, show_author=show_author) for comment in comments)
-    return lines
-
-
-def _basis_documents(vorgang, user):
+def basis_documents(vorgang, user):
     """Die Dokumente des Vorgangs, die der Nutzer sehen darf -- chronologisch
     (aeltestes zuerst), damit das Modell den Verlauf in der Reihenfolge
     liest, in der er passiert ist.
@@ -294,6 +218,11 @@ def _basis_documents(vorgang, user):
     `apps.documents.views.filtered_documents` (#1085), damit Dokumente
     ohne erkanntes `document_date` an ihrer chronologisch richtigen
     Stelle stehen statt pauschal am Rand.
+
+    Oeffentlich (kein Unterstrich-Praefix mehr, #1135): auch die
+    ausfuehrliche Zusammenfassung auf Vorgangsebene
+    (`apps.documents.long_summary`) braucht dieselbe Vorgang->sichtbare-
+    Dokumente-Auswahl und baut nicht ihre eigene zweite Variante.
     """
     return (
         Document.objects.visible_to(user)
@@ -309,7 +238,7 @@ def _basis_documents(vorgang, user):
     )
 
 
-def _limited(documents: list[Document], limit: int) -> tuple[list[Document], bool]:
+def limit_documents(documents: list[Document], limit: int) -> tuple[list[Document], bool]:
     """Bei sehr vielen Dokumenten die *juengsten* `limit` behalten und
     wieder chronologisch zurueckgeben.
 
@@ -317,7 +246,8 @@ def _limited(documents: list[Document], limit: int) -> tuple[list[Document], boo
     folgen -- die ersten Dokumente eines langen Vorgangs sind meist
     Vorgeschichte. Der zweite Rueckgabewert meldet, dass gekuerzt wurde;
     das landet in `based_on["truncated"]` und wird im Panel angezeigt
-    (keine stille Kuerzung).
+    (keine stille Kuerzung). Oeffentlich (#1135) aus demselben Grund wie
+    `basis_documents`.
     """
     if len(documents) <= limit:
         return documents, False
@@ -520,8 +450,8 @@ def generate_vorgang_recommendations(
     attempts = 0
     try:
         user = get_user_model().objects.get(pk=user_id)
-        considered = list(_basis_documents(vorgang, user))
-        used, truncated = _limited(
+        considered = list(basis_documents(vorgang, user))
+        used, truncated = limit_documents(
             considered, settings.FINDUS_VORGANG_RECOMMENDATION_MAX_DOCUMENTS
         )
         if truncated:

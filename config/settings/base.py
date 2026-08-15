@@ -447,6 +447,66 @@ FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS = int(
 )
 
 # --------------------------------------------------------------------------
+# Ausfuehrliche Zusammenfassung (#1135, apps.documents.long_summary): ein
+# `generate()`-Call pro Erzeugung, nur auf Knopfdruck -- wie die
+# Handlungsempfehlungen, aber je Dokument bzw. je Vorgang statt nur je
+# Vorgang. MAX_CHARS begrenzt den vollen Dokumenttext im Prompt (deutlich
+# grosszuegiger als FINDUS_ANALYSIS_MAX_CHARS: dieser Text wird gelesen
+# und aufbewahrt statt nur die Datenbasis eines schnellen Drei-Saetze-Calls
+# zu sein). MAX_COMMENTS begrenzt die "Notizen des Nutzers"-Sektion des
+# einzelnen Dokuments.
+# --------------------------------------------------------------------------
+FINDUS_LONG_SUMMARY_MAX_CHARS = int(env("FINDUS_LONG_SUMMARY_MAX_CHARS", "40000"))
+FINDUS_LONG_SUMMARY_MAX_COMMENTS = int(env("FINDUS_LONG_SUMMARY_MAX_COMMENTS", "30"))
+
+# Output-Budget (#1096-Lehre: lieber grosszuegig, Output-Tokens werden nach
+# Verbrauch abgerechnet, nicht nach Reservierung) -- die Antwort ist ein
+# vollstaendiger Fliesstext, potenziell laenger als die Handlungsempfehlungen.
+FINDUS_LONG_SUMMARY_MAX_OUTPUT_TOKENS = int(
+    env("FINDUS_LONG_SUMMARY_MAX_OUTPUT_TOKENS", "4000")
+)
+
+# Task-/Poll-Timeout wie bei den Handlungsempfehlungen (#1134): derselbe
+# Nesting-Grundsatz (HTTP-Timeout * Versuche < Task-Timeout < Poll-Timeout <
+# Q_CLUSTER["retry"]) gilt hier unveraendert, siehe
+# `apps.documents.test_contracts.QClusterRetryOutlivesTimeoutTests`.
+FINDUS_LONG_SUMMARY_TASK_TIMEOUT_SECONDS = int(
+    env("FINDUS_LONG_SUMMARY_TASK_TIMEOUT_SECONDS", "600")
+)
+FINDUS_LONG_SUMMARY_POLL_TIMEOUT_SECONDS = int(
+    env("FINDUS_LONG_SUMMARY_POLL_TIMEOUT_SECONDS", "1200")
+)
+
+# Vorgang-Ebene derselben Funktion: Datenbasis sind die sichtbaren Dokumente
+# des Vorgangs mit ihren Kurzzusammenfassungen (nicht deren Volltexte --
+# ein Vorgang mit 30 Dokumenten wuerde sonst jeden Kontextrahmen sprengen)
+# plus, sofern vorhanden, die bereits erzeugte ausfuehrliche Zusammenfassung
+# einzelner Dokumente. MAX_DOCUMENT_LONG_SUMMARY_CHARS begrenzt Letztere
+# eigens, weil eine ausfuehrliche Zusammenfassung deutlich laenger ist als
+# die Kurzzusammenfassung, die MAX_SUMMARY_CHARS begrenzt.
+FINDUS_VORGANG_LONG_SUMMARY_MAX_DOCUMENTS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_MAX_DOCUMENTS", "40")
+)
+FINDUS_VORGANG_LONG_SUMMARY_MAX_SUMMARY_CHARS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_MAX_SUMMARY_CHARS", "800")
+)
+FINDUS_VORGANG_LONG_SUMMARY_MAX_DOCUMENT_LONG_SUMMARY_CHARS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_MAX_DOCUMENT_LONG_SUMMARY_CHARS", "2000")
+)
+FINDUS_VORGANG_LONG_SUMMARY_MAX_COMMENTS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_MAX_COMMENTS", "30")
+)
+FINDUS_VORGANG_LONG_SUMMARY_MAX_OUTPUT_TOKENS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_MAX_OUTPUT_TOKENS", "6000")
+)
+FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS", "600")
+)
+FINDUS_VORGANG_LONG_SUMMARY_POLL_TIMEOUT_SECONDS = int(
+    env("FINDUS_VORGANG_LONG_SUMMARY_POLL_TIMEOUT_SECONDS", "1200")
+)
+
+# --------------------------------------------------------------------------
 # KI-Entwurf einer Brief-Vorlage (#1097,
 # apps.documents.letter_template_ai): ein `generate()`-Call pro Klick auf
 # „Mit KI erstellen", synchron im Request -- der Nutzer wartet ohnehin auf

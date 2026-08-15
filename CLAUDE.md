@@ -72,6 +72,33 @@ Funktion.
   - Wer nur die halbe Regel kennt, „korrigiert" sie irgendwann in die falsche
     Richtung — entweder landen Kommentare doch in den Chunks, oder sie gelten
     als generell tabu und der Kontext geht verloren.
+- **Die ausführliche Zusammenfassung** (`apps.documents.long_summary`,
+  #1135) ist die lange Schwester der Kurzzusammenfassung (#1020) — reiner
+  Fließtext in Absätzen, kein zweites Handlungsempfehlungen-System. Zwei
+  Regeln daran sind bewusst so und nicht anders:
+  - Ratschläge stehen als Sätze im Text, nie als Liste/Datensatz. Die
+    strukturierten „nächste Schritte" mit eigenem Status/Quellen/Frist
+    gibt es bereits je Vorgang (`VorgangRecommendationRun`,
+    `VorgangRecommendation`) — dieses Feature dupliziert sie nicht und
+    ersetzt sie nicht.
+  - Felder liegen direkt auf `Document`/`Vorgang` (`LongSummaryMixin`),
+    kein eigenes Run-Modell wie bei den Handlungsempfehlungen: es gibt
+    hier keine Kind-Zeilen mit eigenem Lebenszyklus, nur Text plus
+    Herkunft (Zeitpunkt, Modell, Modellversion).
+  - Ein eingebauter Chat („Fragen zum Dokument stellen") ist bewusst
+    verworfen — diese Rolle übernimmt der MCP-Endpunkt mit dem KI-Client
+    des Nutzers, kein zweiter Dialog-Kanal innerhalb der App.
+  - Nur auf Knopfdruck, nie beim Ingest — die meisten Dokumente werden nie
+    wieder geöffnet, sie alle vorab ausführlich zusammenzufassen kostet
+    Tokens für Text, den niemand liest.
+  - Der Veraltet-Hinweis vergleicht gegen eine beim Erzeugen eingefrorene
+    Basis (`long_summary_based_on`: beim Dokument ein Zeitstempel für
+    Text-*oder*-Kommentar-Änderung, beim Vorgang die Menge der
+    einbezogenen Dokument-IDs plus deren jüngster Kommentar), nie gegen
+    `updated_at` direkt — `long_summary_*`-Saves lassen `updated_at`
+    bewusst unangetastet (kein `update_fields`-Eintrag dafür), sonst
+    würde der Klick auf „erstellen" selbst die Basis verfälschen, gegen
+    die später verglichen wird.
 - KI-Analyse (`analysis.analyze_document`) und Thumbnail-Rendering
   (`thumbnails.generate_thumbnail_for_document`) sind **fehlertolerant**: Ein
   Fehlschlag loggt und läuft weiter (Fehler landet in `metadata["analysis_

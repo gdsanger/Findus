@@ -1,0 +1,79 @@
+{% load documents_extras %}
+{% comment %}
+Ausfuehrliche Zusammenfassung eines Vorgangs (#1135) -- analog
+`_vorgang_recommendations.html`: ein einziges Fragment, zugleich Anzeige,
+Poll-Ziel waehrend der Erzeugung und Swap-Ziel des Erstellen-/Erneut-
+erzeugen-Buttons. Kein eigener Rahmen, die Karte drumherum steht in
+`vorgaenge/detail.html`.
+{% endcomment %}
+<div
+    id="vorgang-long-summary"
+    {% if vorgang.long_summary_status == 'running' %}
+    hx-get="{% url 'documents:vorgang_long_summary_status' vorgang.pk %}"
+    hx-trigger="every 4s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    {% endif %}
+>
+    {% if vorgang.long_summary_status == 'running' %}
+    <p class="findus-recommendations-running text-muted small">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        Wird erstellt …
+    </p>
+    {% elif vorgang.long_summary_status == 'failed' %}
+    <p class="text-danger small">
+        Konnte nicht erstellt werden{% if vorgang.long_summary_error %}: {{ vorgang.long_summary_error }}{% endif %}
+    </p>
+    {% elif vorgang.long_summary %}
+    <p class="findus-ai-disclaimer text-muted small">
+        KI-generiert – maßgeblich bleibt das Original.
+    </p>
+    <p class="text-muted small">
+        erstellt am {{ vorgang.long_summary_generated_at|date:"d.m.Y H:i" }} ·
+        Basis: {{ vorgang.long_summary_based_on.used_count|default:0 }}
+        {% if vorgang.long_summary_based_on.used_count == 1 %}Dokument{% else %}Dokumente{% endif %}
+        {% if vorgang.long_summary_based_on.truncated %}
+        <span class="text-warning-emphasis">
+            (gekürzt: nur die jüngsten {{ vorgang.long_summary_based_on.used_count }}
+            von {{ vorgang.long_summary_based_on.document_count }} Dokumenten)
+        </span>
+        {% endif %}
+    </p>
+    {% if vorgang_long_summary_stale %}
+    <p class="findus-recommendations-stale small">
+        Veraltet – erstellt am {{ vorgang.long_summary_generated_at|date:"d.m.Y" }}{% if vorgang_long_summary_new_document_count %},
+        seitdem {% if vorgang_long_summary_new_document_count == 1 %}ist 1 Dokument{% else %}sind {{ vorgang_long_summary_new_document_count }} Dokumente{% endif %} hinzugekommen{% endif %}.
+        Bitte neu erzeugen.
+    </p>
+    {% endif %}
+    <div class="findus-markdown">{{ vorgang.long_summary|render_markdown }}</div>
+    {% elif vorgang.long_summary_status == 'ready' %}
+    <p class="text-muted mb-0">
+        Keine Datenbasis – dieser Vorgang enthält (für Sie sichtbar) noch keine
+        Dokumente, die zusammengefasst werden könnten.
+    </p>
+    {% else %}
+    <p class="text-muted">
+        Noch keine ausführliche Zusammenfassung. Auf Knopfdruck fasst die KI die
+        Geschichte des Vorgangs anhand seiner sichtbaren Dokumente zusammen.
+    </p>
+    {% endif %}
+
+    <form
+        method="post"
+        action="{% url 'documents:vorgang_long_summary_generate' vorgang.pk %}"
+        hx-post="{% url 'documents:vorgang_long_summary_generate' vorgang.pk %}"
+        hx-target="#vorgang-long-summary"
+        hx-swap="outerHTML"
+        class="mt-2"
+    >
+        {% csrf_token %}
+        <button
+            type="submit"
+            class="btn btn-sm {% if vorgang_long_summary_stale %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+            {% if vorgang.long_summary_status == 'running' %}disabled{% endif %}
+        >
+            {% if vorgang.has_long_summary %}Erneut erzeugen{% else %}Ausführliche Zusammenfassung erstellen{% endif %}
+        </button>
+    </form>
+</div>

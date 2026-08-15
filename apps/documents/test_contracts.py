@@ -497,6 +497,29 @@ class QClusterRetryOutlivesTimeoutTests(SimpleTestCase):
             settings.FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS,
         )
 
+    def test_retry_exceeds_the_long_summary_task_timeout_overrides(self):
+        """Dieselbe Invariante wie oben, fuer die ausfuehrliche
+        Zusammenfassung (#1135) -- Dokument- *und* Vorgang-Ebene haben je
+        einen eigenen Task-Timeout-Override.
+        """
+        self.assertGreater(
+            settings.Q_CLUSTER["retry"], settings.FINDUS_LONG_SUMMARY_TASK_TIMEOUT_SECONDS
+        )
+        self.assertGreater(
+            settings.Q_CLUSTER["retry"],
+            settings.FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        )
+
+    def test_poll_timeout_exceeds_the_long_summary_task_timeout(self):
+        self.assertGreater(
+            settings.FINDUS_LONG_SUMMARY_POLL_TIMEOUT_SECONDS,
+            settings.FINDUS_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        )
+        self.assertGreater(
+            settings.FINDUS_VORGANG_LONG_SUMMARY_POLL_TIMEOUT_SECONDS,
+            settings.FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        )
+
 
 def _dummy_file(data: bytes) -> ContentFile:
     return ContentFile(data)

@@ -3,6 +3,7 @@ from django.utils import timezone
 from .analysis import analyze_document
 from .extraction import extract_document
 from .letter_generation import generate_letter_draft
+from .long_summary import generate_document_long_summary, generate_vorgang_long_summary
 from .processing import process_document
 from .recommendations import generate_vorgang_recommendations
 from .thumbnails import generate_thumbnail_for_document
@@ -154,4 +155,70 @@ def generate_vorgang_recommendations_hook(task):
         status=VorgangRecommendationRun.Status.FAILED,
         error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
         updated_at=timezone.now(),
+    )
+
+
+def generate_document_long_summary_task(document_id):
+    """Django-Q2 worker entry point fuer die ausfuehrliche Zusammenfassung
+    eines Dokuments (#1135) -- nur auf Knopfdruck vom Detail aus, nie von
+    der Ingest-Pipeline.
+
+    `generate_document_long_summary()` zeichnet einen gewoehnlichen
+    Provider-/Parsing-Fehler selbst als `status="failed"` + `error` am
+    Dokument auf und wirft dafuer nicht -- reicht aber eine Django-Q-
+    `TimeoutException` weiter (#1134), damit Django-Q den Worker-Prozess
+    neu startet. Genau dieselbe Aufgabenteilung wie
+    `generate_vorgang_recommendations_task`.
+    """
+    generate_document_long_summary(document_id)
+
+
+def generate_document_long_summary_hook(task):
+    """Sicherheitsnetz fuer `generate_document_long_summary_task` (#1134):
+    faengt einen Worker ab, der abstuerzt, bevor der eigene except-Block
+    im Modul den Fehler noch aufzeichnen konnte. `status=RUNNING` im
+    Filter, damit ein bereits eingetroffenes Ergebnis (oder eine
+    spezifischere Fehlermeldung) nicht ueberschrieben wird.
+    """
+    if task.success:
+        return
+
+    from .models import Document
+
+    document_id = task.args[0] if task.args else None
+    if document_id is None:
+        return
+
+    Document.objects.filter(
+        pk=document_id, long_summary_status=Document.LongSummaryStatus.RUNNING
+    ).update(
+        long_summary_status=Document.LongSummaryStatus.FAILED,
+        long_summary_error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
+    )
+
+
+def generate_vorgang_long_summary_task(vorgang_id, user_id):
+    """Wie `generate_document_long_summary_task`, nur fuer den Vorgang --
+    `user_id` wandert mit, weil die Datenbasis `visible_to`-gescoped ist
+    und der Worker keinen Request hat.
+    """
+    generate_vorgang_long_summary(vorgang_id, user_id)
+
+
+def generate_vorgang_long_summary_hook(task):
+    """Wie `generate_document_long_summary_hook`, nur fuer den Vorgang."""
+    if task.success:
+        return
+
+    from .models import Vorgang
+
+    vorgang_id = task.args[0] if task.args else None
+    if vorgang_id is None:
+        return
+
+    Vorgang.objects.filter(
+        pk=vorgang_id, long_summary_status=Vorgang.LongSummaryStatus.RUNNING
+    ).update(
+        long_summary_status=Vorgang.LongSummaryStatus.FAILED,
+        long_summary_error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
     )
