@@ -42,6 +42,7 @@ def send_due_comment_reminders():
             continue
         by_author.setdefault(comment.author, []).append(comment)
 
+    today = timezone.localdate()
     for author, comments in by_author.items():
         items = [
             {
@@ -49,6 +50,7 @@ def send_due_comment_reminders():
                 "body": comment.body,
                 "follow_up_date": comment.follow_up_date,
                 "document_url": _document_url(comment.document),
+                "is_overdue": comment.follow_up_date < today,
             }
             for comment in comments
         ]
