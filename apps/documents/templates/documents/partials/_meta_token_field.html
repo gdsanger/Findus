@@ -1,0 +1,55 @@
+{% comment %}
+Token-Eingabe für Vorgänge/Tags (#1136): Chips + Suchfeld statt
+Mehrfachauswahl-Liste. Speichert wie zuvor über `documents:meta`
+(`getlist()`/`.set()` je Feldname `vorgaenge`/`tags`) -- der Chip-Container
+trägt dafür `hx-post`/`hx-include`/`hx-vals` und wird vom eigenständigen
+Skript (`document-meta-tokens.js`) per `token-save`-Event ausgelöst, sobald
+sich die Chip-Liste ändert (Auswahl, Entfernen). Neuanlage läuft über den
+Quick-Create-Endpunkt mit `chip=1` und hängt nur den neuen Chip an -- kein
+Full-Block-Rerender, damit ein noch nicht bestätigter Suchtext im jeweils
+anderen Feld nicht verloren geht.
+
+Das Suchfeld heißt bewusst `q`, nicht `{{ field_name }}`: es liegt zwar im
+selben Bereich wie die Chips, wird aber nie von `document_meta` gelesen und
+darf deshalb keinen der beiden Feldnamen tragen, die dort ausgewertet
+werden.
+{% endcomment %}
+<div
+    class="findus-token-field"
+    data-token-field
+    data-token-kind="{{ kind }}"
+    data-token-field-name="{{ field_name }}"
+    data-token-create-url="{% url 'documents:meta_quick_create' document.pk kind %}"
+>
+    <div
+        id="{{ field_name }}-token-chips"
+        class="findus-token-chips"
+        data-token-chips
+        hx-post="{% url 'documents:meta' document.pk %}"
+        hx-vals='{"field": "{{ field_name }}"}'
+        hx-trigger="token-save"
+        hx-include="[name='{{ field_name }}']"
+    >
+        {% for item in items %}
+        {% include "documents/partials/_meta_token_chip.html" with field_name=field_name object_id=item.id object_label=item.label dimension=item.dimension is_tag=is_tag %}
+        {% endfor %}
+    </div>
+    <div class="findus-token-input-row">
+        <input
+            type="search"
+            name="q"
+            class="form-control form-control-sm"
+            placeholder="{{ placeholder }}"
+            autocomplete="off"
+            data-token-search
+            hx-get="{% url 'documents:meta_search' document.pk kind %}"
+            hx-trigger="keyup changed delay:300ms, search"
+            hx-target="#{{ field_name }}-token-results"
+            hx-swap="innerHTML"
+        >
+        <div id="{{ field_name }}-token-results" class="findus-token-results" data-token-results></div>
+    </div>
+    {% if quick_create_error.kind == kind %}
+    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
+    {% endif %}
+</div>

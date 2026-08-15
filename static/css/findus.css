@@ -960,6 +960,99 @@ body {
     justify-content: center;
 }
 
+/* Token-Eingabe für Vorgänge/Tags (#1136) -- ersetzt die
+   Mehrfachauswahl-Liste durch Chips + Tippsuche. Vor der Tag-Farbregel
+   unten definiert: beide setzen `background-color` mit gleicher
+   Spezifität (eine Klasse), gewinnt sonst die zuletzt notierte Regel --
+   hier soll aber `findus-tag-dim-N` die Chip-/Trefferfarbe überschreiben
+   dürfen. */
+.findus-token-field {
+    position: relative;
+}
+
+.findus-token-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--findus-space-1);
+}
+
+.findus-token-chips:empty {
+    margin-bottom: 0;
+}
+
+.findus-token-chips:not(:empty) {
+    margin-bottom: var(--findus-space-1);
+}
+
+.findus-token-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--findus-space-1);
+    padding: 0.1rem 0.5rem;
+    border-radius: var(--findus-radius-lg);
+    background-color: rgba(var(--findus-text-muted-rgb), 0.15);
+    color: var(--findus-text);
+    font-size: var(--findus-font-size-sm);
+    line-height: 1.4;
+}
+
+.findus-token-chip-remove {
+    border: 0;
+    background: none;
+    padding: 0;
+    line-height: 1;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+}
+
+.findus-token-chip-remove:hover {
+    opacity: 1;
+}
+
+.findus-token-input-row {
+    position: relative;
+}
+
+.findus-token-results {
+    position: absolute;
+    inset-inline: 0;
+    top: 100%;
+    z-index: 20;
+}
+
+.findus-token-result-list {
+    list-style: none;
+    margin: var(--findus-space-1) 0 0;
+    padding: var(--findus-space-1) 0;
+    background-color: var(--findus-surface-raised);
+    border: 1px solid var(--findus-border);
+    border-radius: var(--findus-radius-md);
+    box-shadow: var(--findus-shadow);
+    max-height: 14rem;
+    overflow-y: auto;
+}
+
+.findus-token-result {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: var(--findus-space-1) var(--findus-space-2);
+    border: 0;
+    background: none;
+    font-size: var(--findus-font-size-sm);
+    color: inherit;
+}
+
+.findus-token-result.is-active,
+.findus-token-result:hover {
+    background-color: rgba(var(--findus-text-muted-rgb), 0.15);
+}
+
+.findus-token-result-create {
+    font-style: italic;
+}
+
 /* Deterministische Tag-Farbe je Dimension (#1124) -- der Bucket kommt aus
    `tag_dimension_badge_class` (md5(dimension) % 8), damit dasselbe Tag über
    Seiten/Prozesse hinweg gleich aussieht. Solide Töne mit weißem Text, dunkel

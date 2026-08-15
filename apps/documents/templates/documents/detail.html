@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load documents_extras %}
+{% load documents_extras static %}
 {% block title %}{{ document.title }} – Findus{% endblock %}
 {% block content %}
 {% if document.parent_id and parent_visible %}
@@ -327,4 +327,5 @@ werden muss.
         });
     });
 </script>
+<script src="{% static 'js/document-meta-tokens.js' %}" defer></script>
 {% endblock %}

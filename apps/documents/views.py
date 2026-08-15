@@ -5,7 +5,7 @@ import mimetypes
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import DateField, Exists, OuterRef, Prefetch
+from django.db.models import DateField, Exists, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
@@ -1093,17 +1093,104 @@ def _meta_context(document, quick_create_error=None):
     return {
         "document": document,
         "all_correspondents": Correspondent.objects.all(),
-        "all_vorgaenge": Vorgang.objects.all(),
-        "all_tags": Tag.objects.all(),
         "direction_choices": Document.Direction.choices,
         "sphere_choices": Document.Sphere.choices,
         "tax_relevance_choices": Document.TaxRelevance.choices,
         "action_status_choices": Document.ActionStatus.choices,
         "selected_correspondent_id": document.correspondent_id,
-        "selected_vorgang_ids": set(document.vorgaenge.values_list("id", flat=True)),
-        "selected_tag_ids": set(document.tags.values_list("id", flat=True)),
+        "vorgaenge_items": [
+            {"id": vorgang.id, "label": vorgang.name, "dimension": ""}
+            for vorgang in document.vorgaenge.all()
+        ],
+        "tags_items": [
+            {"id": tag.id, "label": str(tag), "dimension": tag.dimension}
+            for tag in document.tags.all()
+        ],
         "quick_create_error": quick_create_error,
     }
+
+
+_META_SEARCH_KINDS = {"vorgang", "tag"}
+_META_SEARCH_POOL_LIMIT = 200
+_META_SEARCH_RESULTS_LIMIT = 10
+
+
+def _parse_tag_query(raw):
+    """"Dimension:Name" -> (dimension, name) -- ohne Doppelpunkt keine
+    Dimension. Ersetzt das frühere separate Dimensions-Feld der
+    Tag-Schnellanlage (#1136).
+    """
+    if ":" in raw:
+        dimension, _, name = raw.partition(":")
+        return dimension.strip(), name.strip()
+    return "", raw.strip()
+
+
+@login_required
+def document_meta_search(request, pk, kind):
+    """Trefferliste der Token-Eingabe für Vorgänge/Tags (#1136).
+
+    Rein lesend -- schreibt nichts, im Unterschied zu `document_meta`
+    (Auswahl übernehmen) und `document_meta_quick_create` (Neuanlage).
+    Bereits zugeordnete Einträge fallen raus, damit dieselbe Zuordnung nicht
+    zweimal auswählbar ist. Ein "neu anlegen"-Eintrag kommt nur dazu, wenn
+    die Eingabe keinen exakten Treffer hat -- sonst könnte man scheinbar
+    einen zweiten, in Wahrheit identischen Eintrag anlegen.
+    """
+    if kind not in _META_SEARCH_KINDS:
+        raise Http404(f"Unbekannte Zuordnungsart: {kind}")
+
+    document = _visible_document(request.user, pk)
+    query = request.GET.get("q", "").strip()
+    query_lower = query.lower()
+
+    results = []
+    exact_match = False
+    if query:
+        if kind == "vorgang":
+            candidates = list(
+                Vorgang.objects.exclude(
+                    id__in=document.vorgaenge.values_list("id", flat=True)
+                ).filter(name__icontains=query)[:_META_SEARCH_POOL_LIMIT]
+            )
+            candidates.sort(key=lambda v: not v.name.lower().startswith(query_lower))
+            results = [
+                {"id": v.id, "label": v.name, "dimension": ""}
+                for v in candidates[:_META_SEARCH_RESULTS_LIMIT]
+            ]
+            exact_match = Vorgang.objects.filter(name__iexact=query).exists()
+        else:
+            candidates = list(
+                Tag.objects.exclude(
+                    id__in=document.tags.values_list("id", flat=True)
+                ).filter(Q(name__icontains=query) | Q(dimension__icontains=query))[
+                    :_META_SEARCH_POOL_LIMIT
+                ]
+            )
+            candidates.sort(
+                key=lambda t: not (
+                    t.name.lower().startswith(query_lower)
+                    or t.dimension.lower().startswith(query_lower)
+                )
+            )
+            results = [
+                {"id": t.id, "label": str(t), "dimension": t.dimension}
+                for t in candidates[:_META_SEARCH_RESULTS_LIMIT]
+            ]
+            dimension, name = _parse_tag_query(query)
+            exact_match = bool(name) and Tag.objects.filter(
+                name__iexact=name, dimension__iexact=dimension
+            ).exists()
+
+    return render(
+        request,
+        "documents/partials/_meta_search_results.html",
+        {
+            "query": query,
+            "results": results,
+            "show_create": bool(query) and not exact_match,
+        },
+    )
 
 
 @login_required
@@ -1429,7 +1516,10 @@ def document_meta_quick_create(request, pk, kind):
     visible error next to the field it belongs to instead.
 
     Answers with the Zuordnungs-Block itself, so the new Kontakt/Vorgang/Tag
-    is immediately selected in its dropdown.
+    is immediately selected in its dropdown -- unless the request came from
+    the Vorgang/Tag token input (#1136, `chip=1`), which asks for just the
+    new chip back instead, so an unconfirmed search text in the other field
+    doesn't get wiped by a full-block rerender.
     """
     if kind not in _QUICK_CREATE_KINDS:
         raise Http404(f"Unbekannte Zuordnungsart: {kind}")
@@ -1443,6 +1533,7 @@ def document_meta_quick_create(request, pk, kind):
     name = request.POST.get(f"{kind}_name", "").strip()
     dimension = request.POST.get(f"{kind}_dimension", "").strip()
     quick_create_error = None
+    created_object = None
     if name:
         if kind == "correspondent":
             name = _truncated(Correspondent, "name", name)
@@ -1453,11 +1544,18 @@ def document_meta_quick_create(request, pk, kind):
             name = _truncated(Vorgang, "name", name)
             vorgang, _created = Vorgang.objects.get_or_create(name=name)
             document.vorgaenge.add(vorgang)
+            created_object = vorgang
         elif kind == "tag":
+            # Die Token-Eingabe (#1136) schickt Dimension+Name kombiniert als
+            # "Dimension:Name" in `tag_name` -- ein separat mitgeschicktes
+            # `tag_dimension` (ältere Zwei-Felder-Schnellanlage) geht vor.
+            if not dimension:
+                dimension, name = _parse_tag_query(name)
             dimension = _truncated(Tag, "dimension", dimension)
             name = _truncated(Tag, "name", name)
             tag, _created = Tag.objects.get_or_create(name=name, dimension=dimension)
             document.tags.add(tag)
+            created_object = tag
         if kind in ("correspondent", "vorgang"):
             learn_references_from_document(document)
     else:
@@ -1468,7 +1566,31 @@ def document_meta_quick_create(request, pk, kind):
             "dimension": dimension,
         }
 
+    if request.POST.get("chip") == "1" and created_object is not None:
+        return _render_token_chip(request, document, kind, created_object)
+
     return _render_meta(request, document, quick_create_error=quick_create_error)
+
+
+def _render_token_chip(request, document, kind, obj):
+    """Antwort der Token-Neuanlage (#1136): nur der neue Chip statt des
+    ganzen Zuordnungs-Blocks (siehe `document_meta_quick_create`). Vorgänge
+    stehen zusätzlich im Schnellzugriff über der Seite (#1098) -- der zieht
+    per Out-of-Band-Swap mit, Tags stehen dort nicht.
+    """
+    return render(
+        request,
+        "documents/partials/_meta_token_chip_response.html",
+        {
+            "document": document,
+            "field_name": "vorgaenge" if kind == "vorgang" else "tags",
+            "object_id": obj.id,
+            "object_label": obj.name if kind == "vorgang" else str(obj),
+            "dimension": obj.dimension if kind == "tag" else "",
+            "is_tag": kind == "tag",
+            "hub_links_oob": kind == "vorgang",
+        },
+    )
 
 
 def _render_meta(request, document, quick_create_error=None):
