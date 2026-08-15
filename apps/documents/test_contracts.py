@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import json
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
-from django.test import TestCase, override_settings
+from django.template.loader import get_template
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Department
@@ -306,6 +308,59 @@ class NoSecondDoneStateOnCommentsTests(TestCase):
             f"DocumentComment traegt ein eigenes Erledigt-Feld ({overlap}) -- "
             "der Zustand gehoert ausschliesslich auf Document.action_status.",
         )
+
+
+class SwapPartialsCarryNoOwnFrameTests(SimpleTestCase):
+    """Ein HTMX-Swap-Partial rahmt sich nicht selbst ein (CLAUDE.md
+
+    "UI-Konventionen"). `_document_list.html` ist Antwort auf den
+    Pending-Poller, der sich per `hx-swap="outerHTML"` gegen genau diese
+    Antwort austauscht -- ein Card-Rahmen *im* Partial landete damit bei
+    jedem Lauf eine Ebene tiefer in der vorigen Card. Dazu kommt: der
+    Rahmen muesste in beiden Zweigen (Treffer/leer) auf- und zugehen, sonst
+    stehen im leeren Zweig zwei herrenlose `</div>`.
+
+    Der Rahmen gehoert deshalb in die einbindende Seite, um
+    `#document-list-region` herum -- dort gilt er zugleich fuer die beiden
+    anderen Partials, die in derselben Region landen koennen
+    (`_document_followups.html`, `_search_results.html`).
+    """
+
+    _SWAP_PARTIALS = (
+        "documents/partials/_document_list.html",
+        "documents/partials/_document_followups.html",
+        "documents/partials/_search_results.html",
+    )
+
+    _PAGES_WITH_A_LIST_REGION = (
+        "documents/home.html",
+        "documents/vorgaenge/detail.html",
+        "documents/correspondents/detail.html",
+        "documents/tags/detail.html",
+    )
+
+    def _source_of(self, template_name: str) -> str:
+        return Path(get_template(template_name).origin.name).read_text(encoding="utf-8")
+
+    def test_swap_partials_carry_no_own_frame(self):
+        for template_name in self._SWAP_PARTIALS:
+            with self.subTest(template=template_name):
+                self.assertNotIn(
+                    'class="card"',
+                    self._source_of(template_name),
+                    f"{template_name} rahmt sich selbst ein -- der Card-Rahmen "
+                    "gehoert um #document-list-region in die einbindende Seite.",
+                )
+
+    def test_every_list_region_is_framed_by_its_page(self):
+        for template_name in self._PAGES_WITH_A_LIST_REGION:
+            with self.subTest(template=template_name):
+                self.assertIn(
+                    'id="document-list-region"',
+                    self._source_of(template_name),
+                    f"{template_name} bindet die Dokumentliste ein, ohne die "
+                    "vereinbarte Swap-Region #document-list-region zu setzen.",
+                )
 
 
 def _dummy_file(data: bytes) -> ContentFile:

@@ -3,51 +3,95 @@
 {% block content %}
 {% include "partials/_content_header.html" with page_title=tag.name %}
 
-<section class="findus-section findus-detail-actions">
-    {% if tag.dimension %}
-    <span class="badge text-bg-secondary">{{ tag.dimension }}</span>
-    {% endif %}
-    {% if tag.color %}
-    <span class="findus-tag-swatch" style="background-color: {{ tag.color }};"></span>
-    {% endif %}
-    <form
-        method="post"
-        action="{% url 'documents:tag_delete' tag.pk %}"
-        class="d-inline"
-        onsubmit="return confirm('Tag „{{ tag.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+<section class="findus-section findus-hub-actions">
+    {# Fokus-Graph (#1091) mit diesem Tag als Startknoten. #}
+    <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{% url 'documents:graph' %}?type=tag&amp;id={{ tag.pk }}"
     >
-        {% csrf_token %}
-        <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
-    </form>
+        Im Graph anzeigen
+    </a>
+    <div class="dropdown d-inline-block">
+        <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
+            aria-label="Weitere Aktionen"
+        >
+            &hellip;
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li>
+                <form
+                    method="post"
+                    action="{% url 'documents:tag_delete' tag.pk %}"
+                    onsubmit="return confirm('Tag „{{ tag.name }}“ wirklich löschen? Zugeordnete Dokumente bleiben erhalten, nur die Zuordnung entfällt.');"
+                >
+                    {% csrf_token %}
+                    <button type="submit" class="dropdown-item text-danger">Löschen</button>
+                </form>
+            </li>
+        </ul>
+    </div>
 </section>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Tagdaten</h2>
-    <form method="post" class="findus-card findus-task-form">
-        {% csrf_token %}
-        {% include "documents/partials/_form_fields.html" %}
-        <div class="findus-detail-meta-edit-actions">
-            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+{% comment %}
+Derselbe zweispaltige Hub-Aufbau wie Vorgang und Kontakt: links die
+dauerhaft offenen Stammdaten, rechts alles Dokumentbezogene. `col-lg-*`
+statt `col-*`, sonst bliebe die Stammdaten-Spalte auch auf dem Telefon bei
+einem Viertel Breite stehen und die Formularfelder wären unbedienbar.
+{% endcomment %}
+<div class="row g-3">
+    <div class="col-12 col-lg-3">
+        <div class="card">
+            <div class="card-header">Tagdaten</div>
+            <div class="card-body">
+                <form method="post" class="findus-task-form">
+                    {% csrf_token %}
+                    {% include "documents/partials/_form_fields.html" %}
+                    <div class="findus-detail-meta-edit-actions">
+                        <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer">
+                {% if tag.dimension or tag.color %}
+                <div class="findus-chip-row">
+                    {% if tag.dimension %}<span class="badge text-bg-secondary fw-normal">{{ tag.dimension }}</span>{% endif %}
+                    {% if tag.color %}<span class="findus-tag-swatch" style="background-color: {{ tag.color }};"></span>{% endif %}
+                </div>
+                {% endif %}
+                <dl class="findus-detail-meta-list mt-3 mb-0">
+                    <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
+                </dl>
+            </div>
         </div>
-    </form>
-</section>
-
-<section class="findus-section">
-    <div class="findus-card">
-        <dl class="findus-detail-meta-list">
-            <div><dt>Dokumente</dt><dd>{{ document_count }}</dd></div>
-        </dl>
     </div>
-</section>
 
-<section class="findus-section">
-    <h2 class="findus-section-title">Dokumente</h2>
-    {% include "documents/partials/_filter_bar.html" %}
+    <div class="col-12 col-lg-9">
+        <section class="findus-section">
+            {% include "documents/partials/_filter_bar.html" %}
+        </section>
 
-    <div id="document-list-region">
-        {% include "documents/partials/_document_list.html" %}
+        {% comment %}
+        Der Card-Rahmen steht *um* `#document-list-region`, nicht im
+        Listen-Partial: die Region ist das HTMX-Swap-Ziel (innerHTML), der
+        Rahmen überlebt so jeden Swap und gilt gleichermaßen für die
+        Wiedervorlagen-/Treffer-Partials, die hier ebenfalls landen können.
+        {% endcomment %}
+        <section class="findus-section">
+            <div class="card">
+                <div class="card-header">Dokumente</div>
+                <div class="card-body">
+                    <div id="document-list-region">
+                        {% include "documents/partials/_document_list.html" %}
+                    </div>
+                </div>
+            </div>
+        </section>
     </div>
-</section>
+</div>
 {% endblock %}
 
 {% block scripts %}

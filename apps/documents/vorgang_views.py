@@ -1,8 +1,8 @@
 """UI for the Vorgang index/hub (#1040): a directory to browse to a
 Vorgang, and a hub page that reuses the existing filtered document list
 (`apps.documents.views.filtered_documents` / `_document_list.html`)
-scoped to that Vorgang, plus its linked tasks -- deliberately no second
-document-list implementation.
+scoped to that Vorgang -- deliberately no second document-list
+implementation.
 
 Since #1093 the hub also carries the "Handlungsempfehlungen" panel: an
 on-demand KI-Beurteilung of the whole Vorgang (see
@@ -115,10 +115,13 @@ def vorgang_delete(request, pk):
 
 @login_required
 def vorgang_detail(request, pk):
-    """Kontext-Header (editierbare Vorgangsdaten, #1050) + the reused,
-    Vorgang-scoped document list (still further filterable by
-    Tag/Status/Richtung) plus the tasks linked to this Vorgang's documents
-    (Document:Task n:n).
+    """Editierbare Vorgangsdaten (#1050) + the reused, Vorgang-scoped
+    document list (still further filterable by Tag/Status/Richtung).
+
+    Kein "Verknüpfte Aufgaben"-Block mehr: Aufgaben sind auf dem Rückzug
+    (siehe CLAUDE.md), neue Funktionalität hängt an Dokument-Kommentaren.
+    Eine aus einer Handlungsempfehlung übernommene Aufgabe bleibt über den
+    "Aufgabe öffnen"-Link im Empfehlungs-Panel erreichbar.
     """
     vorgang = get_object_or_404(Vorgang, pk=pk)
 
@@ -143,19 +146,10 @@ def vorgang_detail(request, pk):
         document.processing_status in PENDING_STATUSES for document in page_obj
     )
 
-    tasks = (
-        Task.objects.visible_to(request.user)
-        .filter(documents__vorgaenge=vorgang)
-        .distinct()
-        .prefetch_related("documents")
-    )
-
     context = {
         "vorgang": vorgang,
         "form": form,
         "document_count": visible_documents.filter(vorgaenge=vorgang).distinct().count(),
-        "open_tasks_count": tasks.filter(status=Task.Status.OPEN).count(),
-        "tasks": tasks,
         "page_obj": page_obj,
         "query_without_page": query_without_page.urlencode(),
         "has_pending": has_pending,
@@ -345,10 +339,9 @@ def vorgang_recommendation_accept(request, pk, recommendation_id):
     Verknuepft werden nur die fuer *diesen* Nutzer sichtbaren Quellen
     (#1052) -- dieselbe Regel wie `task_views._set_task_documents`: eine
     Aufgabe darf kein Dokument anhaengen, das ihr Ersteller nicht sehen
-    darf. Ueber genau diese Verknuepfung taucht die Aufgabe auch in
-    "Verknuepfte Aufgaben" am Hub auf (Task <-> Document <-> Vorgang);
-    die Liste dort zieht erst beim naechsten Seitenaufbau nach, das Panel
-    verlinkt die neue Aufgabe deshalb direkt.
+    darf. Der Hub selbst listet keine Aufgaben mehr; erreichbar bleibt die
+    neue Aufgabe ueber den "Aufgabe oeffnen"-Link, den das Panel nach der
+    Uebernahme direkt an der Empfehlung zeigt.
 
     Nur eine offene Empfehlung ist uebernehmbar -- ein zweiter Klick (oder
     ein zweiter Tab) darf nicht dieselbe Aufgabe ein zweites Mal anlegen.

@@ -10,9 +10,22 @@
 
 <section class="findus-section">
     {% include "documents/partials/_filter_bar.html" %}
+</section>
 
-    <div id="document-list-region">
-        {% include result_partial %}
+{% comment %}
+Der Card-Rahmen steht *um* `#document-list-region`, nicht im Listen-Partial:
+die Region ist das HTMX-Swap-Ziel (innerHTML), der Rahmen überlebt so jeden
+Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
+(Liste, Wiedervorlagen, Suchtreffer), die hier landen können.
+{% endcomment %}
+<section class="findus-section">
+    <div class="card">
+        <div class="card-header">Dokumente</div>
+        <div class="card-body">
+            <div id="document-list-region">
+                {% include result_partial %}
+            </div>
+        </div>
     </div>
 </section>
 {% endblock %}

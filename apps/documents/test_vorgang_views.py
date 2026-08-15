@@ -137,10 +137,14 @@ class VorgangListViewTests(TestCase):
 
 
 class VorgangDetailViewTests(TestCase):
-    """Covers the Vorgang hub (#1040): the context header's Kennzahlen, the
-    reused/vorgang-scoped document list (`views.filtered_documents` +
-    `_document_list.html`, further filterable by Tag/Status/Richtung), and
-    the tasks linked through Document:Task n:n.
+    """Covers the Vorgang hub (#1040): the editable Vorgangsdaten plus its
+    Kennzahlen, and the reused/vorgang-scoped document list
+    (`views.filtered_documents` + `_document_list.html`, further
+    filterable by Tag/Status/Richtung).
+
+    Der Hub listet bewusst keine verknüpften Aufgaben mehr -- Aufgaben sind
+    auf dem Rückzug (CLAUDE.md); was aus einer Handlungsempfehlung
+    übernommen wurde, verlinkt das Empfehlungs-Panel selbst.
     """
 
     def setUp(self):
@@ -207,7 +211,6 @@ class VorgangDetailViewTests(TestCase):
 
         self.assertContains(response, "Steuererklärung 2026")
         self.assertEqual(response.context["document_count"], 1)
-        self.assertEqual(response.context["open_tasks_count"], 1)
 
     def test_header_shows_high_contrast_abgeschlossen_badge_for_closed_vorgang(self):
         self.vorgang.status = Vorgang.Status.CLOSED
@@ -250,11 +253,17 @@ class VorgangDetailViewTests(TestCase):
         self.assertContains(response, "Rechnung Acme")
         self.assertNotContains(response, "findus-sidebar")
 
-    def test_linked_tasks_are_listed(self):
+    def test_hub_no_longer_lists_linked_tasks(self):
+        """Aufgaben sind auf dem Rückzug (CLAUDE.md): der Hub zeigt keinen
+
+        "Verknüpfte Aufgaben"-Block mehr. Der Test hält das fest, damit die
+        Tabelle nicht beim nächsten Umbau versehentlich zurückkommt.
+        """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
 
-        self.assertContains(response, "Belege einreichen")
+        self.assertNotContains(response, "Belege einreichen")
+        self.assertNotIn("tasks", response.context)
 
     def test_document_list_offers_timeline_view(self):
         """The Vorgang hub reuses the shared document-list block (#1087) --
@@ -270,12 +279,6 @@ class VorgangDetailViewTests(TestCase):
         self.assertContains(response, "findus-timeline\"")
         self.assertContains(response, "Rechnung Acme")
         self.assertNotContains(response, "Anderer Vorgang")
-
-    def test_new_task_action_links_to_task_create(self):
-        self.client.force_login(self.user_a)
-        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
-
-        self.assertContains(response, reverse("documents:task_create"))
 
     def test_hub_offers_inline_edit_form_and_delete_action(self):
         """The Vorgang-Hub (#1050) edits/deletes directly -- the shared
@@ -750,7 +753,12 @@ class VorgangRecommendationViewTests(TestCase):
         self.assertEqual(recommendation.task, task)
         self.assertContains(response, "Übernommen")
 
-    def test_accepted_task_shows_up_on_the_hub(self):
+    def test_accepted_task_stays_reachable_from_the_panel(self):
+        """Der Hub listet keine Aufgaben mehr -- die übernommene Aufgabe
+
+        darf deshalb nicht unauffindbar werden: das Panel verlinkt sie an
+        der Empfehlung selbst ("Aufgabe öffnen").
+        """
         _, recommendation = self._ready_run()
         self.client.post(
             reverse(
@@ -762,7 +770,10 @@ class VorgangRecommendationViewTests(TestCase):
         response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
 
         self.assertContains(response, "Mahnung fristgerecht beantworten")
-        self.assertEqual(response.context["tasks"].count(), 1)
+        recommendation.refresh_from_db()
+        self.assertContains(
+            response, reverse("documents:task_detail", args=[recommendation.task.pk])
+        )
 
     def test_accept_is_idempotent(self):
         _, recommendation = self._ready_run()
