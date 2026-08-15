@@ -20,7 +20,7 @@ from django.views.decorators.http import require_POST
 
 from .forms import VorgangForm
 from .models import Document, Tag, Task, Vorgang, VorgangRecommendation
-from .recommendations import is_stale_for, start_recommendation_run
+from .recommendations import expire_if_stalled, is_stale_for, start_recommendation_run
 from .reference_views import owner_references_context
 from .task_views import task_departments_and_visibility
 from .views import (
@@ -248,6 +248,7 @@ def _recommendations_context(user, vorgang):
     # `RelatedObjectDoesNotExist` (ein `AttributeError`), solange fuer
     # diesen Vorgang noch nie generiert wurde.
     run = getattr(vorgang, "recommendation_run", None)
+    expire_if_stalled(run)
     recommendations = []
     restricted = run is not None and not _basis_is_visible(user, run)
 
@@ -313,9 +314,24 @@ def vorgang_recommendations_generate(request, pk):
 
     from django_q.tasks import async_task
 
-    from .tasks import generate_vorgang_recommendations_task
+    from .tasks import (
+        generate_vorgang_recommendations_hook,
+        generate_vorgang_recommendations_task,
+    )
 
-    async_task(generate_vorgang_recommendations_task, vorgang.pk, request.user.pk)
+    # `timeout` ueberschreibt hier den globalen `Q_CLUSTER["timeout"]`
+    # (kurz gehalten, damit ein haengender Ingest-/Thumbnail-Job schnell
+    # auffaellt) -- ein LLM-Call mit Retries braucht deutlich mehr Luft
+    # (#1134). `hook` ist das Sicherheitsnetz, falls der eigene
+    # except-Block in `generate_vorgang_recommendations()` den Abbruch
+    # nicht mehr erreicht; siehe `generate_vorgang_recommendations_hook`.
+    async_task(
+        generate_vorgang_recommendations_task,
+        vorgang.pk,
+        request.user.pk,
+        timeout=settings.FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS,
+        hook=generate_vorgang_recommendations_hook,
+    )
 
     return _render_recommendations(request, vorgang)
 

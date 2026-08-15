@@ -1,3 +1,5 @@
+from django.utils import timezone
+
 from .analysis import analyze_document
 from .extraction import extract_document
 from .letter_generation import generate_letter_draft
@@ -101,7 +103,55 @@ def generate_vorgang_recommendations_task(vorgang_id, user_id):
     that says which documents may go into the prompt.
 
     `generate_vorgang_recommendations()` records its own failures on the
-    run (`status="failed"` + `error`, shown in the panel) and never
-    raises, so there is nothing left for this wrapper to handle.
+    run (`status="failed"` + `error`, shown in the panel) for an ordinary
+    provider/parsing failure and does not raise for those -- but it *does*
+    re-raise a Django-Q `TimeoutException` after recording it (#1134), so
+    this wrapper has exactly one thing left to handle: nothing. The
+    exception keeps going up to Django-Q's own worker loop, which is what
+    actually needs to see it (recycles the process, feeds the `hook`
+    below).
+
+    Queued with a generous per-task `timeout` and a `hook` safety net --
+    see `vorgang_recommendations_generate` in `vorgang_views.py` for both,
+    and `generate_vorgang_recommendations_hook` below for what the hook
+    covers that the in-task handling can't.
     """
     generate_vorgang_recommendations(vorgang_id, user_id)
+
+
+def generate_vorgang_recommendations_hook(task):
+    """Django-Q `hook` callback for `generate_vorgang_recommendations_task`
+    (#1134): runs after *every* finished task, successful or not (see
+    `django_q.signals.call_hook`, fired from `Task`'s `post_save`).
+
+    This is a safety net, not the primary mechanism -- the primary one is
+    `generate_vorgang_recommendations()` catching its own `TimeoutException`
+    and marking the run `failed` before re-raising. That covers the
+    observed bug (#1134: a worker killed by Django-Q's own timeout while
+    still waiting on the provider). This hook exists for whatever that
+    doesn't cover -- an exception type nobody anticipated, a process that
+    dies before its `except` block runs -- so the run never gets stuck on
+    `running` for a reason that never made it back to `recommendations.py`
+    at all.
+
+    Guarded with `status=RUNNING` in the `update()` filter so it never
+    overwrites a run that already has its real result (or a more specific
+    failure reason) -- a task can be reported unsuccessful here for
+    reasons that have nothing to do with the run itself.
+    """
+    if task.success:
+        return
+
+    from .models import VorgangRecommendationRun
+
+    vorgang_id = task.args[0] if task.args else None
+    if vorgang_id is None:
+        return
+
+    VorgangRecommendationRun.objects.filter(
+        vorgang_id=vorgang_id, status=VorgangRecommendationRun.Status.RUNNING
+    ).update(
+        status=VorgangRecommendationRun.Status.FAILED,
+        error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
+        updated_at=timezone.now(),
+    )

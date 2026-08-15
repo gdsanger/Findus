@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import time
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -65,8 +66,16 @@ from django.db import transaction
 from django.db.models import DateField
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
+from django_q.exceptions import TimeoutException
 
-from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
+from apps.ai.providers import (
+    GenerationProvider,
+    Message,
+    Usage,
+    capture_usage,
+    generate_json,
+    get_generation_provider,
+)
 
 from .models import (
     Document,
@@ -487,15 +496,28 @@ def generate_vorgang_recommendations(
     """Erzeugt die Handlungsempfehlungen fuer einen Vorgang -- ein
     `generate()`-Call, `visible_to`-gescoped auf `user_id`.
 
-    Wirft nicht: ein Provider-Ausfall oder eine bis zuletzt unparsbare
-    Antwort landet als `status="failed"` + `error` am Lauf und damit
-    sichtbar im Panel. Genau das ist der Unterschied zu #1020 -- dort ist
-    die Analyse Beiwerk einer laufenden Pipeline, hier ist sie das
-    angeforderte Ergebnis.
+    Wirft nicht fuer einen Provider-Ausfall oder eine bis zuletzt
+    unparsbare Antwort: die landet als `status="failed"` + `error` am
+    Lauf und damit sichtbar im Panel. Genau das ist der Unterschied zu
+    #1020 -- dort ist die Analyse Beiwerk einer laufenden Pipeline, hier
+    ist sie das angeforderte Ergebnis.
+
+    Eine `TimeoutException` (Django-Q's eigenes "dein Task-Zeitbudget ist
+    aufgebraucht", #1134) ist die eine Ausnahme von "wirft nicht": sie
+    wird hier nur *aufgezeichnet* (Lauf auf `failed`, Grund im Panel),
+    dann aber weitergereicht. `TimeoutException` erbt bewusst von
+    `SystemExit`, nicht von `Exception` -- Django-Q's Worker soll den
+    Prozess danach neu starten (er kann nach einem hart unterbrochenen
+    Request in unklarem Zustand sein), und das passiert nur, wenn die
+    Ausnahme den Task-Aufruf tatsaechlich verlaesst statt hier zu
+    verpuffen.
     """
     vorgang = Vorgang.objects.get(pk=vorgang_id)
     run, _ = VorgangRecommendationRun.objects.get_or_create(vorgang=vorgang)
 
+    started = time.monotonic()
+    usages: list[Usage] = []
+    attempts = 0
     try:
         user = get_user_model().objects.get(pk=user_id)
         considered = list(_basis_documents(vorgang, user))
@@ -534,17 +556,37 @@ def generate_vorgang_recommendations(
             )
             return run
 
-        provider = generation_provider or get_generation_provider()
-        result = generate_json(
-            provider,
-            _build_messages(
-                vorgang, used, settings.FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS
-            ),
-            max_tokens=settings.FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS,
-            required_keys=_REQUIRED_KEYS,
-        )
+        # `capture_usage()` muss den `get_generation_provider()`-Aufruf
+        # umschliessen, nicht nur `generate_json()`: der Usage-Hook wird
+        # beim Bauen des Providers eingebunden (`registry._common_kwargs`),
+        # nicht bei jedem einzelnen Call -- ausserhalb konstruiert, kaeme
+        # hier nichts an.
+        with capture_usage() as usages:
+            provider = generation_provider or get_generation_provider()
+            result = generate_json(
+                provider,
+                _build_messages(
+                    vorgang, used, settings.FINDUS_VORGANG_RECOMMENDATION_MAX_ITEMS
+                ),
+                max_tokens=settings.FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS,
+                required_keys=_REQUIRED_KEYS,
+            )
+        attempts = result.attempts
         run.save(update_fields=["based_on", "updated_at"])
         _apply_result(run, result.data, used, model=result.model, version=result.version)
+    except TimeoutException:
+        logger.exception(
+            "Handlungsempfehlungen fuer Vorgang %s: Task-Zeitbudget aufgebraucht, "
+            "waehrend noch auf die KI-Antwort gewartet wurde",
+            vorgang_id,
+        )
+        run.status = VorgangRecommendationRun.Status.FAILED
+        run.error = (
+            "Zeitüberschreitung – die KI-Antwort kam nicht rechtzeitig zurück. "
+            "Bitte erneut versuchen."
+        )
+        run.save(update_fields=["status", "error", "updated_at"])
+        raise
     except Exception as exc:
         raw_text = getattr(exc, "raw_text", None)
         if raw_text is not None:
@@ -559,8 +601,52 @@ def generate_vorgang_recommendations(
         run.status = VorgangRecommendationRun.Status.FAILED
         run.error = str(exc)
         run.save(update_fields=["status", "error", "updated_at"])
+    finally:
+        # Ohne diese Zahlen ist jede Timeout-Diskussion Raterei (#1134):
+        # wie lange ein Lauf tatsaechlich braucht und wie viel Kontext er
+        # verbraucht, muss aus dem Log ablesbar sein, nicht geschaetzt
+        # werden -- unabhaengig davon, ob der Lauf am Ende erfolgreich war.
+        duration_seconds = time.monotonic() - started
+        prompt_tokens = sum(usage.prompt_tokens for usage in usages)
+        completion_tokens = sum(usage.completion_tokens for usage in usages)
+        logger.info(
+            "Handlungsempfehlungen fuer Vorgang %s: %.1fs Laufzeit, %s "
+            "generate()-Aufruf(e), %s Prompt-/%s Completion-Tokens",
+            vorgang_id,
+            duration_seconds,
+            attempts,
+            prompt_tokens,
+            completion_tokens,
+        )
 
     return run
+
+
+def expire_if_stalled(run: VorgangRecommendationRun | None) -> None:
+    """Netz gegen einen Job, der spurlos verschwindet -- Worker-Neustart,
+    OOM-Kill -- bevor `generate_vorgang_recommendations()` den eigenen
+    except-Block *oder* der Django-Q-`hook`
+    (`apps.documents.tasks.generate_vorgang_recommendations_hook`)
+    erreichen (#1134): beide setzen auf einen Python-Stack, der nach so
+    einem Abbruch gar nicht mehr laeuft.
+
+    Deshalb die Obergrenze hier, im Poll-Pfad selbst: haengt ein Lauf
+    laenger als `FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS` auf
+    `running`, ohne dass sich der Stand geaendert haette, markiert das
+    Panel ihn beim naechsten Poll selbst als fehlgeschlagen, statt den
+    Spinner unbegrenzt weiterzudrehen.
+    """
+    if run is None or run.status != VorgangRecommendationRun.Status.RUNNING:
+        return
+    age_seconds = (timezone.now() - run.updated_at).total_seconds()
+    if age_seconds < settings.FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS:
+        return
+    run.status = VorgangRecommendationRun.Status.FAILED
+    run.error = (
+        "Der Hintergrundjob hat sich nicht zurückgemeldet (Zeitüberschreitung "
+        "beim Warten auf ein Ergebnis)."
+    )
+    run.save(update_fields=["status", "error", "updated_at"])
 
 
 def is_stale_for(run, user) -> bool:

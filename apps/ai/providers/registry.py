@@ -8,12 +8,20 @@ code change.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from contextlib import contextmanager
+from typing import Callable, Iterator, Optional
 
 from django.conf import settings
 
 from .anthropic import AnthropicProvider
-from .base import EmbeddingProvider, GenerationProvider, ProviderError, UsageHook, VisionProvider
+from .base import (
+    EmbeddingProvider,
+    GenerationProvider,
+    ProviderError,
+    Usage,
+    UsageHook,
+    VisionProvider,
+)
 from .fake import FakeEmbeddingProvider, FakeGenerationProvider, FakeVisionProvider
 from .gemini import GeminiProvider
 from .ollama import OllamaProvider
@@ -29,6 +37,34 @@ def set_usage_hook(hook: Optional[UsageHook]) -> None:
     """
     global _usage_hook
     _usage_hook = hook
+
+
+@contextmanager
+def capture_usage() -> Iterator[list[Usage]]:
+    """Collect `Usage` for every embed()/generate() call made while the
+    context is open (#1134, "Laufzeit und Token-Verbrauch protokollieren"),
+    without displacing whatever hook is already registered.
+
+    The hook is bound into the provider instance at *construction* time
+    (see `_common_kwargs` below), not at call time -- so the provider has
+    to be built (`get_generation_provider()`/`get_embedding_provider()`)
+    *inside* this context to actually be captured. Building it earlier and
+    only calling `generate()`/`embed()` inside the context silently
+    captures nothing.
+    """
+    collected: list[Usage] = []
+    previous = _usage_hook
+
+    def _wrapped(capability, provider_name, model, usage):
+        collected.append(usage)
+        if previous:
+            previous(capability, provider_name, model, usage)
+
+    set_usage_hook(_wrapped)
+    try:
+        yield collected
+    finally:
+        set_usage_hook(previous)
 
 
 def _common_kwargs() -> dict:

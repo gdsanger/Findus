@@ -48,6 +48,7 @@ from .base import (
 )
 from .json_generation import JSONGenerationError, JSONGenerationResult, generate_json
 from .registry import (
+    capture_usage,
     get_embedding_provider,
     get_generation_provider,
     get_vision_provider,
@@ -70,6 +71,7 @@ __all__ = [
     "UsageHook",
     "VisionProvider",
     "VisionResult",
+    "capture_usage",
     "generate_json",
     "get_embedding_provider",
     "get_generation_provider",

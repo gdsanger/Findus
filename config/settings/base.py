@@ -194,13 +194,28 @@ CACHES = {
 
 # --------------------------------------------------------------------------
 # Background worker: Django-Q2 (not Celery), broker = Redis
+#
+# `timeout` is the *default* wall-clock budget a task gets before Django-Q
+# kills the worker process running it -- kept short so a genuinely hung
+# ingest/thumbnail job fails fast instead of tying up a worker slot. LLM
+# jobs whose provider call can legitimately run long (retries included)
+# override it per-task via `async_task(..., timeout=...)`, e.g.
+# `FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS` below (#1134).
+#
+# `retry` MUST stay greater than the largest `timeout` in use across the
+# cluster -- this one's cluster-wide, there is no per-task override.
+# Get it backwards and Django-Q requeues a task while the *first* attempt
+# is still running (its broker-visibility window expired before the task
+# itself did), so a slow-but-alive job runs twice: doubled provider calls,
+# doubled token cost, worst case an unbounded loop. Checked in
+# `apps.documents.test_contracts.QClusterRetryOutlivesTimeoutTests`.
 # --------------------------------------------------------------------------
 Q_CLUSTER = {
     "name": "findus",
     "workers": int(env("FINDUS_WORKER_COUNT", "2")),
     "recycle": 500,
     "timeout": 120,
-    "retry": 180,
+    "retry": 900,
     "compress": True,
     "label": "Findus Background Tasks",
     "redis": REDIS_URL,
@@ -402,6 +417,33 @@ FINDUS_VORGANG_RECOMMENDATION_MAX_COMMENTS = int(
 # Call mit dem doppelten Budget, statt das abgeschnittene JSON zu flicken.
 FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS = int(
     env("FINDUS_VORGANG_RECOMMENDATION_MAX_OUTPUT_TOKENS", "4000")
+)
+
+# Task-Timeout fuer den Empfehlungs-Job (#1134): ueberschreibt den
+# kurzen `Q_CLUSTER["timeout"]`-Default fuer genau diesen `async_task()`-
+# Aufruf (`vorgang_views.vorgang_recommendations_generate`). Muss die
+# Provider-Schicht bequem ueberstehen: `generate_json()` kann `generate()`
+# bis zu zweimal aufrufen (Retry bei abgeschnittener/unparsbarer Antwort,
+# #1096), jeder Call wiederum bis zu `1 + FINDUS_AI_MAX_RETRIES`-mal je
+# `FINDUS_AI_TIMEOUT_SECONDS` (apps.ai.providers.base.with_retry) -- macht
+# mit den Standardwerten (30s, 3 Retries) rechnerisch ~250s im
+# schlechtesten Fall, plus Backoff. 600s lassen davon reichlich Luft, ohne
+# den Worker unbegrenzt zu blockieren. Muss kleiner sein als
+# `Q_CLUSTER["retry"]` (siehe dortiger Kommentar) -- sonst laeuft der
+# Job doppelt.
+FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS", "600")
+)
+
+# Obergrenze fuers Panel-Polling (#1134,
+# apps.documents.recommendations.expire_if_stalled): verschwindet der
+# Worker-Prozess spurlos (Neustart, OOM-Kill), bevor er selbst oder der
+# Django-Q-`hook` den Lauf auf `failed` setzen kann, wuerde der Spinner
+# sonst unbegrenzt weiterdrehen. Groesser als
+# FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS, damit ein Lauf, der
+# noch regulaer laeuft, nicht faelschlich als haengengeblieben gilt.
+FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS = int(
+    env("FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS", "1200")
 )
 
 # --------------------------------------------------------------------------
