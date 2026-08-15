@@ -1,0 +1,120 @@
+{% comment %}
+Wiedervorlagen-Ansicht (#1129): dokumentübergreifende Terminliste statt
+Kachel/Liste/Timeline -- gelistet wird der einzelne Kommentar-Eintrag, nicht
+das Dokument (ein Dokument mit zwei Terminen erscheint zweimal), gruppiert
+serverseitig (`views._grouped_follow_up_entries`) nach Fälligkeit.
+
+Semantische Suche (`q`) schaltet in `document_list` immer auf die
+Trefferliste zurück, bevor dieses Partial überhaupt gewählt wird -- eine
+Ranking-Ansicht und eine Terminliste lassen sich nicht sinnvoll
+übereinanderlegen (siehe `views.document_list`). Der Filter „fällig" ist
+hier redundant (die Gruppierung zeigt ohnehin jede Wiedervorlage) und in
+`_filter_bar.html` ausgeblendet.
+{% endcomment %}
+{% if page_obj %}
+<div class="findus-followups">
+    {% for group in follow_up_groups %}
+    <section class="findus-followup-group findus-followup-group--{{ group.key }}">
+        <h3 class="findus-followup-group-header">
+            <span class="findus-followup-group-title">{{ group.label }}</span>
+            <span class="badge text-bg-secondary fw-normal">{{ group.entries|length }}</span>
+        </h3>
+        <ul class="findus-followup-items">
+            {% for entry in group.entries %}
+            <li class="findus-followup-item">
+                <a
+                    class="findus-followup-item-thumb"
+                    href="{% url 'documents:detail' entry.document.pk %}"
+                    aria-label="Datensatz „{{ entry.document.title }}“ öffnen"
+                >
+                    {% if entry.document.thumbnail %}
+                    <img
+                        class="findus-followup-item-thumb-img"
+                        src="{% url 'documents:thumbnail' entry.document.pk %}"
+                        loading="lazy"
+                        alt=""
+                    >
+                    {% else %}
+                    <span class="findus-followup-item-thumb-placeholder" aria-hidden="true">
+                        <svg viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.25">
+                            <path d="M4 1.5h5L12.5 5v9.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/>
+                            <path d="M9 1.5V5h3.5"/>
+                        </svg>
+                    </span>
+                    {% endif %}
+                </a>
+                <div class="findus-followup-item-body">
+                    <div class="findus-followup-item-header">
+                        <span class="findus-followup-item-date">{{ entry.follow_up_date|date:"d.m.Y" }}</span>
+                        {% if entry.remind and entry.reminded_at %}
+                        <span class="badge text-bg-secondary" title="Erinnerungsmail wurde bereits verschickt">
+                            Erinnert
+                        </span>
+                        {% elif entry.remind %}
+                        <span class="badge text-bg-info" title="Erinnerungsmail ist geplant">
+                            Erinnerung geplant
+                        </span>
+                        {% endif %}
+                    </div>
+                    <p class="findus-followup-item-comment">{{ entry.body }}</p>
+                    <div class="findus-followup-item-meta">
+                        <a class="findus-followup-item-title" href="{% url 'documents:detail' entry.document.pk %}">
+                            {{ entry.document.title }}
+                        </a>
+                        {% if entry.document.correspondent %}
+                        <a
+                            class="findus-followup-item-correspondent"
+                            href="{% url 'documents:correspondent_detail' entry.document.correspondent.pk %}"
+                        >{{ entry.document.correspondent.name }}</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endfor %}
+
+    {% if page_obj.paginator.num_pages > 1 %}
+    <nav aria-label="Seiten" class="findus-pagination">
+        <ul class="pagination pagination-sm mb-0">
+            <li class="page-item {% if not page_obj.has_previous %}disabled{% endif %}">
+                <a
+                    class="page-link"
+                    {% if page_obj.has_previous %}
+                    href="?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                    hx-get="{{ list_url }}?{{ query_without_page }}&page={{ page_obj.previous_page_number }}"
+                    hx-target="#document-list-region"
+                    hx-swap="innerHTML"
+                    hx-push-url="true"
+                    {% endif %}
+                >Zurück</a>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link">Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}</span>
+            </li>
+            <li class="page-item {% if not page_obj.has_next %}disabled{% endif %}">
+                <a
+                    class="page-link"
+                    {% if page_obj.has_next %}
+                    href="?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                    hx-get="{{ list_url }}?{{ query_without_page }}&page={{ page_obj.next_page_number }}"
+                    hx-target="#document-list-region"
+                    hx-swap="innerHTML"
+                    hx-push-url="true"
+                    {% endif %}
+                >Weiter</a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% else %}
+<p class="text-muted">
+    {% if selected.correspondent or selected.vorgang or selected.tag or selected.status or selected.direction or selected.sphere or selected.tax_relevance or selected.action_status %}
+    Keine Wiedervorlagen.
+    {% else %}
+    Keine offenen Wiedervorlagen.
+    {% endif %}
+</p>
+{% endif %}

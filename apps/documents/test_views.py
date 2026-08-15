@@ -32,6 +32,7 @@ from .models import (
     Task,
     Vorgang,
     VorgangSuggestion,
+    follow_up_week_end,
     link_documents,
 )
 
@@ -3361,6 +3362,413 @@ class NavOpenActionStatusBadgeTests(TestCase):
     def test_nav_badge_is_absent_when_no_open_documents(self):
         self._make_document(Document.ActionStatus.DONE)
 
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "findus-nav-badge")
+
+
+class DocumentCommentFollowUpQuerySetTests(TestCase):
+    """Covers the time-window queryset methods added for the Wiedervorlagen-
+
+    Ansicht (#1129) -- `overdue`/`due_today`/`due_this_week`/`due_later`,
+    kept separate from the existing `due()` (überfällig *und* heute, #1125)
+    which continues to drive the card indicator and the reminder job.
+    """
+
+    def setUp(self):
+        self.document = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.PRIVATE
+        )
+
+    def _comment(self, follow_up_date):
+        return DocumentComment.objects.create(
+            document=self.document, body="Wiedervorlage", follow_up_date=follow_up_date
+        )
+
+    def test_overdue_excludes_today_and_future(self):
+        monday = datetime.date(2026, 8, 17)
+        overdue = self._comment(monday - datetime.timedelta(days=1))
+        self._comment(monday)
+        self._comment(monday + datetime.timedelta(days=1))
+
+        result = list(DocumentComment.objects.overdue(on=monday))
+
+        self.assertEqual(result, [overdue])
+
+    def test_due_today_matches_only_today(self):
+        monday = datetime.date(2026, 8, 17)
+        self._comment(monday - datetime.timedelta(days=1))
+        today = self._comment(monday)
+        self._comment(monday + datetime.timedelta(days=1))
+
+        result = list(DocumentComment.objects.due_today(on=monday))
+
+        self.assertEqual(result, [today])
+
+    def test_due_this_week_spans_tomorrow_through_sunday(self):
+        monday = datetime.date(2026, 8, 17)
+        self._comment(monday)  # heute -- gehoert nicht zu "diese Woche"
+        tomorrow = self._comment(monday + datetime.timedelta(days=1))
+        sunday = self._comment(monday + datetime.timedelta(days=6))
+        self._comment(monday + datetime.timedelta(days=7))  # naechster Montag -- "spaeter"
+
+        result = list(DocumentComment.objects.due_this_week(on=monday))
+
+        self.assertCountEqual(result, [tomorrow, sunday])
+
+    def test_due_later_starts_after_sunday(self):
+        monday = datetime.date(2026, 8, 17)
+        self._comment(monday + datetime.timedelta(days=6))  # Sonntag -- noch "diese Woche"
+        later = self._comment(monday + datetime.timedelta(days=7))
+
+        result = list(DocumentComment.objects.due_later(on=monday))
+
+        self.assertEqual(result, [later])
+
+    def test_due_this_week_is_empty_on_a_sunday(self):
+        """Am Sonntag ist "heute" bereits der letzte Tag der Woche -- die
+        Gruppe "Diese Woche" faellt dann leer aus statt mit `follow_up_date__gte`
+        > `follow_up_date__lte` eine kaputte Query zu bauen.
+        """
+        sunday = datetime.date(2026, 8, 16)
+        self._comment(sunday + datetime.timedelta(days=1))
+
+        result = list(DocumentComment.objects.due_this_week(on=sunday))
+
+        self.assertEqual(result, [])
+
+    def test_follow_up_week_end_is_the_upcoming_sunday(self):
+        monday = datetime.date(2026, 8, 17)
+        self.assertEqual(follow_up_week_end(monday), datetime.date(2026, 8, 23))
+
+        sunday = datetime.date(2026, 8, 16)
+        self.assertEqual(follow_up_week_end(sunday), sunday)
+
+
+class DocumentFollowUpViewTests(TestCase):
+    """Covers `view=wiedervorlagen` (#1129): the dokumentübergreifende
+
+    Terminliste that lists individual `DocumentComment` follow-up entries
+    instead of documents, grouped by Fälligkeit.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.acme = Correspondent.objects.create(name="Acme GmbH")
+
+        self.doc_a = Document.objects.create(
+            title="Rechnung Acme",
+            correspondent=self.acme,
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        self.doc_a.departments.add(self.dept_a)
+
+        self.doc_b = Document.objects.create(
+            title="Vertrag Fremd", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc_b.departments.add(self.dept_b)
+
+    def _get(self, **params):
+        self.client.force_login(self.user_a)
+        params.setdefault("view", "wiedervorlagen")
+        return self.client.get(reverse("documents:home"), params)
+
+    def test_view_switcher_offers_wiedervorlagen(self):
+        response = self._get()
+
+        self.assertContains(response, 'data-view-value="wiedervorlagen"')
+        self.assertContains(response, "Wiedervorlagen")
+
+    def test_follow_up_dropdown_is_hidden_in_this_view(self):
+        response = self._get()
+
+        self.assertContains(response, 'id="filter-follow-up-field" hidden')
+
+    def test_empty_state_without_filters(self):
+        response = self._get()
+
+        self.assertContains(response, "Keine offenen Wiedervorlagen.")
+
+    def test_empty_state_with_active_filter(self):
+        response = self._get(correspondent=self.acme.pk)
+
+        self.assertContains(response, "Keine Wiedervorlagen.")
+
+    def test_entry_shows_date_comment_title_correspondent_and_links(self):
+        today = timezone.localdate()
+        DocumentComment.objects.create(
+            document=self.doc_a, body="Skonto bis 20.08. prüfen", follow_up_date=today
+        )
+
+        response = self._get()
+
+        self.assertContains(response, "Skonto bis 20.08. prüfen")
+        self.assertContains(response, "Rechnung Acme")
+        self.assertContains(response, "Acme GmbH")
+        self.assertContains(response, reverse("documents:detail", args=[self.doc_a.pk]))
+        self.assertContains(
+            response, reverse("documents:correspondent_detail", args=[self.acme.pk])
+        )
+
+    def test_document_with_two_follow_ups_appears_twice(self):
+        today = timezone.localdate()
+        DocumentComment.objects.create(
+            document=self.doc_a, body="Erster Termin", follow_up_date=today
+        )
+        DocumentComment.objects.create(
+            document=self.doc_a, body="Zweiter Termin", follow_up_date=today
+        )
+
+        response = self._get()
+
+        self.assertContains(response, "Erster Termin")
+        self.assertContains(response, "Zweiter Termin")
+        # Zwei Eintraege desselben Dokuments -> zwei Titel-Links (die
+        # Vorschaubild-`aria-label`s tragen den Titel zusaetzlich, ein
+        # roher Substring-Count auf "Rechnung Acme" waere daher zu hoch).
+        self.assertContains(response, 'class="findus-followup-item-title"', count=2)
+
+    def test_grouping_headers_appear_in_ascending_order(self):
+        today = timezone.localdate()
+        week_end = follow_up_week_end(today)
+        DocumentComment.objects.create(
+            document=self.doc_a,
+            body="Ueberfaellig",
+            follow_up_date=today - datetime.timedelta(days=1),
+        )
+        DocumentComment.objects.create(document=self.doc_a, body="Heute", follow_up_date=today)
+        if week_end > today:
+            DocumentComment.objects.create(
+                document=self.doc_a, body="Diese Woche", follow_up_date=week_end
+            )
+        DocumentComment.objects.create(
+            document=self.doc_a,
+            body="Spaeter",
+            follow_up_date=week_end + datetime.timedelta(days=1),
+        )
+
+        response = self._get()
+        content = response.content.decode()
+
+        # Über die Gruppen-Wrapper-Klassen suchen, nicht die reinen Label-
+        # Texte -- der Nav-Badge-Titel enthaelt "Überfällige" als Substring
+        # und rendert vor dem Content, was `.index("Überfällig")` sonst
+        # immer auf die Nav statt die Wiedervorlagen-Gruppe treffen liesse.
+        overdue_pos = content.index("findus-followup-group--overdue")
+        today_pos = content.index("findus-followup-group--today")
+        later_pos = content.index("findus-followup-group--later")
+        self.assertLess(overdue_pos, today_pos)
+        self.assertLess(today_pos, later_pos)
+        if week_end > today:
+            this_week_pos = content.index("findus-followup-group--this_week")
+            self.assertLess(today_pos, this_week_pos)
+            self.assertLess(this_week_pos, later_pos)
+
+    def test_erledigt_document_is_excluded_even_when_overdue(self):
+        self.doc_a.action_status = Document.ActionStatus.DONE
+        self.doc_a.save(update_fields=["action_status"])
+        DocumentComment.objects.create(
+            document=self.doc_a,
+            body="Laengst faellig",
+            follow_up_date=timezone.localdate() - datetime.timedelta(days=30),
+        )
+
+        response = self._get()
+
+        self.assertNotContains(response, "Laengst faellig")
+
+    def test_offen_and_keine_action_status_documents_are_both_included(self):
+        self.doc_a.action_status = Document.ActionStatus.OPEN
+        self.doc_a.save(update_fields=["action_status"])
+        today = timezone.localdate()
+        DocumentComment.objects.create(document=self.doc_a, body="Offen faellig", follow_up_date=today)
+
+        other = Document.objects.create(
+            title="Ohne Handlungsbedarf",
+            visibility=Document.Visibility.DEPARTMENT,
+            action_status=Document.ActionStatus.NONE,
+        )
+        other.departments.add(self.dept_a)
+        DocumentComment.objects.create(document=other, body="Keine faellig", follow_up_date=today)
+
+        response = self._get()
+
+        self.assertContains(response, "Offen faellig")
+        self.assertContains(response, "Keine faellig")
+
+    def test_visibility_scoping_hides_foreign_department_entries(self):
+        DocumentComment.objects.create(
+            document=self.doc_b, body="Fremder Termin", follow_up_date=timezone.localdate()
+        )
+
+        response = self._get()
+
+        self.assertNotContains(response, "Fremder Termin")
+
+    def test_correspondent_filter_narrows_entries(self):
+        other = Correspondent.objects.create(name="Andere GmbH")
+        other_doc = Document.objects.create(
+            title="Anderes Dokument", correspondent=other, visibility=Document.Visibility.DEPARTMENT
+        )
+        other_doc.departments.add(self.dept_a)
+        today = timezone.localdate()
+        DocumentComment.objects.create(document=self.doc_a, body="Acme Termin", follow_up_date=today)
+        DocumentComment.objects.create(document=other_doc, body="Anderer Termin", follow_up_date=today)
+
+        response = self._get(correspondent=self.acme.pk)
+
+        self.assertContains(response, "Acme Termin")
+        self.assertNotContains(response, "Anderer Termin")
+
+    def test_reminder_indicator_reflects_remind_and_reminded_at(self):
+        today = timezone.localdate()
+        DocumentComment.objects.create(
+            document=self.doc_a,
+            body="Erinnerung geplant Kommentar",
+            follow_up_date=today,
+            remind=True,
+        )
+        DocumentComment.objects.create(
+            document=self.doc_a,
+            body="Bereits erinnert Kommentar",
+            follow_up_date=today,
+            remind=True,
+            reminded_at=timezone.now(),
+        )
+        DocumentComment.objects.create(
+            document=self.doc_a,
+            body="Ohne Erinnerung Kommentar",
+            follow_up_date=today,
+            remind=False,
+        )
+
+        response = self._get()
+
+        self.assertContains(response, "Erinnerung geplant")
+        self.assertContains(response, "Erinnert")
+
+    def test_semantic_search_overrides_wiedervorlagen_view(self):
+        DocumentComment.objects.create(
+            document=self.doc_a, body="Suchbegriff-Termin", follow_up_date=timezone.localdate()
+        )
+
+        with patch(
+            "apps.documents.retrieval.get_embedding_provider",
+            return_value=_StubEmbeddingProvider(_one_hot(0)),
+        ):
+            response = self._get(q="Rechnung")
+
+        self.assertTemplateUsed(response, "documents/partials/_search_results.html")
+        self.assertTemplateNotUsed(response, "documents/partials/_document_followups.html")
+
+    def test_pagination_matches_other_views(self):
+        today = timezone.localdate()
+        for i in range(21):
+            DocumentComment.objects.create(
+                document=self.doc_a,
+                body=f"Termin {i}",
+                follow_up_date=today + datetime.timedelta(days=i),
+            )
+
+        response = self._get()
+
+        self.assertContains(response, "Seite 1 von 2")
+
+    def test_no_n_plus_one_query_for_growing_entry_count(self):
+        counter = iter(range(1000))
+
+        def _populate(count):
+            for _ in range(count):
+                n = next(counter)
+                correspondent = Correspondent.objects.create(name=f"Kontakt {n}")
+                document = Document.objects.create(
+                    title=f"Dokument {n}",
+                    correspondent=correspondent,
+                    visibility=Document.Visibility.DEPARTMENT,
+                )
+                document.departments.add(self.dept_a)
+                DocumentComment.objects.create(
+                    document=document, body=f"Termin {n}", follow_up_date=timezone.localdate()
+                )
+
+        url = reverse("documents:home")
+        self.client.force_login(self.user_a)
+
+        _populate(1)
+        with CaptureQueriesContext(connection) as few:
+            self.client.get(url, {"view": "wiedervorlagen"})
+
+        _populate(4)
+        with CaptureQueriesContext(connection) as many:
+            self.client.get(url, {"view": "wiedervorlagen"})
+
+        self.assertEqual(len(many.captured_queries), len(few.captured_queries))
+
+
+class NavDueFollowUpBadgeTests(TestCase):
+    """Covers the nav badge next to "Dokumente" (#1129): überfällige + heute
+
+    fällige Wiedervorlagen offener Dokumente, fed by
+    `apps.documents.context_processors.due_follow_up_count` -- present on
+    every page, not just Home.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+    def _document(self, *, action_status=Document.ActionStatus.NONE):
+        document = Document.objects.create(
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            action_status=action_status,
+        )
+        document.departments.add(self.dept_a)
+        return document
+
+    def test_badge_counts_overdue_and_today_only(self):
+        today = timezone.localdate()
+        document = self._document()
+        DocumentComment.objects.create(
+            document=document, body="Ueberfaellig", follow_up_date=today - datetime.timedelta(days=1)
+        )
+        DocumentComment.objects.create(document=document, body="Heute", follow_up_date=today)
+        DocumentComment.objects.create(
+            document=document, body="Diese Woche", follow_up_date=today + datetime.timedelta(days=1)
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertContains(
+            response,
+            '<span class="badge text-bg-warning findus-nav-badge" '
+            'title="Überfällige und heute fällige Wiedervorlagen">2</span>',
+        )
+
+    def test_badge_excludes_erledigt_documents(self):
+        today = timezone.localdate()
+        document = self._document(action_status=Document.ActionStatus.DONE)
+        DocumentComment.objects.create(
+            document=document, body="Ueberfaellig", follow_up_date=today - datetime.timedelta(days=1)
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:home"))
+
+        self.assertNotContains(response, "findus-nav-badge")
+
+    def test_badge_is_absent_when_zero(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:home"))
 

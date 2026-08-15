@@ -1,3 +1,4 @@
+import datetime
 import mimetypes
 import re
 
@@ -671,6 +672,18 @@ class Document(TimeStampedModel):
         ]
 
 
+def follow_up_week_end(today):
+    """Sonntag der Woche von `today` (#1129, ISO-Wochenstart Montag) --
+
+    die Wochengrenze fuer die Gruppe "Diese Woche" (ab morgen bis
+    einschliesslich diesem Sonntag). Modulfunktion statt einer zweiten Kopie
+    der Arithmetik: sowohl die `due_this_week`/`due_later`-Zeitfenster unten
+    als auch die Gruppierung der Wiedervorlagen-Ansicht (`views.py`)
+    referenzieren dieselbe Regel.
+    """
+    return today + datetime.timedelta(days=6 - today.weekday())
+
+
 class DocumentCommentQuerySet(models.QuerySet):
     def due(self, *, on=None):
         """Kommentare mit einer Wiedervorlage, die heute oder frueher liegt
@@ -689,6 +702,48 @@ class DocumentCommentQuerySet(models.QuerySet):
         einmal erinnert.
         """
         return self.due(on=on).filter(remind=True, reminded_at__isnull=True)
+
+    def with_follow_up(self):
+        """Kommentare mit gesetzter Wiedervorlage, unabhaengig vom Datum
+
+        (#1129) -- gemeinsame Basis der Zeitfenster unten und der
+        Wiedervorlagen-Ansicht.
+        """
+        return self.filter(follow_up_date__isnull=False)
+
+    def overdue(self, *, on=None):
+        """Ueberfaellige Wiedervorlagen (#1129) -- eigene Gruppe getrennt von
+
+        `due()` (ueberfaellig *und* heute), das weiterhin unveraendert den
+        Karten-/Erinnerungs-Indikator treibt.
+        """
+        cutoff = on or timezone.localdate()
+        return self.with_follow_up().filter(follow_up_date__lt=cutoff)
+
+    def due_today(self, *, on=None):
+        """Heute faellige Wiedervorlagen (#1129)."""
+        day = on or timezone.localdate()
+        return self.with_follow_up().filter(follow_up_date=day)
+
+    def due_this_week(self, *, on=None):
+        """Wiedervorlagen ab morgen bis einschliesslich Sonntag dieser Woche
+
+        (#1129, siehe `follow_up_week_end`) -- faellt an einem Sonntag leer
+        aus, weil "heute" dann bereits der letzte Tag der Woche ist.
+        """
+        today = on or timezone.localdate()
+        tomorrow = today + datetime.timedelta(days=1)
+        week_end = follow_up_week_end(today)
+        if tomorrow > week_end:
+            return self.none()
+        return self.with_follow_up().filter(
+            follow_up_date__gte=tomorrow, follow_up_date__lte=week_end
+        )
+
+    def due_later(self, *, on=None):
+        """Wiedervorlagen nach dieser Woche (#1129)."""
+        today = on or timezone.localdate()
+        return self.with_follow_up().filter(follow_up_date__gt=follow_up_week_end(today))
 
 
 class DocumentComment(TimeStampedModel):

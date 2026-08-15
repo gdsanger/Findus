@@ -99,7 +99,11 @@
             {% endfor %}
         </select>
     </div>
-    <div class="findus-filter-field">
+    {# Wiedervorlage-Filter ist in der Wiedervorlagen-Ansicht redundant --
+    diese Ansicht zeigt ohnehin jede Wiedervorlage, gruppiert nach
+    Fälligkeit (#1129) -- deshalb hier ausgeblendet statt nur ignoriert;
+    `_followup_entries()` wertet `follow_up` serverseitig ohnehin nicht aus. #}
+    <div class="findus-filter-field" id="filter-follow-up-field"{% if selected.view == "wiedervorlagen" %} hidden{% endif %}>
         <label class="form-label" for="filter-follow-up">Wiedervorlage</label>
         <select id="filter-follow-up" name="follow_up" class="form-select form-select-sm">
             <option value="">Alle</option>
@@ -111,7 +115,7 @@
     <div class="findus-filter-field">
         <span class="form-label d-block">Ansicht</span>
         <div class="btn-group btn-group-sm findus-view-toggle" role="group" aria-label="Ansicht wählen">
-            {# Kachel (#1124) ist Default -> `view=grid`; "" = Liste, "timeline" = Zeitleiste. #}
+            {# Kachel (#1124) ist Default -> `view=grid`; "" = Liste, "timeline" = Zeitleiste, "wiedervorlagen" = Terminliste (#1129). #}
             <input type="hidden" name="view" id="filter-view" value="{{ selected.view }}">
             <button
                 type="button"
@@ -131,6 +135,12 @@
                 data-view-value="timeline"
                 aria-pressed="{% if selected.view == "timeline" %}true{% else %}false{% endif %}"
             >Timeline</button>
+            <button
+                type="button"
+                class="btn btn-outline-secondary findus-view-toggle-btn{% if selected.view == "wiedervorlagen" %} active{% endif %}"
+                data-view-value="wiedervorlagen"
+                aria-pressed="{% if selected.view == "wiedervorlagen" %}true{% else %}false{% endif %}"
+            >Wiedervorlagen</button>
         </div>
     </div>
     <div class="findus-filter-field findus-filter-actions">
@@ -154,6 +164,7 @@
     var toggle = form ? form.querySelector(".findus-view-toggle") : null;
     var hidden = toggle ? toggle.querySelector("input[name='view']") : null;
     var region = document.getElementById("document-list-region");
+    var followUpField = document.getElementById("filter-follow-up-field");
     if (!form || !toggle || !hidden) {
         return;
     }
@@ -165,6 +176,11 @@
             btn.classList.toggle("active", isActive);
             btn.setAttribute("aria-pressed", isActive ? "true" : "false");
         });
+        // Wiedervorlage-Filter ist in der Wiedervorlagen-Ansicht redundant
+        // (#1129) -- sie zeigt ohnehin jede Wiedervorlage.
+        if (followUpField) {
+            followUpField.hidden = current === "wiedervorlagen";
+        }
     }
 
     toggle.addEventListener("click", function (event) {
