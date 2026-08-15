@@ -2033,6 +2033,23 @@ a.findus-kpi-card:focus-visible {
     font-size: var(--findus-font-size-sm);
 }
 
+/* „Auf welches Dokument antworten?" (#1138): Aktion links, Beschriftung
+   rechts -- bei schmalem Viewport stapeln beide statt den Titel zu
+   quetschen. */
+.findus-letter-source-option {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--findus-space-2);
+    padding: var(--findus-space-2) 0;
+    border-bottom: 1px solid var(--findus-border);
+}
+
+.findus-letter-source-option:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+}
+
 .findus-letter-placeholder-row {
     display: flex;
     flex-wrap: wrap;

@@ -1,13 +1,21 @@
 """UI für den KI-Brief aus einer Vorlage (#1095): wählen → generieren →
 prüfen → freigeben.
 
-Der Ablauf in drei Seiten/Endpunkten:
+**Ein Schreiben ist immer eine Antwort auf ein Dokument** (#1138). Es gibt
+keinen zweiten Modus mehr: ohne Bezugsdokument ist der Kontext für die
+Platzhalter nicht eindeutig -- ein Vorgang bündelt mehrere Dokumente und
+mehrere Kontakte, und „welches gewinnt?" wäre eine Rateregel. Der Einstieg
+aus dem Vorgang bleibt erhalten, führt aber über
+`letter_draft_pick_source` („Auf welches Dokument antworten?").
 
-1. `letter_draft_start` -- Einstieg vom Dokument-Detail („Antwortschreiben
-   erstellen", der Hauptweg) oder vom Vorgang-Hub. Vorlage wählen, die
-   `manual`-Platzhalter ausfüllen, Hinweise dazuschreiben. Alles, was sich
-   aus Findus-Daten binden lässt, wird hier nur *angezeigt* (Provenienz),
-   nicht abgefragt.
+Der Ablauf in vier Seiten/Endpunkten:
+
+0. `letter_draft_pick_source` -- nur aus dem Vorgang heraus: das
+   Bezugsdokument wählen. Aus einem Dokument heraus entfällt der Schritt.
+1. `letter_draft_start` -- Vorlage wählen, Empfänger/Vorgang bestätigen,
+   Lücken füllen, Hinweise dazuschreiben. Was sich aus dem Bezugsdokument
+   binden lässt, wird *angezeigt* (Provenienz); was fehlt, wird mit Grund
+   angezeigt und als Eingabefeld abgefragt.
 2. `letter_draft_detail` + `letter_draft_panel` -- die Werkbank. Der
    Worker formuliert (async, ein `generate()`-Call), das Panel pollt sich
    selbst, danach steht der Text editierbar da und lässt sich beliebig oft
@@ -38,7 +46,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .forms import LetterDraftEditForm, LetterDraftStartForm
-from .letter_bindings import MANUAL_SOURCE, build_context, resolve_placeholders
+from .letter_bindings import build_context, resolve_bindings
 from .letter_filing import finalize_letter_draft
 from .letter_render import render_draft_files
 from .models import Correspondent, Document, LetterDraft, LetterTemplate, Vorgang
@@ -97,27 +105,15 @@ def _layout_snapshot(template) -> dict:
     return {key: template.layout_value(key) for key in DEFAULT_LETTER_LAYOUT}
 
 
-def _start_context(request, form, *, document, vorgang, template):
-    """Kontext der Einstiegsseite -- inklusive der *aufgelösten*
-    Auto-Bindungen, damit vor dem Generieren sichtbar ist, welche Werte
-    die KI bekommt und welche fehlen.
-    """
-    bindings = []
-    missing_required = []
-    if template is not None:
-        recipient = document.correspondent if document is not None else None
-        values = resolve_placeholders(
-            template,
-            build_context(document=document, vorgang=vorgang, kontakt=recipient),
-        )
-        for placeholder in template.placeholders.all():
-            if placeholder.source == MANUAL_SOURCE:
-                continue
-            value = values.get(placeholder.key, "")
-            bindings.append({"placeholder": placeholder, "value": value})
-            if placeholder.required and not value:
-                missing_required.append(placeholder)
+def _start_context(request, form, *, document, vorgang, template, bindings):
+    """Kontext der Einstiegsseite -- inklusive der *aufgelösten* Bindungen,
+    damit vor dem Generieren sichtbar ist, welche Werte die KI bekommt,
+    welche fehlen und warum.
 
+    `resolved`/`missing_required` sind zwei Sichten auf dieselbe
+    `resolve_bindings`-Antwort, keine zweite Herleitung -- was fehlt, hängt
+    als Eingabefeld am Formular (`form.value_rows`).
+    """
     return {
         "form": form,
         "document": document,
@@ -125,25 +121,73 @@ def _start_context(request, form, *, document, vorgang, template):
         "template": template,
         "templates": _visible_templates(request.user),
         "bindings": bindings,
-        "missing_required": missing_required,
+        # Nur die gebundenen Werte, die dastehen -- die Kontrollansicht.
+        "resolved": [
+            binding for binding in bindings if not binding.is_manual and not binding.is_missing
+        ],
+        "missing_required": [
+            binding for binding in bindings if binding.required and binding.is_missing
+        ],
     }
+
+
+def _visible_vorgang_documents(user, vorgang):
+    """Die für den Nutzer sichtbaren Dokumente eines Vorgangs, jüngste
+    zuerst.
+
+    Sortiert nach `display_date` und damit in Python: das ist eine
+    Property (Dokumentdatum mit Rückfall aufs Upload-Datum, #1085), und die
+    Liste eines Vorgangs ist klein genug, dass sie dafür nicht in die
+    Datenbank muss.
+    """
+    documents = (
+        Document.objects.visible_to(user)
+        .filter(vorgaenge=vorgang)
+        .select_related("correspondent")
+        .distinct()
+    )
+    return sorted(documents, key=lambda document: document.display_date, reverse=True)
+
+
+@login_required
+def letter_draft_pick_source(request, vorgang_pk):
+    """„Auf welches Dokument antworten?" -- der vorgeschaltete Schritt beim
+    Einstieg aus dem Vorgang (#1138).
+
+    Reine Auswahlseite, sie schreibt nichts. Angeboten werden ausschließlich
+    Dokumente, die für den anfragenden Nutzer sichtbar sind -- der Vorgang
+    selbst ist kein Sichtbarkeitsträger, seine Dokumente sind es.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=vorgang_pk)
+    return render(
+        request,
+        "documents/letters/pick_source.html",
+        {
+            "vorgang": vorgang,
+            "documents": _visible_vorgang_documents(request.user, vorgang),
+        },
+    )
 
 
 def _context_objects(request):
     """Bezugsdokument und Vorgang aus der Query/dem POST -- beide gescoped.
 
-    Der Vorgang ergibt sich aus dem Dokument, wenn keiner genannt wurde:
-    „Antwortschreiben zu diesem Bescheid" gehört in dieselbe Akte wie der
-    Bescheid.
+    Das Dokument ist seit #1138 Pflicht (der Aufrufer prüft das); der
+    Vorgang ergibt sich daraus, wenn keiner genannt wurde: „Antwortschreiben
+    zu diesem Bescheid" gehört in dieselbe Akte wie der Bescheid. Ein
+    genannter Vorgang zählt nur, wenn das Bezugsdokument auch darin liegt --
+    sonst käme über die URL ein fremder Vorgang in den Prompt und später an
+    das abgelegte Schreiben.
     """
     document_id = (request.POST.get("document") or request.GET.get("document") or "").strip()
     vorgang_id = (request.POST.get("vorgang") or request.GET.get("vorgang") or "").strip()
 
     document = _visible_document(request.user, document_id) if document_id.isdigit() else None
-    vorgang = get_object_or_404(Vorgang, pk=vorgang_id) if vorgang_id.isdigit() else None
-    if vorgang is None and document is not None:
-        vorgang = document.vorgaenge.first()
-    return document, vorgang
+    if document is None:
+        return None, None
+
+    vorgang = document.vorgaenge.filter(pk=vorgang_id).first() if vorgang_id.isdigit() else None
+    return document, vorgang or document.vorgaenge.first()
 
 
 def _selected_template(request, data):
@@ -153,9 +197,30 @@ def _selected_template(request, data):
     return _visible_templates(request.user).filter(pk=template_id).first()
 
 
+def _selected_recipient(document, data):
+    """Der Empfänger für diesen Brief: was das Formular sagt, sonst der
+    Kontakt des Bezugsdokuments.
+
+    Die Ableitung aus dem Dokument ist ein *Vorschlag* (#1138) -- wer
+    „– kein Empfänger –" wählt, meint das, deshalb entscheidet das
+    Vorhandensein des Feldes im POST und nicht die Leere seines Werts.
+    """
+    if "recipient" not in data:
+        return document.correspondent
+    recipient_id = (data.get("recipient") or "").strip()
+    if not recipient_id.isdigit():
+        return None
+    return Correspondent.objects.filter(pk=recipient_id).first()
+
+
 @login_required
 def letter_draft_start(request):
     """Vorlage wählen und den Entwurf anstoßen (#1095, Schritt 1+2).
+
+    Ohne sichtbares Bezugsdokument gibt es keinen Einstieg mehr (#1138):
+    Wer mit einem Vorgang kommt (alter Link, Lesezeichen), landet auf der
+    Dokumentauswahl statt in einem Formular, das anschließend die Hälfte
+    seiner Werte nicht auflösen kann.
 
     Der POST legt den Entwurf an und reiht den Worker-Job ein -- er
     schreibt damit als einziger Nicht-Freigabe-Pfad überhaupt etwas, und
@@ -163,45 +228,93 @@ def letter_draft_start(request):
     auftaucht.
     """
     document, vorgang = _context_objects(request)
+    if document is None:
+        vorgang_id = (request.GET.get("vorgang") or "").strip()
+        if vorgang_id.isdigit() and Vorgang.objects.filter(pk=vorgang_id).exists():
+            return redirect("documents:letter_draft_pick_source", vorgang_pk=int(vorgang_id))
+        raise Http404(
+            "Ein Schreiben entsteht immer als Antwort auf ein Dokument – "
+            "es fehlt ein sichtbares Bezugsdokument."
+        )
+
+    data = request.POST if request.method == "POST" else request.GET
+    template = _selected_template(request, data)
+    recipient = _selected_recipient(document, data)
+    # Bindungen ohne die Eingaben des Nutzers: sie bestimmen, welche Felder
+    # das Formular überhaupt anbietet, und dürfen deshalb nicht davon
+    # abhängen, was gerade darin steht.
+    bindings = (
+        resolve_bindings(
+            template, build_context(document=document, vorgang=vorgang, kontakt=recipient)
+        )
+        if template is not None
+        else []
+    )
+    form_kwargs = {
+        "templates": _visible_templates(request.user),
+        "template": template,
+        "bindings": bindings,
+        "recipients": Correspondent.objects.all(),
+        "vorgaenge": document.vorgaenge.all(),
+    }
 
     if request.method == "POST":
-        template = _selected_template(request, request.POST)
-        form = LetterDraftStartForm(
-            request.POST, templates=_visible_templates(request.user), template=template
-        )
+        form = LetterDraftStartForm(request.POST, **form_kwargs)
         if form.is_valid():
+            # Bewusst `recipient` von oben und nicht `cleaned_data`: das ist
+            # genau der Kontakt, gegen den die angezeigten Bindungen
+            # aufgelöst wurden. Und ein POST ohne `recipient`-Feld (etwa aus
+            # einem Skript) bekommt weiterhin den Vorschlag aus dem
+            # Bezugsdokument, statt still ohne Empfänger dazustehen.
+            _save_to_contact(recipient, form.contact_writeback())
             draft = _create_draft(
                 request,
                 template=form.cleaned_data["template"],
                 document=document,
-                vorgang=vorgang,
+                vorgang=form.cleaned_data["vorgang"] or vorgang,
+                recipient=recipient,
                 notes=form.cleaned_data["notes"],
                 manual_values=form.manual_values(),
             )
             return redirect("documents:letter_draft_detail", pk=draft.pk)
     else:
-        template = _selected_template(request, request.GET)
         form = LetterDraftStartForm(
-            templates=_visible_templates(request.user), template=template
+            initial={"recipient": recipient, "vorgang": vorgang}, **form_kwargs
         )
 
-    context = _start_context(request, form, document=document, vorgang=vorgang, template=template)
+    context = _start_context(
+        request, form, document=document, vorgang=vorgang, template=template, bindings=bindings
+    )
     if request.htmx:
-        # Vorlagenwechsel: nur der Teil, der von der Vorlage abhängt
-        # (manuelle Felder + aufgelöste Bindungen), wird ausgetauscht.
+        # Vorlagen-/Empfängerwechsel: nur der Teil, der davon abhängt
+        # (Eingabefelder für Lücken + aufgelöste Bindungen), wird getauscht.
         return render(request, "documents/letters/partials/_template_fields.html", context)
     return render(request, "documents/letters/start.html", context)
 
 
-def _create_draft(request, *, template, document, vorgang, notes, manual_values):
+def _save_to_contact(recipient, values):
+    """Trägt angekreuzte Lücken dauerhaft am Empfänger nach (#1138).
+
+    Damit ist die Lücke beim nächsten Schreiben an denselben Kontakt zu,
+    statt jedes Mal von Hand gefüllt zu werden. Ohne Empfänger gibt es
+    nichts zu speichern -- der eingetippte Wert gilt dann nur für diesen
+    einen Brief.
+    """
+    if recipient is None or not values:
+        return
+    for field, value in values.items():
+        setattr(recipient, field, value)
+    recipient.save(update_fields=[*values, "updated_at"])
+
+
+def _create_draft(request, *, template, document, vorgang, recipient, notes, manual_values):
     """Legt den Entwurf mit allen Snapshots an und reiht die Generierung ein.
 
-    Absender ist die `is_self`-Identität (#1030), Empfänger der Kontakt des
-    beantworteten Dokuments -- dieselbe Herleitung wie in
-    `letter_bindings.build_context`, damit Anschriftfeld und
-    Platzhalter-Werte nicht auf zwei verschiedene Kontakte zeigen.
+    Absender ist die `is_self`-Identität (#1030), Empfänger der im Formular
+    bestätigte Kontakt -- er geht ausdrücklich mit, damit Anschriftfeld und
+    Platzhalter-Werte nicht auf zwei verschiedene Kontakte zeigen, wenn der
+    Vorschlag aus dem Bezugsdokument überschrieben wurde.
     """
-    recipient = document.correspondent if document is not None else None
     sender = Correspondent.objects.filter(is_self=True).first()
     departments, visibility = task_departments_and_visibility(request.user)
 

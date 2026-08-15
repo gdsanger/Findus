@@ -1,6 +1,6 @@
 from django import forms
 
-from .letter_bindings import MANUAL_SOURCE, source_choices
+from .letter_bindings import source_choices
 from .models import (
     Correspondent,
     DocumentComment,
@@ -317,23 +317,50 @@ class LetterTemplateDraftForm(forms.Form):
 
 
 class LetterDraftStartForm(forms.Form):
-    """Der Einstieg in einen KI-Brief (#1095): Vorlage wählen, optional
-    Hinweise dazuschreiben.
+    """Der Einstieg in einen KI-Brief (#1095): Vorlage wählen, Empfänger und
+    Vorgang bestätigen, Lücken füllen, optional Hinweise dazuschreiben.
 
     Ein `forms.Form` und kein `ModelForm` auf `LetterDraft`: der Entwurf
     wird aus mehr zusammengesetzt, als hier eingegeben wird (Kontext-
-    Dokument, aufgelöste Bindungen, Layout-Snapshot), und die
-    manuellen Platzhalter sind je nach Vorlage andere Felder -- die hängt
-    `add_manual_fields()` dynamisch an.
+    Dokument, aufgelöste Bindungen, Layout-Snapshot), und welche Felder
+    überhaupt abzufragen sind, weiß erst die Auflösung -- die hängt
+    `add_value_fields()` dynamisch an.
+
+    Abgefragt wird seit #1138 **jeder Platzhalter ohne Wert**, nicht mehr
+    nur die mit Quelle `manual`: ein Entwurf soll nicht daran scheitern,
+    dass am Kontakt eine Adresse fehlt. Die Felder ergeben sich aus den
+    Bindungen *ohne* die eigenen Eingaben des Nutzers -- würde die
+    Auflösung sie mitrechnen, verschwände das Feld beim nächsten
+    Vorlagenwechsel unter dem gerade Getippten.
     """
 
     MANUAL_PREFIX = "manual_"
+    SAVE_TO_CONTACT_PREFIX = "am_kontakt_speichern_"
 
     template = forms.ModelChoiceField(
         label="Brief-Vorlage",
         queryset=LetterTemplate.objects.none(),
         empty_label="– Vorlage wählen –",
         widget=_SELECT_WIDGET,
+    )
+    recipient = forms.ModelChoiceField(
+        label="Empfänger",
+        queryset=Correspondent.objects.none(),
+        required=False,
+        empty_label="– kein Empfänger –",
+        widget=_SELECT_WIDGET,
+        help_text=(
+            "Vorgeschlagen ist der Kontakt des Bezugsdokuments – "
+            "überschreibbar, falls die Antwort an jemand anderen geht."
+        ),
+    )
+    vorgang = forms.ModelChoiceField(
+        label="Vorgang",
+        queryset=Vorgang.objects.none(),
+        required=False,
+        empty_label="– kein Vorgang –",
+        widget=_SELECT_WIDGET,
+        help_text="Der Vorgang, in dem das Schreiben abgelegt wird.",
     )
     notes = forms.CharField(
         label="Hinweise für die KI (optional)",
@@ -352,32 +379,65 @@ class LetterDraftStartForm(forms.Form):
         ),
     )
 
-    def __init__(self, *args, templates=None, template=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        templates=None,
+        template=None,
+        bindings=None,
+        recipients=None,
+        vorgaenge=None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.fields["template"].queryset = (
             templates if templates is not None else LetterTemplate.objects.none()
         )
-        self.manual_placeholders = []
+        self.fields["recipient"].queryset = (
+            recipients if recipients is not None else Correspondent.objects.none()
+        )
+        self.fields["vorgang"].queryset = (
+            vorgaenge if vorgaenge is not None else Vorgang.objects.none()
+        )
+        self.value_bindings = []
         if template is not None:
-            self.add_manual_fields(template)
+            self.add_value_fields(bindings or [])
 
-    def add_manual_fields(self, template):
-        """Ein Eingabefeld je `manual`-Platzhalter der Vorlage.
+    def add_value_fields(self, bindings):
+        """Ein Eingabefeld je Platzhalter, der (noch) keinen Wert hat.
 
-        Nur `manual`: alles andere zieht die Bindungs-Schicht (#1094) selbst
-        aus Findus-Daten, und ein zweites, abweichend befülltes Eingabefeld
-        daneben wäre eine Einladung zum Widerspruch.
+        Das sind zwei Gruppen, die im Formular gleich aussehen und es auch
+        sein sollen: die `manual`-Platzhalter, die die Vorlage bewusst
+        abfragt, und die Bindungen, deren Quelle nichts hergab. Für die
+        zweite Gruppe nennt die Anzeige den Grund (`missing_reason`), damit
+        klar ist, ob der Wert hier hingehört oder besser am Kontakt.
+
+        Ein aufgelöster Wert bekommt *kein* Feld: ein zweites, abweichend
+        befülltes Eingabefeld neben der Bindung wäre eine Einladung zum
+        Widerspruch.
         """
-        for placeholder in template.placeholders.all():
-            if placeholder.source != MANUAL_SOURCE:
+        for binding in bindings:
+            if not binding.is_manual and not binding.is_missing:
                 continue
-            self.manual_placeholders.append(placeholder)
-            self.fields[f"{self.MANUAL_PREFIX}{placeholder.key}"] = forms.CharField(
-                label=placeholder.display_label,
-                required=placeholder.required,
+            self.value_bindings.append(binding)
+            self.fields[f"{self.MANUAL_PREFIX}{binding.key}"] = forms.CharField(
+                label=binding.label,
+                # Auch ein Pflicht-Platzhalter bleibt hier optional, wenn er
+                # aus einer Bindung stammt: an einem fehlenden Stammdatum
+                # soll der Entwurf nicht scheitern (#1138) -- die KI markiert
+                # die Lücke dann im Text, statt sie zu erfinden.
+                required=binding.required and binding.is_manual,
                 max_length=500,
                 widget=_TEXT_WIDGET,
             )
+            if binding.contact_field:
+                self.fields[
+                    f"{self.SAVE_TO_CONTACT_PREFIX}{binding.key}"
+                ] = forms.BooleanField(
+                    label="Am Kontakt speichern",
+                    required=False,
+                    widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+                )
 
     def manual_values(self):
         return {
@@ -386,14 +446,38 @@ class LetterDraftStartForm(forms.Form):
             if name.startswith(self.MANUAL_PREFIX)
         }
 
-    def manual_fields(self):
-        """Die dynamischen Felder für das Template -- `{{ form }}` würde
-        sonst auch Vorlage und Hinweise ein zweites Mal ausgeben.
+    def contact_writeback(self):
+        """``{Correspondent-Feldname: Wert}`` für die angekreuzten „am
+        Kontakt speichern"-Lücken -- was der Aufrufer am Empfänger
+        nachtragen soll, damit die Lücke beim nächsten Schreiben zu ist.
         """
-        return [
-            self[f"{self.MANUAL_PREFIX}{placeholder.key}"]
-            for placeholder in self.manual_placeholders
-        ]
+        values = {}
+        for binding in self.value_bindings:
+            if not binding.contact_field:
+                continue
+            if not self.cleaned_data.get(f"{self.SAVE_TO_CONTACT_PREFIX}{binding.key}"):
+                continue
+            value = (self.cleaned_data.get(f"{self.MANUAL_PREFIX}{binding.key}") or "").strip()
+            if value:
+                values[binding.contact_field] = value
+        return values
+
+    def value_rows(self):
+        """Die dynamischen Felder samt ihrer Bindung fürs Template --
+        `{{ form }}` würde sonst auch Vorlage und Hinweise ein zweites Mal
+        ausgeben, und die Begründung fehlte daneben.
+        """
+        rows = []
+        for binding in self.value_bindings:
+            save_name = f"{self.SAVE_TO_CONTACT_PREFIX}{binding.key}"
+            rows.append(
+                {
+                    "binding": binding,
+                    "field": self[f"{self.MANUAL_PREFIX}{binding.key}"],
+                    "save_field": self[save_name] if save_name in self.fields else None,
+                }
+            )
+        return rows
 
 
 class LetterDraftEditForm(forms.ModelForm):

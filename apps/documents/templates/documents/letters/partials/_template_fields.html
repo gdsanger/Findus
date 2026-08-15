@@ -1,46 +1,64 @@
 {% comment %}
-Der vorlagenabhängige Teil des Erzeugungs-Formulars (#1095): die manuell
-abzufragenden Platzhalter und -- nur zur Ansicht -- die aus Findus-Daten
-vorbefüllten Bindungen.
+Der vorlagenabhängige Teil des Erzeugungs-Formulars (#1095): die
+abzufragenden Werte und -- nur zur Ansicht -- die aus dem Bezugsdokument
+aufgelösten Bindungen.
 
-Swap-Ziel beim Vorlagenwechsel. Die Auto-Bindungen stehen hier bewusst
-sichtbar und nicht editierbar: sichtbar, damit vor dem Generieren auffällt,
-wenn eine Adresse fehlt; nicht editierbar, weil ein hier korrigierter Wert
-nur diesen einen Brief heilen würde und der Kontakt danach weiter falsch
-wäre.
+Swap-Ziel beim Vorlagen-/Empfängerwechsel. Beide Blöcke kommen aus
+derselben `resolve_bindings`-Antwort (#1138): was einen Wert hat, steht
+oben zur Kontrolle; was keinen hat, steht unten als Eingabefeld samt
+Grund. Die aufgelösten Werte bleiben bewusst nicht editierbar -- ein hier
+korrigierter Wert würde nur diesen einen Brief heilen, und der Kontakt
+wäre danach weiter falsch.
 {% endcomment %}
 {% if template %}
-{% if form.manual_placeholders %}
+{% if form.value_rows %}
 <div class="findus-task-form-section">
-    <h3 class="findus-letter-subheading">Angaben für diese Vorlage</h3>
-    {% for field in form.manual_fields %}
+    <h3 class="findus-letter-subheading">Angaben für dieses Schreiben</h3>
+    <p class="text-muted small mb-0">
+        Werte, die die Vorlage abfragt oder die sich nicht ermitteln ließen.
+        Bleibt ein Feld leer, markiert die KI die Lücke im Entwurf, statt sie zu erfinden.
+    </p>
+    {% for row in form.value_rows %}
     <div class="findus-task-form-group">
-        <label class="form-label" for="{{ field.id_for_label }}">
-            {{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}
+        <label class="form-label" for="{{ row.field.id_for_label }}">
+            {{ row.field.label }}{% if row.binding.required %} <span class="text-danger">*</span>{% endif %}
         </label>
-        {{ field }}
-        {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
+        {% if row.binding.missing_reason and not row.binding.is_manual %}
+        <div class="form-text">
+            {{ row.binding.origin }} – {{ row.binding.missing_reason }}
+        </div>
+        {% endif %}
+        {{ row.field }}
+        {% if row.field.errors %}<div class="text-danger small">{{ row.field.errors|striptags }}</div>{% endif %}
+        {% if row.save_field %}
+        <div class="form-check">
+            {{ row.save_field }}
+            <label class="form-check-label small" for="{{ row.save_field.id_for_label }}">
+                {{ row.save_field.label }} – damit die Lücke beim nächsten Schreiben zu ist
+            </label>
+        </div>
+        {% endif %}
     </div>
     {% endfor %}
 </div>
 {% endif %}
 
-{% if bindings %}
+{% if resolved %}
 <div class="findus-task-form-section">
     <h3 class="findus-letter-subheading">Automatisch übernommene Werte</h3>
     <p class="text-muted small mb-0">
-        Aus Kontakt, eigener Identität, Key-Facts und Vorgang – zur Kontrolle.
+        Aus dem Bezugsdokument, seinem Kontakt, der eigenen Identität und dem Vorgang – zur Kontrolle.
     </p>
     <dl class="findus-detail-meta-list">
-        {% for binding in bindings %}
+        {% for binding in resolved %}
         <div>
             <dt>
-                {{ binding.placeholder.display_label }}
-                {% if binding.placeholder.required %}<span class="text-danger">*</span>{% endif %}
+                {{ binding.label }}
+                {% if binding.required %}<span class="text-danger">*</span>{% endif %}
             </dt>
             <dd>
-                {% if binding.value %}{{ binding.value }}{% else %}<span class="text-muted">— nicht ermittelbar</span>{% endif %}
-                <span class="text-muted small">({{ binding.placeholder.source_label }})</span>
+                {{ binding.value }}
+                <span class="text-muted small">({{ binding.origin }})</span>
             </dd>
         </div>
         {% endfor %}
@@ -51,10 +69,9 @@ wäre.
 {% if missing_required %}
 <div class="alert alert-warning py-2 px-3 small mb-0" role="alert">
     Pflichtangaben ohne Wert:
-    {% for placeholder in missing_required %}{{ placeholder.display_label }}{% if not forloop.last %}, {% endif %}{% endfor %}.
-    Der Entwurf lässt sich trotzdem erzeugen – die KI markiert die Lücke dann im
-    Text, statt sie zu erfinden. Besser: den fehlenden Wert erst am Kontakt bzw.
-    Dokument nachtragen.
+    {% for binding in missing_required %}{{ binding.label }} ({{ binding.missing_reason }}){% if not forloop.last %}, {% endif %}{% endfor %}.
+    Sie lassen sich oben eintragen. Der Entwurf entsteht auch ohne sie – die KI
+    markiert die Lücke dann im Text, statt sie zu erfinden.
 </div>
 {% endif %}
 {% endif %}

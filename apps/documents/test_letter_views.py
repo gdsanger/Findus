@@ -521,3 +521,312 @@ class LetterDraftFinalizeViewTests(LetterDraftFlowTestCase):
 
         self.assertFalse(LetterDraft.objects.exists())
         self.assertTrue(Document.objects.filter(pk=document.pk).exists())
+
+
+class LetterDraftSourceDocumentTests(LetterDraftFlowTestCase):
+    """Ein Schreiben ist immer eine Antwort auf ein Dokument (#1138): der
+    Weg ohne Bezugsdokument entfällt, der Einstieg aus dem Vorgang führt
+    über die Frage „Auf welches Dokument antworten?".
+    """
+
+    def test_start_without_a_source_document_is_not_reachable(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("documents:letter_draft_start"))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(LetterDraft.objects.exists())
+
+    def test_the_old_vorgang_link_leads_to_the_document_choice(self):
+        """Alte Links/Lesezeichen landen nicht in einem Formular, das
+        anschließend die Hälfte seiner Werte nicht auflösen kann.
+        """
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            f"{reverse('documents:letter_draft_start')}?vorgang={self.vorgang.pk}"
+        )
+
+        self.assertRedirects(
+            response,
+            reverse("documents:letter_draft_pick_source", args=[self.vorgang.pk]),
+        )
+
+    def test_the_vorgang_hub_links_the_document_choice(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("documents:vorgang_detail", args=[self.vorgang.pk]))
+
+        self.assertContains(
+            response, reverse("documents:letter_draft_pick_source", args=[self.vorgang.pk])
+        )
+
+    def test_the_choice_lists_the_vorgang_documents_newest_first(self):
+        older = Document.objects.create(
+            title="Erste Mahnung",
+            correspondent=self.recipient,
+            document_date=datetime.date(2026, 1, 5),
+            visibility=Document.Visibility.DEPARTMENT,
+        )
+        older.departments.add(self.dept)
+        older.vorgaenge.add(self.vorgang)
+        self.document.document_date = datetime.date(2026, 8, 1)
+        self.document.save(update_fields=["document_date"])
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse("documents:letter_draft_pick_source", args=[self.vorgang.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [document.pk for document in response.context["documents"]],
+            [self.document.pk, older.pk],
+        )
+        # Titel, Datum und Korrespondent stehen an der Auswahl.
+        self.assertContains(response, "Erste Mahnung")
+        self.assertContains(response, "05.01.2026")
+        self.assertContains(response, "Amt für Alles")
+
+    def test_the_choice_offers_only_visible_documents(self):
+        hidden = Document.objects.create(
+            title="Fremdes Dokument", visibility=Document.Visibility.DEPARTMENT
+        )
+        hidden.departments.add(self.other_dept)
+        hidden.vorgaenge.add(self.vorgang)
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse("documents:letter_draft_pick_source", args=[self.vorgang.pk])
+        )
+
+        self.assertNotContains(response, "Fremdes Dokument")
+        self.assertEqual(
+            [document.pk for document in response.context["documents"]], [self.document.pk]
+        )
+
+    def test_a_vorgang_the_document_does_not_belong_to_is_ignored(self):
+        """Sonst käme über die URL ein fremder Vorgang in den Prompt und
+        später an das abgelegte Schreiben.
+        """
+        other_vorgang = Vorgang.objects.create(name="Fremde Akte")
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse("documents:letter_draft_start"),
+            {"document": self.document.pk, "vorgang": other_vorgang.pk},
+        )
+
+        self.assertEqual(response.context["vorgang"], self.vorgang)
+
+    def test_starting_from_a_document_needs_no_intermediate_step(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse("documents:letter_draft_start"), {"document": self.document.pk}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["document"], self.document)
+        self.assertTemplateUsed(response, "documents/letters/start.html")
+
+
+class LetterDraftMissingValueTests(LetterDraftFlowTestCase):
+    """Fehlende Werte verständlich machen und nachtragen können (#1138)."""
+
+    def setUp(self):
+        super().setUp()
+        # Der Kontakt kennt keine E-Mail: die Lücke, an der das Formular
+        # Grund, Eingabefeld und „am Kontakt speichern" zeigen soll.
+        LetterTemplatePlaceholder.objects.create(
+            template=self.template,
+            key="empfaenger_email",
+            label="Empfänger E-Mail",
+            source="kontakt.email",
+            order=3,
+        )
+
+    def _start(self, **extra):
+        return self.client.get(
+            reverse("documents:letter_draft_start"),
+            {"document": self.document.pk, "template": self.template.pk, **extra},
+            headers={"hx-request": "true"},
+        )
+
+    def test_a_gap_shows_its_reason_and_an_input_field(self):
+        self.client.force_login(self.user)
+
+        response = self._start()
+
+        self.assertContains(response, "manual_empfaenger_email")
+        self.assertContains(response, "am Kontakt nicht hinterlegt")
+        self.assertContains(response, "am_kontakt_speichern_empfaenger_email")
+
+    def test_a_resolved_value_gets_no_input_field(self):
+        """Ein zweites, abweichend befülltes Eingabefeld neben der Bindung
+        wäre eine Einladung zum Widerspruch.
+        """
+        self.client.force_login(self.user)
+
+        response = self._start()
+
+        self.assertContains(response, "Amtsweg 2")
+        self.assertNotContains(response, "manual_empfaenger_adresse")
+
+    def test_a_manually_added_value_reaches_the_draft(self):
+        self.client.force_login(self.user)
+
+        with patch("django_q.tasks.async_task"):
+            self.client.post(
+                reverse("documents:letter_draft_start"),
+                {
+                    "document": self.document.pk,
+                    "template": self.template.pk,
+                    "manual_aktenzeichen": "AZ-1",
+                    "manual_empfaenger_email": "post@amt.example",
+                },
+            )
+
+        draft = LetterDraft.objects.get()
+        self.assertEqual(draft.manual_values["empfaenger_email"], "post@amt.example")
+        self.recipient.refresh_from_db()
+        # Ohne Häkchen bleibt der Kontakt unangetastet.
+        self.assertEqual(self.recipient.email, "")
+
+    def test_the_value_can_be_stored_at_the_contact(self):
+        self.client.force_login(self.user)
+
+        with patch("django_q.tasks.async_task"):
+            self.client.post(
+                reverse("documents:letter_draft_start"),
+                {
+                    "document": self.document.pk,
+                    "template": self.template.pk,
+                    "manual_aktenzeichen": "AZ-1",
+                    "manual_empfaenger_email": "post@amt.example",
+                    "am_kontakt_speichern_empfaenger_email": "on",
+                },
+            )
+
+        self.recipient.refresh_from_db()
+        self.assertEqual(self.recipient.email, "post@amt.example")
+
+    def test_a_missing_bound_value_does_not_block_the_draft(self):
+        """An einem fehlenden Stammdatum soll der Entwurf nicht scheitern --
+        die KI markiert die Lücke dann im Text, statt sie zu erfinden.
+        """
+        LetterTemplatePlaceholder.objects.filter(key="empfaenger_adresse").update(required=True)
+        self.recipient.address = ""
+        self.recipient.save(update_fields=["address"])
+        self.client.force_login(self.user)
+
+        with patch("django_q.tasks.async_task") as async_task:
+            self.client.post(
+                reverse("documents:letter_draft_start"),
+                {
+                    "document": self.document.pk,
+                    "template": self.template.pk,
+                    "manual_aktenzeichen": "AZ-1",
+                },
+            )
+
+        self.assertTrue(LetterDraft.objects.exists())
+        async_task.assert_called_once()
+
+    def test_the_recipient_select_preselects_the_document_contact(self):
+        """Die Ableitung ist ein Vorschlag -- aber sie muss auch als
+        Vorauswahl im Feld stehen, sonst sieht das Formular so aus, als
+        ginge der Brief an niemanden.
+        """
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            reverse("documents:letter_draft_start"), {"document": self.document.pk}
+        )
+
+        self.assertContains(
+            response, f'<option value="{self.recipient.pk}" selected>', html=False
+        )
+
+    def test_the_recipient_can_be_overridden(self):
+        other = Correspondent.objects.create(name="Anwalt Meier", address="Kanzleiweg 3")
+        self.client.force_login(self.user)
+
+        with patch("django_q.tasks.async_task"):
+            self.client.post(
+                reverse("documents:letter_draft_start"),
+                {
+                    "document": self.document.pk,
+                    "template": self.template.pk,
+                    "recipient": other.pk,
+                    "manual_aktenzeichen": "AZ-1",
+                },
+            )
+
+        draft = LetterDraft.objects.get()
+        self.assertEqual(draft.recipient, other)
+        self.assertIn("Kanzleiweg 3", draft.recipient_block)
+
+
+class LetterDraftReplyFilingTests(LetterDraftFlowTestCase):
+    """Das abgelegte Schreiben ist die Antwort auf sein Bezugsdokument
+    (#1138): verknüpft, im gewählten Vorgang, Richtung Ausgang.
+    """
+
+    def _finalize(self, draft):
+        self.client.force_login(self.user)
+        with patch("django_q.tasks.async_task"):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.client.post(reverse("documents:letter_draft_finalize", args=[draft.pk]))
+        draft.refresh_from_db()
+        return draft.document
+
+    def test_the_reply_is_linked_and_filed_as_outgoing(self):
+        draft = self._draft()
+        render_draft_files(draft)
+
+        document = self._finalize(draft)
+
+        self.assertEqual(document.direction, Document.Direction.AUSGANG)
+        self.assertEqual(list(document.vorgaenge.all()), [self.vorgang])
+        link = DocumentLink.objects.for_document(document).get()
+        self.assertEqual(link.other_document_id(document), self.document.pk)
+        self.assertEqual(link.note, "Antwortschreiben")
+
+    def test_only_the_chosen_vorgang_is_inherited(self):
+        """Der Vorgang am Entwurf war die ausdrückliche Wahl beim Erzeugen --
+        die weiteren Vorgänge des Bezugsdokuments sind sie nicht.
+        """
+        other_vorgang = Vorgang.objects.create(name="Zweite Akte")
+        self.document.vorgaenge.add(other_vorgang)
+        draft = self._draft()
+        render_draft_files(draft)
+
+        document = self._finalize(draft)
+
+        self.assertEqual(list(document.vorgaenge.all()), [self.vorgang])
+
+    def test_a_draft_without_a_vorgang_inherits_the_document_akte(self):
+        """Altbestand und Dokumente ohne Vorgang: dann erbt der Brief die
+        Akte des beantworteten Dokuments statt gar keine.
+        """
+        draft = self._draft(vorgang=None)
+        render_draft_files(draft)
+
+        document = self._finalize(draft)
+
+        self.assertEqual(list(document.vorgaenge.all()), [self.vorgang])
+
+    def test_views_cope_with_a_draft_without_a_source_document(self):
+        """Vor #1138 erzeugte Entwürfe haben keinen Bezug -- die Ansichten
+        müssen damit umgehen, eine Migration brauchen sie nicht.
+        """
+        draft = self._draft(source_document=None)
+        render_draft_files(draft)
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("documents:letter_draft_detail", args=[draft.pk]))
+        self.assertEqual(response.status_code, 200)
+
+        document = self._finalize(draft)
+        self.assertFalse(DocumentLink.objects.for_document(document).exists())

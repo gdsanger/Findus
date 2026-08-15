@@ -40,6 +40,23 @@ SOURCE_SEPARATOR = "."
 # als Kriterium dafür, welche Platzhalter es abfragen muss.
 MANUAL_SOURCE = "manual"
 
+# Herkunftsangabe für einen Wert, den der Nutzer im Erzeugungs-Formular
+# selbst eingetragen hat (#1138). Steht neben den Quellen-Labels in
+# derselben Spalte und muss deshalb genauso lesbar sein.
+MANUAL_ORIGIN_LABEL = "Manuell eingetragen"
+
+# Welche fehlenden Empfängerangaben sich aus dem Formular heraus dauerhaft
+# am Kontakt nachtragen lassen (#1138, „am Kontakt speichern").
+#
+# Bewusst *ohne* `kontakt.name`: der Name ist die Identität des Kontakts
+# (`Correspondent.name` ist `unique`), ihn hier zu überschreiben wäre eine
+# Umbenennung mit Kollisionsrisiko -- und keine geschlossene Lücke, sondern
+# ein anderer Kontakt.
+CONTACT_WRITEBACK_FIELDS = {
+    "kontakt.address": "address",
+    "kontakt.email": "email",
+}
+
 
 @dataclass
 class LetterContext:
@@ -49,6 +66,13 @@ class LetterContext:
     Dokument hängen oder an einem Dokument ohne Vorgang. Fehlt die Quelle
     eines Platzhalters, liefert die Auflösung einen leeren String; ob das
     ein Problem ist, entscheidet `missing_required_keys`.
+
+    `manual_values` sind die vom Nutzer selbst eingetragenen Werte je
+    Platzhalter-Schlüssel. Seit #1138 gelten sie **für jeden** Platzhalter,
+    nicht nur für die mit Quelle `manual`: ein Wert, den der Nutzer
+    ausdrücklich hingeschrieben hat, gewinnt gegen die Bindung. Sonst
+    stünde ein nachgetragener Wert zwar im Formular, käme aber nie im Brief
+    an -- die Bindung würde ihn beim nächsten Auflösen wieder überschreiben.
     """
 
     self_correspondent: object | None = None
@@ -80,10 +104,33 @@ class SourceField:
 
 @dataclass(frozen=True)
 class SourceNamespace:
+    """Eine Quellen-Gruppe plus die Sprache, in der sie über sich selbst
+    Auskunft gibt.
+
+    `context_attribute`/`absent_reason`/`empty_reason` beantworten die Frage
+    aus #1138: *warum* ist hier kein Wert? Die beiden Fälle sind fachlich
+    verschieden und führen zu verschiedenen Handlungen -- „es gibt gar
+    keinen Kontakt" heißt Kontakt zuordnen, „am Kontakt nicht hinterlegt"
+    heißt Adresse nachtragen. Die Texte stehen hier und nicht im Template,
+    damit Anzeige und Prüfung dieselbe Quelle haben.
+    """
+
     prefix: str
     label: str
     fields: tuple[SourceField, ...] = ()
     resolve: Callable[[str, LetterContext, str], object] | None = None
+    context_attribute: str = ""
+    absent_reason: str = ""
+    empty_reason: str = ""
+
+    def missing_reason(self, context):
+        """Warum diese Quelle im gegebenen Kontext nichts liefert."""
+        if (
+            self.context_attribute
+            and getattr(context, self.context_attribute, None) is None
+        ):
+            return self.absent_reason
+        return self.empty_reason
 
     def field_map(self):
         return {source_field.path: source_field for source_field in self.fields}
@@ -189,22 +236,101 @@ def resolve_source(source, context, key=""):
     return _stringify(namespace.resolve_path(path, context, key))
 
 
-def resolve_placeholders(template, context):
-    """``{Platzhalter-key: Wert}`` für alle Platzhalter einer Vorlage.
+@dataclass(frozen=True)
+class ResolvedBinding:
+    """Ein Platzhalter, wie er im gegebenen Kontext dasteht: Wert **plus
+    Herkunft plus Grund bei Fehlen** (#1138).
 
-    Eine unbekannte Quelle (etwa aus einer Vorlage, deren Quellen-Typ es
-    nicht mehr gibt) fällt auf einen leeren Wert zurück, statt die
-    Erzeugung des gesamten Schreibens zu sprengen.
+    Die eine Antwort, aus der sich Anzeige (Provenienz-Block, Eingabefelder
+    für Lücken) und Prüfung (Pflichtangaben, Prompt-Werte) gleichermaßen
+    speisen. Vorher stand dieselbe Herleitung in View, Formular und
+    Template nebeneinander -- und lief auseinander, sobald eine davon
+    angefasst wurde.
     """
-    values = {}
-    for placeholder in template.placeholders.all():
-        try:
-            values[placeholder.key] = resolve_source(
-                placeholder.source, context, placeholder.key
-            )
-        except UnknownSourceError:
-            values[placeholder.key] = ""
-    return values
+
+    placeholder: object
+    key: str
+    value: str
+    origin: str
+    missing_reason: str = ""
+
+    @property
+    def is_missing(self):
+        return not self.value
+
+    @property
+    def is_manual(self):
+        return self.placeholder.source == MANUAL_SOURCE
+
+    @property
+    def required(self):
+        return bool(self.placeholder.required)
+
+    @property
+    def label(self):
+        return self.placeholder.display_label
+
+    @property
+    def contact_field(self):
+        """Feldname am `Correspondent`, wenn sich diese Lücke dauerhaft am
+        Kontakt schließen lässt -- sonst ``""``.
+        """
+        return CONTACT_WRITEBACK_FIELDS.get(self.placeholder.source, "")
+
+
+def resolve_binding(placeholder, context):
+    """Ein einzelner Platzhalter gegen den Kontext aufgelöst.
+
+    Reihenfolge: was der Nutzer selbst eingetragen hat, gewinnt gegen die
+    Bindung (siehe `LetterContext.manual_values`). Eine unbekannte Quelle
+    (etwa aus einer Vorlage, deren Quellen-Typ es nicht mehr gibt) endet
+    als leerer Wert mit Begründung, statt die Erzeugung des gesamten
+    Schreibens zu sprengen.
+    """
+    key = placeholder.key
+    override = str((context.manual_values or {}).get(key, "") or "").strip()
+    if override:
+        return ResolvedBinding(
+            placeholder=placeholder, key=key, value=override, origin=MANUAL_ORIGIN_LABEL
+        )
+
+    try:
+        namespace = get_namespace(placeholder.source)
+        _, path = split_source(placeholder.source)
+        value = _stringify(namespace.resolve_path(path, context, key))
+    except UnknownSourceError:
+        return ResolvedBinding(
+            placeholder=placeholder,
+            key=key,
+            value="",
+            origin=source_label(placeholder.source),
+            missing_reason="Quelle ist nicht (mehr) bekannt",
+        )
+
+    return ResolvedBinding(
+        placeholder=placeholder,
+        key=key,
+        value=value,
+        origin=source_label(placeholder.source),
+        missing_reason="" if value else namespace.missing_reason(context),
+    )
+
+
+def resolve_bindings(template, context):
+    """Alle Platzhalter einer Vorlage als `ResolvedBinding` -- in der
+    Reihenfolge, in der die Vorlage sie führt.
+    """
+    return [
+        resolve_binding(placeholder, context)
+        for placeholder in template.placeholders.all()
+    ]
+
+
+def resolve_placeholders(template, context):
+    """``{Platzhalter-key: Wert}`` für alle Platzhalter einer Vorlage --
+    die schmale Sicht auf `resolve_bindings` für Prompt und Textersatz.
+    """
+    return {binding.key: binding.value for binding in resolve_bindings(template, context)}
 
 
 def missing_required_keys(template, context):
@@ -228,6 +354,12 @@ def build_context(
     der explizit übergebene Kontakt, sonst der Kontakt des beantworteten
     Dokuments. Der Import von `models` steckt absichtlich in der Funktion
     (siehe Modul-Docstring).
+
+    Seit #1138 kommt der Kontext eines Schreibens ausschließlich aus
+    *diesem einen* Bezugsdokument: kein Einsammeln fehlender Werte quer
+    über die anderen Dokumente des Vorgangs. Ein Betrag aus einem fremden
+    Dokument in einem Schreiben mit Fristsetzung wäre ein gefährlicher
+    Komfort -- fehlt ein Wert, bleibt er sichtbar leer.
     """
     from .models import Correspondent
 
@@ -282,6 +414,9 @@ register_source_namespace(
     SourceNamespace(
         prefix="self",
         label="Absender (eigene Identität)",
+        context_attribute="self_correspondent",
+        absent_reason="keine eigene Identität hinterlegt („Das bin ich“ am Kontakt setzen)",
+        empty_reason="in der eigenen Identität nicht hinterlegt",
         fields=(
             SourceField("name", "Name", _correspondent_getter("name")),
             SourceField("address", "Adresse", _correspondent_getter("address")),
@@ -299,6 +434,9 @@ register_source_namespace(
     SourceNamespace(
         prefix="kontakt",
         label="Empfänger (Kontakt)",
+        context_attribute="kontakt",
+        absent_reason="kein Empfänger gewählt (das Bezugsdokument hat keinen Kontakt)",
+        empty_reason="am Kontakt nicht hinterlegt",
         fields=(
             SourceField("name", "Name", _kontakt_getter("name")),
             SourceField("address", "Adresse", _kontakt_getter("address")),
@@ -316,6 +454,9 @@ register_source_namespace(
     SourceNamespace(
         prefix="document",
         label="Dokument",
+        context_attribute="document",
+        absent_reason="kein Bezugsdokument",
+        empty_reason="im Dokument nicht gefunden",
         fields=(
             SourceField(
                 "title",
@@ -391,6 +532,9 @@ register_source_namespace(
     SourceNamespace(
         prefix="vorgang",
         label="Vorgang",
+        context_attribute="vorgang",
+        absent_reason="das Bezugsdokument hängt an keinem Vorgang",
+        empty_reason="am Vorgang nicht hinterlegt",
         fields=(
             SourceField("name", "Name", _vorgang_getter("name")),
             SourceField(
@@ -420,6 +564,7 @@ register_source_namespace(
     SourceNamespace(
         prefix="manual",
         label="Manuelle Eingabe",
+        empty_reason="noch nicht eingetragen",
         fields=(
             SourceField(
                 "",

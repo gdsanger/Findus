@@ -298,6 +298,14 @@ urlpatterns = [
     # URLs unter /briefe/ statt unter /documents/: bis zur Freigabe ist ein
     # Entwurf kein Dokument.
     path("briefe/neu/", letter_views.letter_draft_start, name="letter_draft_start"),
+    # Der vorgeschaltete Schritt beim Einstieg aus dem Vorgang (#1138):
+    # „Auf welches Dokument antworten?" -- ohne Bezugsdokument gibt es
+    # keinen Brief mehr.
+    path(
+        "briefe/neu/vorgang/<int:vorgang_pk>/",
+        letter_views.letter_draft_pick_source,
+        name="letter_draft_pick_source",
+    ),
     path("briefe/<int:pk>/", letter_views.letter_draft_detail, name="letter_draft_detail"),
     path("briefe/<int:pk>/panel/", letter_views.letter_draft_panel, name="letter_draft_panel"),
     path("briefe/<int:pk>/aktualisieren/", letter_views.letter_draft_update, name="letter_draft_update"),

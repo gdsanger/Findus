@@ -126,7 +126,11 @@ def finalize_letter_draft(draft: LetterDraft, user) -> Document:
     if draft.source_document_id is not None:
         # Querverweis „gehört zu" (#1088) statt `parent`: Anschreiben und
         # Antwort sind zwei eigenständige Dokumente mit eigenem Kontakt und
-        # eigener Richtung, kein Leitdokument mit Anhang.
+        # eigener Richtung, kein Leitdokument mit Anhang. Die Richtung der
+        # Aussage „X ist die Antwort auf Y" steckt nicht im Link (der ist
+        # bewusst ungerichtet, siehe `DocumentLink`), sondern in den beiden
+        # Dokumenten selbst: das Schreiben trägt `direction=ausgang` und
+        # `source=generiert_brief`, das beantwortete Dokument nicht.
         source_document = (
             Document.objects.visible_to(user).filter(pk=draft.source_document_id).first()
         )
@@ -137,10 +141,14 @@ def finalize_letter_draft(draft: LetterDraft, user) -> Document:
                 created_by=user,
                 note="Antwortschreiben",
             )
-            # Der Vorgang des beantworteten Dokuments zählt mit: der Brief
-            # gehört in dieselbe Akte, auch wenn beim Anlegen des Entwurfs
-            # kein Vorgang ausgewählt war.
-            document.vorgaenge.add(*source_document.vorgaenge.all())
+            if draft.vorgang_id is None:
+                # Kein Vorgang am Entwurf (Altbestand, oder das
+                # Bezugsdokument hing an keinem): dann erbt der Brief die
+                # Akte des beantworteten Dokuments. Steht ein Vorgang am
+                # Entwurf, bleibt es bei genau diesem -- er war die
+                # ausdrückliche Wahl beim Erzeugen (#1138), und die weiteren
+                # Vorgänge des Bezugsdokuments sind sie nicht.
+                document.vorgaenge.add(*source_document.vorgaenge.all())
 
     draft.document = document
     draft.status = LetterDraft.Status.FINALIZED
