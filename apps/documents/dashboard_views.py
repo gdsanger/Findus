@@ -1,10 +1,9 @@
 """Cockpit overview (#1065): document/storage KPIs, Erledigung counters,
-open Aufgaben, semantic search entry point and quick-add upload -- one
-`visible_to`-scoped landing page instead of forcing "how much is in here,
-what's open, what's due" to be pieced together from three separate lists.
+naechste faellige Wiedervorlagen (#1130), semantic search entry point and
+quick-add upload -- one `visible_to`-scoped landing page instead of forcing
+"how much is in here, what's open, what's due" to be pieced together from
+three separate lists.
 """
-
-import datetime
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -12,13 +11,11 @@ from django.db.models import BigIntegerField, Count, Q, Sum
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast
 from django.shortcuts import render
-from django.utils import timezone
 
-from .models import Document, Task
+from .models import Document, DocumentComment
 from .views import PENDING_STATUSES
 
-OPEN_TASKS_LIMIT = 5
-DUE_SOON_DAYS = 7
+FOLLOW_UP_LIMIT = 6
 
 
 def _document_stats(user):
@@ -39,30 +36,30 @@ def _document_stats(user):
     )
 
 
-def _task_stats(user, today):
-    return Task.objects.visible_to(user).aggregate(
-        open=Count("id", filter=Q(status=Task.Status.OPEN)),
-        overdue=Count("id", filter=Q(status=Task.Status.OPEN, due_date__lt=today)),
+def _next_follow_ups(user, limit=FOLLOW_UP_LIMIT):
+    """Die naechsten faelligen Wiedervorlagen (#1130) -- ueberfaellige zuerst,
+
+    was sich allein aus der aufsteigenden Sortierung nach `follow_up_date`
+    ergibt (ueberfaellig bedeutet per Definition ein Datum vor heute).
+    Dieselbe Auswahl wie die Wiedervorlagen-Ansicht (#1129,
+    `views._followup_entries`) ueber `Document.objects.open_visible_to` --
+    eine gemeinsame Queryset-Methode statt einer zweiten Ausformulierung von
+    "sichtbar und noch offen".
+    """
+    documents = Document.objects.open_visible_to(user)
+    return list(
+        DocumentComment.objects.with_follow_up()
+        .filter(document__in=documents)
+        .select_related("document", "document__correspondent")
+        .order_by("follow_up_date", "created_at")[:limit]
     )
 
 
 @login_required
 def dashboard(request):
-    today = timezone.localdate()
-    due_soon_until = today + datetime.timedelta(days=DUE_SOON_DAYS)
-
-    open_tasks = list(
-        Task.objects.visible_to(request.user)
-        .filter(status=Task.Status.OPEN)
-        .order_by("due_date", "-created_at")[:OPEN_TASKS_LIMIT]
-    )
-
     context = {
         "doc_stats": _document_stats(request.user),
-        "task_stats": _task_stats(request.user, today),
-        "open_tasks": open_tasks,
-        "today": today,
-        "due_soon_until": due_soon_until,
+        "follow_ups": _next_follow_ups(request.user),
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
     }

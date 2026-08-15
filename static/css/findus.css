@@ -626,7 +626,10 @@ body {
 /* Wiedervorlagen-Ansicht (#1129) -- dokumentübergreifende Terminliste,
    gruppiert nach Fälligkeit. Teilt sich Card-/Badge-Look mit der
    Timeline-Ansicht (gleiche Variablen); "Überfällig" ist deutlich
-   hervorgehoben (Warnfarbe am Rand), "Später" gedämpft. */
+   hervorgehoben (Warnfarbe am Rand), "Später" gedämpft. Das Dashboard-Widget
+   (#1130) zeigt dieselben `.findus-followup-item`-Karten ungruppiert in
+   einer flachen Liste -- dafuer die `--overdue`/`--today`-Modifier direkt
+   am Item statt nur ueber die Gruppen-Klasse. */
 .findus-followups {
     display: flex;
     flex-direction: column;
@@ -668,11 +671,13 @@ body {
     border-radius: var(--findus-radius-md);
 }
 
-.findus-followup-group--overdue .findus-followup-item {
+.findus-followup-group--overdue .findus-followup-item,
+.findus-followup-item--overdue {
     border-left-color: var(--bs-danger);
 }
 
-.findus-followup-group--today .findus-followup-item {
+.findus-followup-group--today .findus-followup-item,
+.findus-followup-item--today {
     border-left-color: var(--bs-warning);
 }
 
