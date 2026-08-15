@@ -212,6 +212,11 @@ urlpatterns = [
         name="meta_quick_create",
     ),
     path(
+        "documents/<int:pk>/meta/search/<str:kind>/",
+        views.document_meta_search,
+        name="meta_search",
+    ),
+    path(
         "documents/<int:pk>/suggestions/tags/<int:suggestion_id>/accept/",
         views.document_tag_suggestion_accept,
         name="tag_suggestion_accept",

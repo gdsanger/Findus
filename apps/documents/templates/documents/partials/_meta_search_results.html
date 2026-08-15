@@ -1,0 +1,36 @@
+{% load documents_extras %}
+{% comment %}
+Trefferliste der Token-Eingabe (#1136) -- `document_meta_search` hat
+bereits zugeordnete Einträge ausgeschlossen und sortiert (Präfix-Treffer
+zuerst, dann alphabetisch). Jeder Eintrag ist ein `button`, damit er per
+Klick *und* per Tastatur (Pfeiltasten + Enter, siehe
+`document-meta-tokens.js`) übernehmbar ist, ohne das Formular abzusenden.
+{% endcomment %}
+{% if results or show_create %}
+<ul class="findus-token-result-list" role="listbox">
+    {% for item in results %}
+    <li>
+        <button
+            type="button"
+            class="findus-token-result{% if item.dimension %} {{ item.dimension|tag_dimension_badge_class }}{% endif %}"
+            data-token-result
+            data-token-id="{{ item.id }}"
+            data-token-label="{{ item.label }}"
+            role="option"
+        >{{ item.label }}</button>
+    </li>
+    {% endfor %}
+    {% if show_create %}
+    <li>
+        <button
+            type="button"
+            class="findus-token-result findus-token-result-create"
+            data-token-result
+            data-token-create="1"
+            data-token-value="{{ query }}"
+            role="option"
+        >„{{ query }}“ neu anlegen</button>
+    </li>
+    {% endif %}
+</ul>
+{% endif %}

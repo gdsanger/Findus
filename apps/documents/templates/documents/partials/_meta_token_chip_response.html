@@ -1,0 +1,10 @@
+{% comment %}
+Antwort der Token-Neuanlage (#1136): nur der neue Chip statt des ganzen
+Zuordnungs-Blocks -- `hx-swap="beforeend"` hängt ihn im Aufrufer an den
+Chip-Container an. Vorgänge ziehen den Schnellzugriff über der Seite
+(#1098) per Out-of-Band-Swap mit, Tags stehen dort nicht.
+{% endcomment %}
+{% include "documents/partials/_meta_token_chip.html" %}
+{% if hub_links_oob %}
+{% include "documents/partials/_detail_hub_links.html" with hub_links_oob=True %}
+{% endif %}

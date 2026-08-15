@@ -2336,8 +2336,24 @@ class DocumentMetaEditTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
 
-        self.assertContains(response, f'value="{self.vorgang.id}" selected')
+        self.assertContains(response, f'value="{self.vorgang.id}"')
         self.assertContains(response, self.vorgang.name)
+
+    def test_block_shows_tag_chip_with_dimension_color_class(self):
+        # Tag-Chips tragen dieselbe Dimensions-Farbklasse wie Tag-Badges
+        # anderswo in der App (#1124) -- Vorgang-Chips dagegen nie.
+        tagged = Tag.objects.create(name="Rechnung", dimension="Dokumenttyp")
+        self.doc.tags.add(tagged)
+        self.doc.vorgaenge.add(self.vorgang)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
+        content = response.content.decode()
+
+        self.assertIn("findus-tag-dim-", content)
+        vorgang_chip_start = content.index(f'data-id="{self.vorgang.id}"')
+        vorgang_chip_markup = content[max(0, vorgang_chip_start - 200) : vorgang_chip_start]
+        self.assertNotIn("findus-tag-dim-", vorgang_chip_markup)
 
     def test_block_shows_correspondent_options_and_current_selection(self):
         correspondent = Correspondent.objects.create(name="Acme GmbH")
@@ -2811,9 +2827,11 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.assertEqual(self.doc.correspondent.name, "Neue Firma GmbH")
         self.assertNotContains(response, "Bitte einen Namen eingeben.")
 
-    def test_quick_create_blank_name_keeps_typed_dimension_visible(self):
-        # The typed value must survive an error render so the user does not
-        # lose it (#1064: clear the input only after a successful submit).
+    def test_quick_create_blank_name_with_dimension_shows_visible_error(self):
+        # Ein separat mitgeschicktes `tag_dimension` (ältere Zwei-Felder-
+        # Schnellanlage, #1136 durch die kombinierte "Dimension:Name"-Eingabe
+        # ersetzt) darf ein leeres `tag_name` nicht verdecken -- der Fehler
+        # muss trotzdem sichtbar werden.
         self.client.force_login(self.user_a)
         response = self.client.post(
             reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
@@ -2823,7 +2841,6 @@ class DocumentMetaQuickCreateTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Tag.objects.count(), 0)
         self.assertContains(response, "Bitte einen Namen eingeben.")
-        self.assertContains(response, 'value="Priorität"')
 
     def test_quick_create_reuses_existing_by_name(self):
         existing = Correspondent.objects.create(name="Acme GmbH")
@@ -2896,6 +2913,216 @@ class DocumentMetaQuickCreateTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(Vorgang.objects.count(), 0)
+
+    def test_quick_create_tag_with_combined_dimension_syntax(self):
+        # Die Token-Eingabe (#1136) schickt Dimension+Name kombiniert als
+        # "Dimension:Name" statt über ein separates Feld.
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
+            {"tag_name": "Sachgebiet:Miete"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tag = Tag.objects.get(name="Miete", dimension="Sachgebiet")
+        self.assertIn(tag, self.doc.tags.all())
+
+    def test_quick_create_tag_without_colon_has_no_dimension(self):
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
+            {"tag_name": "Dringend"},
+        )
+
+        tag = Tag.objects.get(name="Dringend")
+        self.assertEqual(tag.dimension, "")
+        self.assertIn(tag, self.doc.tags.all())
+
+    def test_quick_create_chip_response_returns_only_the_new_chip(self):
+        # Die Token-Eingabe (#1136) hängt bei Neuanlage nur den Chip an,
+        # statt den ganzen Zuordnungs-Block neu zu rendern -- sonst ginge
+        # ein noch nicht bestätigter Suchtext im jeweils anderen Feld
+        # verloren.
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
+            {"vorgang_name": "Umzug 2026", "chip": "1"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        vorgang = Vorgang.objects.get(name="Umzug 2026")
+        self.assertIn(vorgang, self.doc.vorgaenge.all())
+        self.assertContains(response, f'value="{vorgang.id}"')
+        self.assertContains(response, "Umzug 2026")
+        self.assertNotContains(response, "findus-detail-meta-list")
+
+    def test_quick_create_chip_response_for_vorgang_refreshes_hub_links(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "vorgang"]),
+            {"vorgang_name": "Umzug 2026", "chip": "1"},
+        )
+
+        self.assertContains(response, 'id="document-hub-links"')
+        self.assertContains(response, 'hx-swap-oob="true"')
+
+    def test_quick_create_chip_response_for_tag_has_no_hub_links(self):
+        # Tags stehen nicht im Schnellzugriff (#1098) -- anders als Vorgänge.
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:meta_quick_create", args=[self.doc.id, "tag"]),
+            {"tag_name": "Dringend", "chip": "1"},
+        )
+
+        self.assertNotContains(response, 'id="document-hub-links"')
+
+
+class DocumentMetaSearchTests(TestCase):
+    """Covers die Trefferliste der Token-Eingabe (#1136) -- rein lesend."""
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_search_vorgang_filters_by_icontains(self):
+        match = Vorgang.objects.create(name="Steuererklärung 2026")
+        Vorgang.objects.create(name="Umzug")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": "steuer"}
+        )
+
+        self.assertContains(response, match.name)
+        self.assertNotContains(response, "Umzug")
+
+    def test_search_excludes_already_assigned_vorgang(self):
+        assigned = Vorgang.objects.create(name="Steuererklärung 2026")
+        self.doc.vorgaenge.add(assigned)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": "steuer"}
+        )
+
+        self.assertNotContains(response, f'data-token-id="{assigned.id}"')
+
+    def test_search_limits_vorgang_results(self):
+        for i in range(15):
+            Vorgang.objects.create(name=f"Vorgang {i:02d}")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": "Vorgang"}
+        )
+
+        self.assertEqual(response.content.decode().count("data-token-id="), 10)
+
+    def test_search_vorgang_prefix_match_sorts_first(self):
+        Vorgang.objects.create(name="Alte Steuererklärung")
+        prefix_match = Vorgang.objects.create(name="Steuererklärung 2026")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": "Steuer"}
+        )
+
+        content = response.content.decode()
+        self.assertLess(
+            content.index(prefix_match.name), content.index("Alte Steuererklärung")
+        )
+
+    def test_search_vorgang_shows_create_entry_without_exact_match(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]),
+            {"q": "Neuer Vorgang"},
+        )
+
+        self.assertContains(response, "neu anlegen")
+        self.assertContains(response, "Neuer Vorgang")
+
+    def test_search_vorgang_hides_create_entry_with_exact_match(self):
+        Vorgang.objects.create(name="Umzug")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": "Umzug"}
+        )
+
+        self.assertNotContains(response, "neu anlegen")
+
+    def test_search_tag_matches_name_or_dimension(self):
+        by_name = Tag.objects.create(name="Rechnung", dimension="Dokumenttyp")
+        by_dimension = Tag.objects.create(name="Miete", dimension="Rechnungswesen")
+        Tag.objects.create(name="Dringend")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "tag"]), {"q": "rechn"}
+        )
+
+        self.assertContains(response, str(by_name))
+        self.assertContains(response, str(by_dimension))
+        self.assertNotContains(response, "Dringend")
+
+    def test_search_tag_create_entry_uses_dimension_colon_name(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "tag"]),
+            {"q": "Sachgebiet:Miete"},
+        )
+
+        self.assertContains(response, "Sachgebiet:Miete")
+        self.assertContains(response, "neu anlegen")
+
+    def test_search_tag_hides_create_entry_when_dimension_and_name_match(self):
+        Tag.objects.create(name="Miete", dimension="Sachgebiet")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "tag"]),
+            {"q": "Sachgebiet:Miete"},
+        )
+
+        self.assertNotContains(response, "neu anlegen")
+
+    def test_search_blank_query_returns_no_results(self):
+        Vorgang.objects.create(name="Umzug")
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": ""}
+        )
+
+        self.assertNotContains(response, "data-token-result")
+
+    def test_search_unknown_kind_returns_404(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "correspondent"]), {"q": "x"}
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_search_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.get(
+            reverse("documents:meta_search", args=[self.doc.id, "vorgang"]), {"q": "x"}
+        )
+
+        self.assertEqual(response.status_code, 404)
 
 
 class DocumentSuggestionActionTests(TestCase):

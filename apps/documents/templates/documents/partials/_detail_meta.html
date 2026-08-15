@@ -13,6 +13,19 @@ Trigger wird bewusst nicht vererbt, sonst verlören die Anlegen-Buttons ihren
 Klick-Trigger.
 {% endcomment %}
 <div class="findus-card findus-detail-meta">
+    {% comment %}
+    Vorlage für einen Chip, den `document-meta-tokens.js` beim Übernehmen
+    eines bestehenden Treffers clientseitig einfügt (#1136) -- server-
+    gerenderte Chips (Erstanzeige, Neuanlage) nutzen stattdessen
+    `_meta_token_chip.html`; beide Markups müssen optisch gleich bleiben.
+    {% endcomment %}
+    <template data-token-chip-template>
+        <span class="findus-token-chip" data-token-chip>
+            <input type="hidden" data-token-chip-input>
+            <span class="findus-token-chip-label" data-token-chip-label></span>
+            <button type="button" class="findus-token-chip-remove" data-token-remove aria-label="Entfernen">×</button>
+        </span>
+    </template>
     <dl
         class="findus-detail-meta-list"
         hx-target="#document-meta"
@@ -135,64 +148,15 @@ Klick-Trigger.
             </dd>
         </div>
         <div class="findus-detail-meta-row">
-            <dt><label class="form-label" for="meta-vorgaenge">Vorgänge</label></dt>
+            <dt>Vorgänge</dt>
             <dd>
-                <select
-                    id="meta-vorgaenge"
-                    name="vorgaenge"
-                    class="form-select form-select-sm"
-                    multiple
-                    size="4"
-                    hx-post="{% url 'documents:meta' document.pk %}"
-                    hx-vals='{"field": "vorgaenge"}'
-                >
-                    {% for vorgang in all_vorgaenge %}
-                    <option value="{{ vorgang.id }}" {% if vorgang.id in selected_vorgang_ids %}selected{% endif %}>{{ vorgang.name }}</option>
-                    {% endfor %}
-                </select>
-                <div class="findus-quick-create" id="quick-create-vorgang">
-                    <input type="text" name="vorgang_name" class="form-control form-control-sm {% if quick_create_error.kind == 'vorgang' %}is-invalid{% endif %}" placeholder="Neuer Vorgang …" value="{% if quick_create_error.kind == 'vorgang' %}{{ quick_create_error.name }}{% endif %}">
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-outline-secondary"
-                        hx-post="{% url 'documents:meta_quick_create' document.pk 'vorgang' %}"
-                        hx-include="#quick-create-vorgang"
-                    >+ Anlegen</button>
-                    {% if quick_create_error.kind == 'vorgang' %}
-                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
-                    {% endif %}
-                </div>
+                {% include "documents/partials/_meta_token_field.html" with field_name="vorgaenge" kind="vorgang" items=vorgaenge_items is_tag=False placeholder="Vorgang suchen oder anlegen …" %}
             </dd>
         </div>
         <div class="findus-detail-meta-row">
-            <dt><label class="form-label" for="meta-tags">Tags</label></dt>
+            <dt>Tags</dt>
             <dd>
-                <select
-                    id="meta-tags"
-                    name="tags"
-                    class="form-select form-select-sm"
-                    multiple
-                    size="4"
-                    hx-post="{% url 'documents:meta' document.pk %}"
-                    hx-vals='{"field": "tags"}'
-                >
-                    {% for tag in all_tags %}
-                    <option value="{{ tag.id }}" {% if tag.id in selected_tag_ids %}selected{% endif %}>{{ tag }}</option>
-                    {% endfor %}
-                </select>
-                <div class="findus-quick-create" id="quick-create-tag">
-                    <input type="text" name="tag_name" class="form-control form-control-sm {% if quick_create_error.kind == 'tag' %}is-invalid{% endif %}" placeholder="Neues Tag …" value="{% if quick_create_error.kind == 'tag' %}{{ quick_create_error.name }}{% endif %}">
-                    <input type="text" name="tag_dimension" class="form-control form-control-sm" placeholder="Dimension (optional)" value="{% if quick_create_error.kind == 'tag' %}{{ quick_create_error.dimension }}{% endif %}">
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-outline-secondary"
-                        hx-post="{% url 'documents:meta_quick_create' document.pk 'tag' %}"
-                        hx-include="#quick-create-tag"
-                    >+ Anlegen</button>
-                    {% if quick_create_error.kind == 'tag' %}
-                    <div class="findus-quick-create-error text-danger small">{{ quick_create_error.message }}</div>
-                    {% endif %}
-                </div>
+                {% include "documents/partials/_meta_token_field.html" with field_name="tags" kind="tag" items=tags_items is_tag=True placeholder="Tag suchen oder anlegen (Dimension:Name) …" %}
             </dd>
         </div>
         {% comment %}

@@ -1,0 +1,12 @@
+{% load documents_extras %}
+{% comment %}
+Ein Chip der Token-Eingabe (#1136). Das versteckte Feld trägt exakt den
+bisherigen Feldnamen (`vorgaenge`/`tags`), damit `document_meta` unverändert
+per `getlist()`/`.set()` speichert -- dieses Ticket ändert die Oberfläche,
+nicht den Speichervorgang.
+{% endcomment %}
+<span class="findus-token-chip{% if is_tag %} {{ dimension|tag_dimension_badge_class }}{% endif %}" data-token-chip data-id="{{ object_id }}">
+    <input type="hidden" name="{{ field_name }}" value="{{ object_id }}">
+    <span class="findus-token-chip-label">{{ object_label }}</span>
+    <button type="button" class="findus-token-chip-remove" data-token-remove aria-label="„{{ object_label }}“ entfernen">×</button>
+</span>

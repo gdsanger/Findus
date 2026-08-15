@@ -180,6 +180,21 @@ Funktion.
 - Determinismus vor Bequemlichkeit: Farb-/Zuordnungs-Hashes über `hashlib.md5`,
   nicht über Pythons `hash()` (der ist pro Prozess zufällig gesalzen und
   würde bei jedem Neustart andere Farben zuweisen).
+- **Token-Eingabe für Mehrfachzuordnungen** (Chips + serverseitige
+  Tippsuche statt `<select multiple>`, erstmals bei Vorgänge/Tags im
+  Dokument-Zuordnungsformular, #1136): das versteckte Feld je Chip trägt
+  weiterhin den ursprünglichen Feldnamen (z. B. `vorgaenge`) — die
+  Token-Eingabe ändert nur die Oberfläche, nicht den bestehenden
+  `getlist()`/`.set()`-Speicherpfad. Der Such-Endpunkt schreibt nichts,
+  schließt bereits Zugeordnetes aus und sortiert Präfix-Treffer vor
+  Teiltreffern (sonst steht der gemeinte Eintrag zufällig weiter unten).
+  Neuanlage läuft über den vorhandenen Quick-Create-Endpunkt, aber mit
+  einer `chip=1`-Markierung, die nur den neuen Chip statt des ganzen
+  Blocks zurückgibt — ein Full-Block-Rerender würde sonst unbestätigten
+  Suchtext in einem anderen Feld der Seite verwerfen. Kein JS-Paket, kein
+  Build-Schritt: ein kleines, rein delegiertes Skript
+  (`document-meta-tokens.js`) bindet auf `document`-Ebene statt auf
+  einzelne Elemente, damit es jeden HTMX-Swap des Blocks übersteht.
 
 ## Bewusst nicht gebaut
 
