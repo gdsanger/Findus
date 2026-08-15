@@ -160,20 +160,7 @@ werden muss.
                         </div>
                         <div><dt>Sprache</dt><dd>{{ document.metadata.language|language_label }}</dd></div>
                     </dl>
-                </div>
-
-                <details class="findus-detail-raw">
-                    <summary>Volltext anzeigen (Rohtext/Markdown)</summary>
-                    <div class="findus-card findus-detail-content">
-                        {% if document.markdown %}
-                        <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
-                        {% elif document.text_content %}
-                        <pre class="findus-detail-text">{{ document.text_content }}</pre>
-                        {% else %}
-                        <p class="text-muted">Kein Text vorhanden.</p>
-                        {% endif %}
-                    </div>
-                </details>
+                </div>                
                 {% else %}
                 <p class="text-muted">
                     Noch keine KI-Zusammenfassung vorhanden. Es wird der Rohtext aus der Extraktion angezeigt.
@@ -238,7 +225,7 @@ werden muss.
                     aria-controls="pane-context"
                     aria-selected="false"
                 >
-                    Verknüpfungen &amp; Kontext
+                    Verknüpfungen
                     <span class="badge rounded-pill {% if linked_documents %}text-bg-secondary{% else %}text-bg-light findus-tab-empty{% endif %}">{{ linked_documents|length }}</span>
                 </button>
             </li>
@@ -286,12 +273,6 @@ werden muss.
                 Der Kommentare-Tab zeigt seit #1125 echte Kommentare, nicht
                 mehr diesen Block.
                 {% endcomment %}
-                <section class="findus-section">
-                    <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
-                    <div id="document-tasks">
-                        {% include "documents/partials/_detail_tasks.html" %}
-                    </div>
-                </section>
             </div>
 
             <div class="tab-pane fade" id="pane-comments" role="tabpanel" aria-labelledby="tab-comments">
@@ -323,7 +304,7 @@ werden muss.
                     </div>
 
                     <div class="findus-detail-context-block">
-                        <h3 class="findus-section-subtitle">Kennungen &amp; Referenznummern</h3>
+                        <h3 class="findus-section-subtitle">Referenznummern</h3>
                         {% comment %}
                         Anders als der Ähnlichkeits-Block direkt mitgerendert: der
                         Match läuft über den Index auf (type, value_normalized) und
