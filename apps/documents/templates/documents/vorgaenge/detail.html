@@ -85,6 +85,15 @@ Mindestbreite von 10rem zusammenfallen; ab `lg` gilt das gewohnte 3/9.
 
     <div class="col-12 col-md-8 col-lg-9">
         <section class="findus-section">
+            <div class="card">
+                <div class="card-header">Ausführliche Zusammenfassung</div>
+                <div class="card-body">
+                    {% include "documents/partials/_vorgang_long_summary.html" %}
+                </div>
+            </div>
+        </section>
+
+        <section class="findus-section">
             {% url 'documents:vorgang_upload' vorgang.pk as upload_url %}
             {% include "documents/partials/_upload_dropzone.html" with upload_url=upload_url compact=True %}
         </section>

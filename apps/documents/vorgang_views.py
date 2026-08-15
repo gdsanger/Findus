@@ -19,6 +19,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from .forms import VorgangForm
+from .long_summary import (
+    expire_vorgang_long_summary_if_stalled,
+    start_vorgang_long_summary,
+    vorgang_long_summary_is_stale,
+    vorgang_long_summary_new_document_count,
+)
 from .models import Document, Tag, Task, Vorgang, VorgangRecommendation
 from .recommendations import expire_if_stalled, is_stale_for, start_recommendation_run
 from .reference_views import owner_references_context
@@ -183,6 +189,7 @@ def vorgang_detail(request, pk):
         return render(request, "documents/partials/_document_list.html", context)
 
     context.update(_recommendations_context(request.user, vorgang))
+    context.update(_long_summary_context(request.user, vorgang))
     context.update(owner_references_context(vorgang))
     return render(request, "documents/vorgaenge/detail.html", context)
 
@@ -419,3 +426,68 @@ def vorgang_recommendation_dismiss(request, pk, recommendation_id):
         recommendation.save(update_fields=["status", "updated_at"])
 
     return _render_recommendations(request, vorgang)
+
+
+# -- Ausfuehrliche Zusammenfassung (#1135) -----------------------------------
+
+
+def _long_summary_context(user, vorgang):
+    """Kontext des Panels "Ausfuehrliche Zusammenfassung" -- prueft
+    nebenbei auf einen haengengebliebenen Job, analog
+    `_recommendations_context`/`expire_if_stalled`.
+    """
+    expire_vorgang_long_summary_if_stalled(vorgang)
+    stale = vorgang_long_summary_is_stale(vorgang, user)
+    return {
+        "vorgang": vorgang,
+        "vorgang_long_summary_stale": stale,
+        "vorgang_long_summary_new_document_count": (
+            vorgang_long_summary_new_document_count(vorgang, user) if stale else 0
+        ),
+    }
+
+
+def _render_long_summary(request, vorgang):
+    return render(
+        request,
+        "documents/partials/_vorgang_long_summary.html",
+        _long_summary_context(request.user, vorgang),
+    )
+
+
+@login_required
+def vorgang_long_summary_status(request, pk):
+    """Poll-/Anzeige-Ziel des Panels "Ausfuehrliche Zusammenfassung"
+    (#1135), analog `vorgang_recommendations`.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+    return _render_long_summary(request, vorgang)
+
+
+@login_required
+@require_POST
+def vorgang_long_summary_generate(request, pk):
+    """"Ausfuehrliche Zusammenfassung erstellen"/"erneut erzeugen" -- laeuft
+    async ueber den Django-Q-Worker, analog
+    `vorgang_recommendations_generate`. `request.user.pk` wandert mit,
+    weil die Datenbasis `visible_to`-gescoped ist.
+    """
+    vorgang = get_object_or_404(Vorgang, pk=pk)
+    start_vorgang_long_summary(vorgang)
+
+    from django_q.tasks import async_task
+
+    from .tasks import (
+        generate_vorgang_long_summary_hook,
+        generate_vorgang_long_summary_task,
+    )
+
+    async_task(
+        generate_vorgang_long_summary_task,
+        vorgang.pk,
+        request.user.pk,
+        timeout=settings.FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        hook=generate_vorgang_long_summary_hook,
+    )
+
+    return _render_long_summary(request, vorgang)

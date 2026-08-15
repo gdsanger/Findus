@@ -91,6 +91,16 @@ urlpatterns = [
         vorgang_views.vorgang_recommendation_dismiss,
         name="vorgang_recommendation_dismiss",
     ),
+    path(
+        "vorgaenge/<int:pk>/lang-zusammenfassung/",
+        vorgang_views.vorgang_long_summary_status,
+        name="vorgang_long_summary_status",
+    ),
+    path(
+        "vorgaenge/<int:pk>/lang-zusammenfassung/erstellen/",
+        vorgang_views.vorgang_long_summary_generate,
+        name="vorgang_long_summary_generate",
+    ),
     path("tags/", tag_views.tag_list, name="tag_list"),
     path("tags/create/", tag_views.tag_create, name="tag_create"),
     path("tags/<int:pk>/", tag_views.tag_detail, name="tag_detail"),
@@ -184,6 +194,16 @@ urlpatterns = [
         "documents/<int:pk>/reprocess/",
         views.document_reprocess,
         name="reprocess",
+    ),
+    path(
+        "documents/<int:pk>/lang-zusammenfassung/",
+        views.document_long_summary_status,
+        name="long_summary_status",
+    ),
+    path(
+        "documents/<int:pk>/lang-zusammenfassung/erstellen/",
+        views.document_long_summary_generate,
+        name="long_summary_generate",
     ),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
     path(

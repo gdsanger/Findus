@@ -17,6 +17,11 @@ from apps.ingest.service import ingest_eml_file, ingest_file, sniff_mime_type
 
 from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
+from .long_summary import (
+    document_long_summary_is_stale,
+    expire_document_long_summary_if_stalled,
+    start_document_long_summary,
+)
 from .models import (
     Correspondent,
     Document,
@@ -835,6 +840,7 @@ def document_detail(request, pk):
         "document": document,
         **document_comments_context(request.user, document),
         **_analysis_status_context(document),
+        **_long_summary_context(document),
         **_children_context(request.user, document),
         **_references_context(request.user, document),
         # Verknüpfungen direkt mitrendern (#1126); der Ähnlichkeits-Tab
@@ -1123,6 +1129,69 @@ def document_action_status(request, pk):
 
 def _analysis_status_context(document):
     return {"document": document, "pending_statuses": PENDING_STATUSES}
+
+
+def _long_summary_context(document):
+    """Kontext des Panels "Ausfuehrliche Zusammenfassung" (#1135) --
+    prueft nebenbei auf einen haengengebliebenen Job (analog
+    `vorgang_views._recommendations_context`/`expire_if_stalled`), bevor
+    der Veraltet-Hinweis berechnet wird.
+    """
+    expire_document_long_summary_if_stalled(document)
+    return {
+        "document": document,
+        "long_summary_stale": document_long_summary_is_stale(document),
+    }
+
+
+@login_required
+def document_long_summary_status(request, pk):
+    """Poll-/Anzeige-Ziel des Panels "Ausfuehrliche Zusammenfassung"
+    (#1135) -- solange `long_summary_status` `running` ist, holt sich das
+    eingeschwenkte Fragment selbst wieder ab, analog
+    `document_analysis_status`/`vorgang_views.vorgang_recommendations`.
+    """
+    document = _visible_document(request.user, pk)
+    return render(
+        request,
+        "documents/partials/_detail_long_summary.html",
+        _long_summary_context(document),
+    )
+
+
+@login_required
+@require_POST
+def document_long_summary_generate(request, pk):
+    """"Ausfuehrliche Zusammenfassung erstellen"/"erneut erzeugen" -- laeuft
+    async ueber den Django-Q-Worker, ein `generate()`-Call pro Klick.
+
+    `long_summary_status` flippt hier synchron auf `running`
+    (`start_document_long_summary`), damit das Panel den Spinner ab dem
+    Klick zeigt statt bis zum Anlaufen des Workers noch den alten Stand zu
+    behaupten.
+    """
+    document = _visible_document(request.user, pk)
+    start_document_long_summary(document)
+
+    from django_q.tasks import async_task
+
+    from .tasks import (
+        generate_document_long_summary_hook,
+        generate_document_long_summary_task,
+    )
+
+    async_task(
+        generate_document_long_summary_task,
+        document.id,
+        timeout=settings.FINDUS_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        hook=generate_document_long_summary_hook,
+    )
+
+    return render(
+        request,
+        "documents/partials/_detail_long_summary.html",
+        _long_summary_context(document),
+    )
 
 
 @login_required

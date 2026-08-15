@@ -73,7 +73,67 @@ class Correspondent(TimeStampedModel):
         return self.name
 
 
-class Vorgang(TimeStampedModel):
+class LongSummaryMixin(models.Model):
+    """Ausfuehrliche Zusammenfassung (#1135): ein zweites, laengeres
+    KI-Artefakt neben der bestehenden Kurzzusammenfassung -- Fliesstext
+    statt drei Saetzen, auf Knopfdruck erzeugt und dauerhaft gespeichert,
+    geteilt zwischen `Document` und `Vorgang` statt zweimal denselben
+    Feldsatz zu pflegen.
+
+    Direkt auf dem Besitzer-Model, kein eigenes Run-Model wie
+    `VorgangRecommendationRun`: hier gibt es keine strukturierten
+    Kind-Zeilen (Empfehlungen mit eigenem Status/Quellen), nur Text plus
+    Provenienz -- ein zweites Model waere hier nur Overhead.
+
+    `ai_model`/`ai_model_version` sind dieselbe Herkunftsangabe wie bei
+    `Chunk.embedding_model`/`_version`: ohne sie laesst sich spaeter nicht
+    beurteilen, wie viel ein alter Text noch wert ist.
+
+    `based_on` haelt fest, worauf die Erzeugung fusste (siehe
+    `apps.documents.long_summary` fuer die genaue Struktur je Ebene) --
+    Grundlage des Veraltet-Hinweises. `run_started_at` ist reine
+    Job-Buchfuehrung fuers Stall-Erkennen (analog
+    `recommendations.expire_if_stalled`), bewusst getrennt von
+    `updated_at`: dieses Feld ist bei Document/Vorgang bereits mit
+    inhaltlichen Aenderungen belegt (Text, Meta, ...), ein Bump durch den
+    bloßen Klick auf "erstellen" wuerde die Veraltet-Erkennung verfaelschen
+    -- deshalb speichert `long_summary_*` nie `updated_at` mit.
+    """
+
+    class LongSummaryStatus(models.TextChoices):
+        NONE = "none", "Nicht erstellt"
+        RUNNING = "running", "Wird erstellt"
+        READY = "ready", "Fertig"
+        FAILED = "failed", "Fehlgeschlagen"
+
+    long_summary = models.TextField(blank=True)
+    long_summary_status = models.CharField(
+        max_length=20, choices=LongSummaryStatus.choices, default=LongSummaryStatus.NONE
+    )
+    long_summary_generated_at = models.DateTimeField(null=True, blank=True)
+    long_summary_based_on = models.JSONField(default=dict, blank=True)
+    long_summary_error = models.TextField(blank=True)
+    long_summary_ai_model = models.CharField(max_length=100, blank=True)
+    long_summary_ai_model_version = models.CharField(max_length=50, blank=True)
+    long_summary_run_started_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    @property
+    def long_summary_is_running(self):
+        return self.long_summary_status == self.LongSummaryStatus.RUNNING
+
+    @property
+    def has_long_summary(self):
+        """True sobald schon einmal ein Ergebnis eingetroffen ist --
+        `long_summary_status` kann waehrenddessen laengst wieder `running`
+        sein (erneutes Erzeugen laesst den alten Text bis dahin stehen).
+        """
+        return self.long_summary_generated_at is not None
+
+
+class Vorgang(TimeStampedModel, LongSummaryMixin):
     """Aktenvorgang/Angelegenheit -- fachlich kein "Projekt".
 
     `department` ist eine einzelne, fachliche Zuordnung (welche Abteilung
@@ -204,7 +264,7 @@ class DocumentQuerySet(models.QuerySet):
         return document
 
 
-class Document(TimeStampedModel):
+class Document(TimeStampedModel, LongSummaryMixin):
     class Visibility(models.TextChoices):
         DEPARTMENT = "department", "Abteilung"
         PRIVATE = "private", "Privat"

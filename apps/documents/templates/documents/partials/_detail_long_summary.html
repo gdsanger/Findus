@@ -1,0 +1,87 @@
+{% load documents_extras %}
+{% comment %}
+Ausfuehrliche Zusammenfassung eines Dokuments (#1135). Ein einziges,
+in sich geschlossenes Fragment: zugleich Anzeige, Poll-Ziel waehrend der
+Erzeugung und Swap-Ziel des Erstellen-/Erneut-erzeugen-Buttons -- kein
+Seiten-Refresh noetig, alles Veraenderliche steht hier drin. Kein
+eigener Rahmen (CLAUDE.md "Ein Swap-Partial rahmt sich nicht selbst
+ein"): das `<details>` uebernimmt den kompletten Block, die Karte drumherum
+steht in `detail.html`.
+{% endcomment %}
+<div
+    id="document-long-summary"
+    {% if document.long_summary_status == 'running' %}
+    hx-get="{% url 'documents:long_summary_status' document.pk %}"
+    hx-trigger="every 4s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    {% endif %}
+>
+    {% if document.long_summary_status == 'none' %}
+    <form
+        method="post"
+        action="{% url 'documents:long_summary_generate' document.pk %}"
+        hx-post="{% url 'documents:long_summary_generate' document.pk %}"
+        hx-target="#document-long-summary"
+        hx-swap="outerHTML"
+    >
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-secondary">
+            Ausführliche Zusammenfassung erstellen
+        </button>
+    </form>
+    {% else %}
+    <details class="findus-detail-raw" {% if document.long_summary_status == 'ready' %}open{% endif %}>
+        <summary>Ausführliche Zusammenfassung</summary>
+
+        {% if document.long_summary_status == 'running' %}
+        <p class="text-muted small">
+            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+            Wird erstellt …
+        </p>
+        {% elif document.long_summary_status == 'failed' %}
+        <p class="text-danger small">
+            Konnte nicht erstellt werden{% if document.long_summary_error %}: {{ document.long_summary_error }}{% endif %}
+        </p>
+        {% elif document.long_summary %}
+        <p class="findus-ai-disclaimer text-muted small">
+            KI-generiert – maßgeblich bleibt das Original.
+        </p>
+        <p class="text-muted small">
+            erstellt am {{ document.long_summary_generated_at|date:"d.m.Y H:i" }}
+        </p>
+        {% if long_summary_stale %}
+        <p class="findus-recommendations-stale small">
+            Veraltet – seitdem hat sich das Dokument oder seine Kommentare geändert.
+            Bitte neu erzeugen.
+        </p>
+        {% endif %}
+        <div class="findus-detail-content">
+            <div class="findus-markdown">{{ document.long_summary|render_markdown }}</div>
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">
+            Kein Text extrahiert – es gibt nichts zusammenzufassen.
+        </p>
+        {% endif %}
+
+        <form
+            method="post"
+            action="{% url 'documents:long_summary_generate' document.pk %}"
+            hx-post="{% url 'documents:long_summary_generate' document.pk %}"
+            hx-target="#document-long-summary"
+            hx-swap="outerHTML"
+            class="mt-2"
+        >
+            {% csrf_token %}
+            <button
+                type="submit"
+                class="btn btn-sm btn-outline-secondary"
+                {% if document.long_summary_status == 'running' %}disabled{% endif %}
+            >
+                {% if document.long_summary_status == 'ready' %}Erneut erzeugen{% else %}Erneut versuchen{% endif %}
+            </button>
+        </form>
+    </details>
+    {% endif %}
+</div>
