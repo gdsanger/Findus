@@ -159,6 +159,16 @@ class DocumentQuerySet(models.QuerySet):
         """
         return self.filter(parent__isnull=True)
 
+    def open_visible_to(self, user):
+        """Sichtbare, noch offene Dokumente (#1129/#1130) -- gemeinsame Basis
+
+        der Wiedervorlagen-Auswahl in Wiedervorlagen-Ansicht, Nav-Badge
+        (`context_processors.due_follow_up_count`) und Dashboard: Termine
+        erledigter Dokumente sollen nirgends auftauchen, auch nicht als
+        "überfällig" (Begründung siehe `DocumentFollowUpViewTests`, #1129).
+        """
+        return self.visible_to(user).exclude(action_status=Document.ActionStatus.DONE)
+
     def children_of(self, document):
         return self.filter(parent=document)
 

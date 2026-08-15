@@ -221,9 +221,7 @@ def _followup_entries(request):
     ist hier redundant (die Gruppierung zeigt bereits alles) und wird
     ignoriert.
     """
-    documents = Document.objects.visible_to(request.user).exclude(
-        action_status=Document.ActionStatus.DONE
-    )
+    documents = Document.objects.open_visible_to(request.user)
     documents, _vorgang_id, _tag_id = _combinable_document_filters(request, documents)
 
     return (

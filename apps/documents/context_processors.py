@@ -30,9 +30,7 @@ def due_follow_up_count(request):
     user = getattr(request, "user", None)
     if not user or not user.is_authenticated:
         return {}
-    open_documents = Document.objects.visible_to(user).exclude(
-        action_status=Document.ActionStatus.DONE
-    )
+    open_documents = Document.objects.open_visible_to(user)
     return {
         "due_follow_up_count": DocumentComment.objects.due()
         .filter(document__in=open_documents)
