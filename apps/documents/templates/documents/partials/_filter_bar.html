@@ -1,3 +1,9 @@
+<div class="card">
+   <div class="card-header">
+        <h5 class="card-title mb-0">Filter</h5>
+    </div>
+<div class="card-body">
+
 <form
     class="findus-filter-bar"
     hx-get="{{ list_url }}"
@@ -98,11 +104,7 @@
             <option value="{{ value }}" {% if selected.action_status == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
         </select>
-    </div>
-    {# Wiedervorlage-Filter ist in der Wiedervorlagen-Ansicht redundant --
-    diese Ansicht zeigt ohnehin jede Wiedervorlage, gruppiert nach
-    Fälligkeit (#1129) -- deshalb hier ausgeblendet statt nur ignoriert;
-    `_followup_entries()` wertet `follow_up` serverseitig ohnehin nicht aus. #}
+    </div>  
     <div class="findus-filter-field" id="filter-follow-up-field"{% if selected.view == "wiedervorlagen" %} hidden{% endif %}>
         <label class="form-label" for="filter-follow-up">Wiedervorlage</label>
         <select id="filter-follow-up" name="follow_up" class="form-select form-select-sm">
@@ -150,6 +152,9 @@
     </div>
     <span id="document-list-indicator" class="htmx-indicator findus-filter-loading">Lädt …</span>
 </form>
+</div>
+
+</div>
 <script>
 // Liste/Timeline-Umschalter (#1087): ein verstecktes `view`-Feld im Filter-
 // Formular statt einer eigenen Navigation, damit ein Klick dieselbe
