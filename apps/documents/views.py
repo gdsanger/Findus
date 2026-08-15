@@ -1196,11 +1196,13 @@ def document_meta_search(request, pk, kind):
 @login_required
 @require_POST
 def document_action_status(request, pk):
-    """Set `Document.action_status` (#1057) from the list row or detail --
+    """Set `Document.action_status` (#1057) to any of its values --
 
     a dedicated single-field endpoint rather than routing through
-    `document_meta`, because the control renders as a badge+dropdown pair
-    that also sits in the list rows, far away from the Zuordnung block.
+    `document_meta`, because the control renders as a badge+dropdown pair,
+    far away from the Zuordnung block. Reserved for the detail view's
+    fine-grained control; the overview's one-click toggle is the separate
+    `document_action_status_toggle` below (#1137).
     """
     document = _visible_document(request.user, pk)
     action_status = request.POST.get("action_status", "").strip()
@@ -1211,6 +1213,32 @@ def document_action_status(request, pk):
         request,
         "documents/partials/_action_status_control.html",
         {"document": document, "action_status_choices": Document.ActionStatus.choices},
+    )
+
+
+@login_required
+@require_POST
+def document_action_status_toggle(request, pk):
+    """One-click Erledigung toggle for the overview views (#1137).
+
+    Flips between `erledigt` and `offen` from the *stored* value, never
+    from a posted target state -- two fast clicks would otherwise race each
+    other into an unpredictable result. A document sitting on the third
+    value (`keine`) counts as "not done" and also flips to `erledigt`; the
+    finer-grained states stay reserved for `document_action_status` in the
+    detail view.
+    """
+    document = _visible_document(request.user, pk)
+    document.action_status = (
+        Document.ActionStatus.OPEN
+        if document.action_status == Document.ActionStatus.DONE
+        else Document.ActionStatus.DONE
+    )
+    document.save(update_fields=["action_status", "updated_at"])
+    return render(
+        request,
+        "documents/partials/_action_status_toggle.html",
+        {"document": document},
     )
 
 

@@ -256,20 +256,23 @@ class DocumentListViewTests(TestCase):
 
         self.assertContains(response, "Rechnung Acme")
 
-    def test_list_row_shows_action_status_badge_when_open(self):
+    def test_list_row_shows_action_status_toggle_when_open(self):
         self.own_doc.action_status = Document.ActionStatus.OPEN
         self.own_doc.save(update_fields=["action_status"])
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:home"))
 
-        self.assertContains(response, "findus-action-status-badge text-bg-warning")
+        self.assertContains(response, "findus-action-status-toggle text-bg-warning")
 
-    def test_list_row_hides_action_status_badge_when_none(self):
+    def test_list_row_shows_action_status_toggle_with_neutral_style_when_none(self):
+        # #1137: der Umschalter ist ein Bedienelement, kein reines Abzeichen
+        # -- er bleibt deshalb auch fuer "keine" sichtbar, statt wie das
+        # frühere reine Abzeichen ganz zu verschwinden.
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:home"))
 
-        self.assertNotContains(response, "findus-action-status-badge")
+        self.assertContains(response, "findus-action-status-toggle border text-body-secondary")
 
     def test_filter_bar_includes_action_status_dropdown(self):
         self.client.force_login(self.user_a)
@@ -1440,6 +1443,107 @@ class DocumentActionStatusViewTests(TestCase):
         response = self.client.post(
             reverse("documents:action_status", args=[self.doc.id]),
             {"action_status": Document.ActionStatus.OPEN},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.NONE)
+
+
+class DocumentActionStatusToggleViewTests(TestCase):
+    """Covers the #1137 one-click toggle used by the overview views (Kachel,
+
+    Liste, Timeline, Wiedervorlagen) -- distinct from `document_action_status`
+    above, which stays reserved for the detail view's full dropdown.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_toggle_sets_erledigt_from_none(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:action_status_toggle", args=[self.doc.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.DONE)
+        self.assertContains(response, 'aria-pressed="true"')
+
+    def test_toggle_sets_erledigt_from_offen(self):
+        self.doc.action_status = Document.ActionStatus.OPEN
+        self.doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:action_status_toggle", args=[self.doc.id]))
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.DONE)
+
+    def test_toggle_falls_back_to_offen_from_erledigt(self):
+        self.doc.action_status = Document.ActionStatus.DONE
+        self.doc.save(update_fields=["action_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:action_status_toggle", args=[self.doc.id])
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.OPEN)
+        self.assertContains(response, 'aria-pressed="false"')
+
+    def test_toggle_ignores_posted_target_state(self):
+        # Der neue Zustand kommt ausschliesslich aus der Datenbank, nicht aus
+        # dem Request -- zwei schnelle Klicks duerfen den Zustand nicht
+        # unkontrolliert kippen lassen.
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:action_status_toggle", args=[self.doc.id]),
+            {"action_status": Document.ActionStatus.OPEN},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.action_status, Document.ActionStatus.DONE)
+
+    def test_toggle_touches_no_other_field(self):
+        self.doc.title = "Rechnung Acme"
+        self.doc.save(update_fields=["title"])
+        original_title = self.doc.title
+        original_updated_at = self.doc.updated_at
+
+        self.client.force_login(self.user_a)
+        self.client.post(reverse("documents:action_status_toggle", args=[self.doc.id]))
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.title, original_title)
+        self.assertGreater(self.doc.updated_at, original_updated_at)
+
+    def test_get_is_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:action_status_toggle", args=[self.doc.id])
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:action_status_toggle", args=[self.doc.id])
         )
 
         self.assertEqual(response.status_code, 404)
@@ -3773,6 +3877,21 @@ class DocumentFollowUpViewTests(TestCase):
         self.assertContains(
             response, reverse("documents:correspondent_detail", args=[self.acme.pk])
         )
+
+    def test_entry_includes_action_status_toggle_for_its_document(self):
+        # #1137: die Erledigung ist auch in der Wiedervorlagen-Ansicht mit
+        # einem Klick umschaltbar -- ohne Umweg ins Dokument-Detail.
+        today = timezone.localdate()
+        DocumentComment.objects.create(
+            document=self.doc_a, body="Skonto bis 20.08. prüfen", follow_up_date=today
+        )
+
+        response = self._get()
+
+        self.assertContains(
+            response, reverse("documents:action_status_toggle", args=[self.doc_a.pk])
+        )
+        self.assertContains(response, "findus-action-status-toggle")
 
     def test_document_with_two_follow_ups_appears_twice(self):
         today = timezone.localdate()

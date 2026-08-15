@@ -49,7 +49,7 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                         <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
                             {{ document.get_processing_status_display }}
                         </span>
-                        {% include "documents/partials/_action_status_control.html" %}
+                        {% include "documents/partials/_action_status_toggle.html" %}
                         {% include "documents/partials/_document_delete_button.html" %}
                     </div>
                 </div>
@@ -89,7 +89,7 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                     </span>
                 </td>
                 <td>
-                    {% include "documents/partials/_action_status_control.html" %}
+                    {% include "documents/partials/_action_status_toggle.html" %}
                 </td>
                 <td>
                     {{ document.display_date|date:"d.m.Y" }}

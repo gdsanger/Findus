@@ -1,0 +1,34 @@
+{% load documents_extras %}
+{% comment %}
+Ein-Klick-Umschalter für `Document.action_status` in den Übersichten (#1137)
+-- Kachel, Liste, Timeline und Wiedervorlagen binden dasselbe Partial ein,
+statt vier Varianten nachzubauen. Ein echtes `<button>`, kein klickbares
+`<span>`: Tastatur erreichbar, `aria-pressed` trägt den Zustand. Der neue
+Zustand wird serverseitig aus dem gespeicherten Wert abgeleitet
+(`document_action_status_toggle`), nie aus einem mitgeschickten
+Wunschzustand -- deshalb genügt ein einfacher POST ohne Payload.
+
+Der Endpunkt liefert bei einem Fehler keinen 2xx-Status, HTMX tauscht dann
+nichts -- der alte Zustand bleibt stehen, die Fehlermeldung daneben wird nur
+eingeblendet.
+{% endcomment %}
+<span id="document-status-{{ document.pk }}" class="findus-action-status-toggle-wrap">
+    <button
+        type="button"
+        class="badge findus-action-status-toggle {{ document.action_status|action_status_badge_class|default:"border text-body-secondary" }}"
+        hx-post="{% url 'documents:action_status_toggle' document.pk %}"
+        hx-target="closest .findus-action-status-toggle-wrap"
+        hx-swap="outerHTML"
+        hx-sync="closest [hx-trigger]:abort"
+        hx-disabled-elt="this"
+        aria-pressed="{% if document.action_status == 'erledigt' %}true{% else %}false{% endif %}"
+        title="{% if document.action_status == 'erledigt' %}Erledigung aufheben{% else %}Als erledigt markieren{% endif %}"
+        aria-label="{% if document.action_status == 'erledigt' %}Erledigung aufheben{% else %}Als erledigt markieren{% endif %}"
+        hx-on::before-request="this.nextElementSibling.classList.add('d-none')"
+        hx-on::response-error="this.nextElementSibling.classList.remove('d-none')"
+        hx-on::send-error="this.nextElementSibling.classList.remove('d-none')"
+    >{{ document.get_action_status_display }}</button>
+    <span class="findus-action-status-toggle-error text-danger small d-none" role="alert">
+        Konnte nicht gespeichert werden.
+    </span>
+</span>
