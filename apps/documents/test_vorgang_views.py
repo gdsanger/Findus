@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -621,7 +622,10 @@ class VorgangRecommendationViewTests(TestCase):
         self.assertContains(response, "keine Rechts-/Steuerberatung")
 
     def test_generate_marks_the_run_running_and_queues_the_worker(self):
-        from apps.documents.tasks import generate_vorgang_recommendations_task
+        from apps.documents.tasks import (
+            generate_vorgang_recommendations_hook,
+            generate_vorgang_recommendations_task,
+        )
 
         with patch("django_q.tasks.async_task") as mock_async_task:
             mock_async_task.return_value = "task-1"
@@ -633,7 +637,11 @@ class VorgangRecommendationViewTests(TestCase):
         run = VorgangRecommendationRun.objects.get(vorgang=self.vorgang)
         self.assertEqual(run.status, VorgangRecommendationRun.Status.RUNNING)
         mock_async_task.assert_called_once_with(
-            generate_vorgang_recommendations_task, self.vorgang.pk, self.user_a.pk
+            generate_vorgang_recommendations_task,
+            self.vorgang.pk,
+            self.user_a.pk,
+            timeout=settings.FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS,
+            hook=generate_vorgang_recommendations_hook,
         )
         self.assertContains(response, "Empfehlungen werden erstellt")
 

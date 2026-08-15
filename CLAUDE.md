@@ -81,6 +81,23 @@ Funktion.
 - Embeddings tragen Modell **und** Version (`Chunk.embedding_model` /
   `_version`); ein Modellwechsel bedeutet Re-Index über den gesamten Bestand
   — das ist der unterstützte Migrationsweg, kein Sonderfall.
+- **Ein Hintergrundjob mit LLM-Call braucht einen eigenen, großzügigeren
+  Django-Q-Timeout** statt des knappen `Q_CLUSTER["timeout"]`-Defaults
+  (kurz gehalten, damit ein hängender Ingest-/Thumbnail-Job schnell
+  auffällt) — per `async_task(..., timeout=...)`, nie global (#1134). Dabei
+  gilt zwingend die Schachtelung `HTTP-Timeout × Versuche < Task-Timeout <
+  Q_CLUSTER["retry"]`: `retry` ist cluster-weit (kein Per-Task-Override) und
+  muss größer bleiben als jeder verwendete Timeout, sonst stellt Django-Q
+  den Task erneut in die Warteschlange, während der erste Versuch noch
+  läuft — doppelte Ausführung, doppelte Kosten. Ein Timeout allein reicht
+  nicht: ein von außen abgebrochener Job muss seinen Zustand trotzdem auf
+  einen terminalen Fehlerfall setzen (wiederverwendetes Statusfeld wie
+  `VorgangRecommendationRun.Status`, nie ein zweites Zustandskonzept), sonst
+  bleibt die UI auf einem endlosen Ladeindikator stehen. `TimeoutException`
+  (Django-Q, erbt von `SystemExit`) entkommt einem `except Exception` —
+  wer sie sichtbar machen will, fängt sie extra ab. Abgesichert in
+  `apps/documents/test_contracts.py`
+  (`QClusterRetryOutlivesTimeoutTests`).
 
 ## UI-Konventionen
 

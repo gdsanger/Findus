@@ -467,5 +467,36 @@ class DocumentListPagesShareOneViewDefaultTests(SimpleTestCase):
                     )
 
 
+class QClusterRetryOutlivesTimeoutTests(SimpleTestCase):
+    """`Q_CLUSTER["retry"]` muss groesser sein als jeder Task-Timeout im
+    Cluster -- der globale `Q_CLUSTER["timeout"]` *und* jeder per-Task-
+    Override wie `FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS`
+    (#1134). Ist `retry` kleiner, stellt Django-Q den Task erneut in die
+    Warteschlange, waehrend der erste Versuch noch laeuft -- doppelte
+    Ausfuehrung, doppelte Token-Kosten, im schlimmsten Fall eine
+    Endlosschleife. Siehe der Kommentar an `Q_CLUSTER` in
+    `config/settings/base.py`.
+    """
+
+    def test_retry_exceeds_the_default_cluster_timeout(self):
+        self.assertGreater(settings.Q_CLUSTER["retry"], settings.Q_CLUSTER["timeout"])
+
+    def test_retry_exceeds_the_recommendation_task_timeout_override(self):
+        self.assertGreater(
+            settings.Q_CLUSTER["retry"],
+            settings.FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS,
+        )
+
+    def test_poll_timeout_exceeds_the_recommendation_task_timeout(self):
+        """Die Polling-Obergrenze im Panel darf nicht knapper sein als der
+        Task-Timeout selbst, sonst gibt die UI einen noch regulaer
+        laufenden Job faelschlich als haengengeblieben aus.
+        """
+        self.assertGreater(
+            settings.FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS,
+            settings.FINDUS_VORGANG_RECOMMENDATION_TASK_TIMEOUT_SECONDS,
+        )
+
+
 def _dummy_file(data: bytes) -> ContentFile:
     return ContentFile(data)

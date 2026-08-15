@@ -4,6 +4,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from django_q.exceptions import TimeoutException
 
 from apps.accounts.models import Department
 from apps.ai.providers.fake import FakeGenerationProvider
@@ -18,6 +19,7 @@ from .models import (
 )
 from .recommendations import (
     build_vorgang_comment_context,
+    expire_if_stalled,
     generate_vorgang_recommendations,
     is_stale_for,
 )
@@ -278,6 +280,49 @@ class VorgangRecommendationGenerationTests(TestCase):
 
         self.assertEqual(run.status, VorgangRecommendationRun.Status.FAILED)
         self.assertIn("Provider weg", run.error)
+
+    def test_timeout_exception_fails_visibly_and_reraises(self):
+        """Der gemeldete Bug (#1134): Django-Q killt den Worker nach
+        Ablauf des Task-Timeouts per `TimeoutException` -- die muss den
+        Lauf sichtbar auf "failed" setzen, *und* weiterlaufen, damit
+        Django-Q's eigene Aufraeumlogik (Prozess neu starten, `hook`
+        feuern) noch greift. Ein `except Exception` allein wuerde sie
+        nicht fangen: `TimeoutException` erbt von `SystemExit`.
+        """
+
+        class _TimeoutProvider:
+            name = "timeout"
+
+            def generate(self, messages, *, stream=False, max_tokens=None):
+                raise TimeoutException("Task exceeded maximum timeout value (600 seconds)")
+
+        with (
+            self.assertLogs("apps.documents.recommendations", level="ERROR"),
+            self.assertRaises(TimeoutException),
+        ):
+            generate_vorgang_recommendations(
+                self.vorgang.pk, self.user.pk, generation_provider=_TimeoutProvider()
+            )
+
+        run = VorgangRecommendationRun.objects.get(vorgang=self.vorgang)
+        self.assertEqual(run.status, VorgangRecommendationRun.Status.FAILED)
+        self.assertIn("Zeitüberschreitung", run.error)
+
+    def test_logs_duration_and_attempt_count(self):
+        """Ohne Laufzeit-/Token-Zahlen im Log ist jede Timeout-Diskussion
+        Raterei (#1134) -- die Log-Zeile muss also in jedem Fall stehen,
+        auch wenn der Lauf am Ende fehlschlaegt.
+        """
+        provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
+
+        with self.assertLogs("apps.documents.recommendations", level="INFO") as captured:
+            generate_vorgang_recommendations(
+                self.vorgang.pk, self.user.pk, generation_provider=provider
+            )
+
+        self.assertTrue(
+            any("Laufzeit" in message and "generate()-Aufruf" in message for message in captured.output)
+        )
 
     def test_previous_recommendations_survive_a_failed_regeneration(self):
         provider = FakeGenerationProvider(reply=_reply(sources=[self.newer.pk]))
@@ -623,3 +668,54 @@ class VorgangRecommendationStalenessTests(TestCase):
         self.run.save(update_fields=["generated_at"])
 
         self.assertFalse(is_stale_for(self.run, self.user))
+
+
+class ExpireIfStalledTests(TestCase):
+    """Netz gegen einen Job, der spurlos verschwindet -- weder der eigene
+    except-Block in `generate_vorgang_recommendations()` noch der
+    Django-Q-`hook` laufen dann noch (#1134). Der Poll-Pfad muss einen
+    zu lange auf "running" haengenden Lauf selbst beenden.
+    """
+
+    def setUp(self):
+        self.vorgang = Vorgang.objects.create(name="Forderung Acme")
+        self.run = VorgangRecommendationRun.objects.create(
+            vorgang=self.vorgang, status=VorgangRecommendationRun.Status.RUNNING
+        )
+
+    def _age_run(self, seconds):
+        VorgangRecommendationRun.objects.filter(pk=self.run.pk).update(
+            updated_at=timezone.now() - datetime.timedelta(seconds=seconds)
+        )
+        self.run.refresh_from_db()
+
+    def test_still_within_budget_is_left_running(self):
+        self._age_run(60)
+
+        expire_if_stalled(self.run)
+
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.status, VorgangRecommendationRun.Status.RUNNING)
+
+    def test_stalled_beyond_the_poll_timeout_is_marked_failed(self):
+        with override_settings(FINDUS_VORGANG_RECOMMENDATION_POLL_TIMEOUT_SECONDS=300):
+            self._age_run(301)
+
+            expire_if_stalled(self.run)
+
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.status, VorgangRecommendationRun.Status.FAILED)
+        self.assertTrue(self.run.error)
+
+    def test_a_ready_run_is_never_touched(self):
+        self.run.status = VorgangRecommendationRun.Status.READY
+        self.run.save(update_fields=["status"])
+        self._age_run(10_000)
+
+        expire_if_stalled(self.run)
+
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.status, VorgangRecommendationRun.Status.READY)
+
+    def test_no_run_is_a_no_op(self):
+        expire_if_stalled(None)  # must not raise
