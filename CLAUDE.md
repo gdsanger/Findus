@@ -240,6 +240,31 @@ Funktion.
   damit sie nicht auseinanderlaufen; die Swap-Kennung `#document-status-
   <pk>` bleibt bewusst je Eintrag eindeutig, damit ein Klick nur seine
   eigene Kachel/Zeile tauscht, nie die ganze Liste.
+  - **Kontext explizit, nie ambient** (#1139): jede einbindende Stelle
+    übergibt `{% include ... with document=… only %}` statt sich auf eine
+    zufällig gleichnamige Schleifenvariable der Umgebung zu verlassen — mit
+    `only` scheitert eine künftige Ansicht, die anders heißt (`entry.
+    document`, `hit.document`, …), laut statt mit einer leeren `id`. Kommt
+    dasselbe Dokument in einer Ansicht mehrfach vor (Wiedervorlagen: zwei
+    Termine an einem Dokument), reicht `document.pk` als Kennung nicht —
+    dafür nimmt das Partial zusätzlich ein optionales `swap_key` entgegen
+    (dort `entry.pk`, der Kommentar) und bildet `id`/`hx-target` daraus;
+    der Toggle-Endpunkt bekommt es als Querystring mit und reicht es
+    unverändert in die Antwort zurück, sonst verliert der Eintrag seine
+    eindeutige Kennung schon beim ersten Klick.
+  - **`hx-sync` zeigt auf sich selbst, nie auf einen Vorfahren-Selektor**
+    (#1139): `hx-sync="closest [hx-trigger]:abort"` sollte einen Klick mit
+    dem Pending-Poller synchronisieren, lief in den meisten Fällen aber ins
+    Leere (der Poller-Wrapper trägt `hx-trigger` nur, wenn tatsächlich ein
+    Dokument in Bearbeitung ist) — HTMX bricht dann *vor* dem Request mit
+    einem `TypeError` ab, der Klick tut sichtbar nichts. `hx-sync="this:
+    abort"` verhindert nur noch überlappende Requests desselben Buttons und
+    findet garantiert ein Ziel; das reicht, weil `hx-disabled-elt="this"`
+    einen zweiten Klick auf denselben Button ohnehin schon verhindert.
+  - **Ein globaler `htmx:targetError`-Handler** (`templates/base.html`)
+    fängt ein fehlendes Swap-Ziel künftig sichtbar ab (Konsole plus kurz
+    eingeblendeter Hinweis) statt still zu scheitern — genau das Muster
+    „toter Button“, das an dieser Stelle schon einmal aufgetreten ist.
 
 ## Bewusst nicht gebaut
 

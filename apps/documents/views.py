@@ -1235,10 +1235,18 @@ def document_action_status_toggle(request, pk):
         else Document.ActionStatus.DONE
     )
     document.save(update_fields=["action_status", "updated_at"])
+    # `swap_key` unterscheidet mehrere Vorkommen desselben Dokuments in der
+    # Wiedervorlagen-Ansicht (#1139, siehe _action_status_toggle.html) und
+    # muss unverändert in die neue `id`/`hx-target` zurückwandern, sonst
+    # verliert der Eintrag beim ersten Klick seine eindeutige Kennung.
+    swap_key = request.GET.get("swap_key", "").strip()
+    context = {"document": document}
+    if swap_key.isdigit():
+        context["swap_key"] = swap_key
     return render(
         request,
         "documents/partials/_action_status_toggle.html",
-        {"document": document},
+        context,
     )
 
 

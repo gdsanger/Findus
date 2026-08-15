@@ -69,6 +69,26 @@
                 "[name=csrfmiddlewaretoken]"
             ).value;
         });
+
+        // Ein fehlendes hx-target-Element darf nicht still abbrechen (#1139,
+        // "toter Button" -- schon einmal aufgetreten, siehe CLAUDE.md): ohne
+        // diesen Hinweis sieht ein Klick, der ins Leere läuft, für Nutzende
+        // exakt so aus wie ein funktionierender.
+        document.body.addEventListener("htmx:targetError", function (event) {
+            console.error(
+                "htmx: Swap-Ziel nicht gefunden -- Aktion wurde nicht angezeigt.",
+                event.detail
+            );
+            const banner = document.createElement("div");
+            banner.className = "findus-global-alert alert alert-danger";
+            banner.setAttribute("role", "alert");
+            banner.textContent =
+                "Aktion fehlgeschlagen: Die Anzeige konnte nicht aktualisiert werden. Bitte Seite neu laden.";
+            document.body.appendChild(banner);
+            window.setTimeout(function () {
+                banner.remove();
+            }, 6000);
+        });
     </script>
     {% block scripts %}{% endblock %}
 </body>
