@@ -11,6 +11,7 @@ aendert `CLAUDE.md` im selben PR (siehe dort, "Pflegeregel").
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -361,6 +362,49 @@ class SwapPartialsCarryNoOwnFrameTests(SimpleTestCase):
                     f"{template_name} bindet die Dokumentliste ein, ohne die "
                     "vereinbarte Swap-Region #document-list-region zu setzen.",
                 )
+
+
+class DocumentListPagesShareOneViewDefaultTests(SimpleTestCase):
+    """Alle Seiten mit Dokumentliste haben denselben Ansicht-Default:
+
+    Kachel (CLAUDE.md, "UI-Konventionen"). Home, Vorgang-, Kontakt- und
+    Tag-Hub teilen sich `_filter_bar.html` und `_document_list.html` -- ein
+    abweichender Default in einer der Views laesst die Ansicht beim Wechsel
+    Home <-> Hub springen, obwohl der Umschalter unveraendert dasteht (genau
+    das war der Zustand, als nur Home auf Kachel umgestellt wurde und die
+    Hubs auf "timeline" stehen blieben).
+
+    Geprueft wird die Quelle statt des gerenderten Ergebnisses: der Default
+    ist eine Entscheidung *einer Zeile je View*, und der Test soll auch dann
+    anschlagen, wenn eine kuenftige Seite dazukommt, die niemand rendert.
+    """
+
+    _VIEW_MODULES = (
+        "apps/documents/views.py",
+        "apps/documents/vorgang_views.py",
+        "apps/documents/correspondent_views.py",
+        "apps/documents/tag_views.py",
+    )
+
+    def test_every_document_list_page_defaults_to_the_grid_view(self):
+        pattern = re.compile(r'GET\.get\(\s*"view",\s*"([^"]*)"')
+        for module_path in self._VIEW_MODULES:
+            with self.subTest(module=module_path):
+                source = (Path(settings.BASE_DIR) / module_path).read_text(encoding="utf-8")
+                defaults = pattern.findall(source)
+                self.assertTrue(
+                    defaults,
+                    f"{module_path} liest keinen `view`-Default mehr -- der "
+                    "gemeinsame Ansicht-Vertrag haengt an dieser Zeile.",
+                )
+                for default in defaults:
+                    self.assertEqual(
+                        default,
+                        "grid",
+                        f"{module_path} faellt auf '{default}' statt auf die "
+                        "Kachelansicht zurueck -- alle Seiten mit "
+                        "Dokumentliste teilen einen Default.",
+                    )
 
 
 def _dummy_file(data: bytes) -> ContentFile:

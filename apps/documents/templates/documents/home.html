@@ -9,7 +9,14 @@
 </section>
 
 <section class="findus-section">
-    {% include "documents/partials/_filter_bar.html" %}
+    {% comment %}
+    `page_restores_filters`: Home stellt den kompletten Filter-State aus
+    localStorage her und baut die URL daraus selbst auf (Skript unten). Die
+    Filterleiste setzt die gespeicherte Ansicht deshalb hier nur in ihr
+    Hidden-Feld und löst den Swap nicht selbst aus -- sonst liefen zwei
+    Requests gegen `#document-list-region`.
+    {% endcomment %}
+    {% include "documents/partials/_filter_bar.html" with page_restores_filters=True %}
 </section>
 
 {% comment %}
@@ -38,10 +45,14 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
 // filters survive leaving and returning to the Home page.
 (function () {
     var STORAGE_KEY = "findus:documents:filters";
-    var FIELD_NAMES = ["q", "correspondent", "vorgang", "tag", "status", "direction", "sphere", "tax_relevance", "action_status", "follow_up", "view"];
-    // Server-Default der Ansicht (#1124): Kachel. Nur ein davon abweichender
-    // `view` (Liste "" oder Timeline) ist eine bewusste, zu speichernde Wahl.
-    var DEFAULT_VIEW = "grid";
+    var FIELD_NAMES = ["q", "correspondent", "vorgang", "tag", "status", "direction", "sphere", "tax_relevance", "action_status", "follow_up"];
+    // `view` steht bewusst *nicht* in FIELD_NAMES: die Ansicht ist kein
+    // Filter, sondern eine seitenübergreifende Einstellung und liegt unter
+    // einem eigenen Schlüssel, den die Filterleiste (`_filter_bar.html`)
+    // pflegt -- auch für die Hub-Seiten, die diesen Filter-State hier nicht
+    // haben. Für die URL wird sie unten aus dem Formularfeld gelesen, nicht
+    // aus dem gespeicherten Filter-State.
+    var URL_PARAM_NAMES = FIELD_NAMES.concat(["view"]);
 
     var form = document.querySelector(".findus-filter-bar");
     var region = document.getElementById("document-list-region");
@@ -63,16 +74,7 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
     }
 
     function isEmpty(state) {
-        // "view" defaults to "grid" server-side (#1124), so both "" (Liste)
-        // and "timeline" are meaningful, to-be-stored choices -- only the
-        // default itself counts as "unset". Unlike the other fields it must
-        // therefore be compared against DEFAULT_VIEW, not just truthiness, or
-        // a Liste-/Timeline-only choice would get dropped from storage and
-        // silently revert to Kachel on the next visit.
         return FIELD_NAMES.every(function (name) {
-            if (name === "view") {
-                return state[name] === DEFAULT_VIEW;
-            }
             return !state[name];
         });
     }
@@ -107,8 +109,11 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
     }
 
     function urlHasFilters() {
+        // "view" zählt mit: eine URL, die nur die Ansicht trägt, ist ein
+        // vollwertiger Einstieg und darf nicht als "keine Parameter" gelten,
+        // sonst würde der gespeicherte Filter-State darübergelegt.
         var params = new URLSearchParams(window.location.search);
-        return FIELD_NAMES.some(function (name) {
+        return URL_PARAM_NAMES.some(function (name) {
             return params.has(name);
         });
     }
@@ -125,18 +130,17 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
     function buildUrl(state) {
         var params = new URLSearchParams();
         FIELD_NAMES.forEach(function (name) {
-            // "view" is set unconditionally: an explicit "" (Liste) is
-            // falsy but still meaningful, and must reach the server as
-            // `view=` -- omitting it would make the request look
-            // param-less and fall back to the Kachel default (#1124).
-            if (name === "view") {
-                params.set(name, state[name] || "");
-                return;
-            }
             if (state[name]) {
                 params.set(name, state[name]);
             }
         });
+        // Die Ansicht kommt aus dem Formularfeld (dort hat die Filterleiste
+        // die gespeicherte Einstellung schon eingesetzt) und wird
+        // bedingungslos gesetzt: ein explizites "" (Liste) ist falsy, aber
+        // gemeint -- ohne den Parameter fiele der Server auf den
+        // Kachel-Default zurück (#1124).
+        var viewField = field("view");
+        params.set("view", viewField ? viewField.value || "" : "");
         var query = params.toString();
         return window.location.pathname + (query ? "?" + query : "");
     }
@@ -161,6 +165,11 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
     });
 
     // Requirement 4: reset clears the fields, the stored state and the URL.
+    // Die gewählte Ansicht bleibt dabei stehen -- sie ist ein Filter
+    // zurücksetzen nicht unterworfen, sondern eine eigene Einstellung
+    // (deshalb auch `buildUrl` statt eines nackten `pathname`: sonst
+    // renderte der Server den Kachel-Default, während der Umschalter
+    // weiter auf Liste/Timeline stünde).
     var resetBtn = document.getElementById("filter-reset");
     if (resetBtn) {
         resetBtn.addEventListener("click", function () {
@@ -170,7 +179,7 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
             });
             apply(empty);
             clearStorage();
-            var url = window.location.pathname;
+            var url = buildUrl(empty);
             window.history.pushState({}, "", url);
             swapList(url);
         });
@@ -182,13 +191,29 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
         save(readForm());
     } else {
         var stored = load();
-        if (stored && !isEmpty(stored)) {
+        var hasStoredFilters = stored && !isEmpty(stored);
+        if (hasStoredFilters) {
             apply(stored);
-            var restored = buildUrl(stored);
+        }
+        // `findusViewRestored` meldet die Filterleiste, wenn sie die
+        // gespeicherte Ansicht ins Hidden-Feld gesetzt hat; dann muss die
+        // Liste auch dann neu geholt werden, wenn gar kein Filter gespeichert
+        // war -- der Server hat sie mit dem Kachel-Default gerendert.
+        if (hasStoredFilters || window.findusViewRestored) {
+            var restored = buildUrl(stored || {});
             // Replace (not push) so the Back button leaves Home rather than
             // re-triggering the restore on an empty-query entry.
             window.history.replaceState(window.history.state, "", restored);
-            swapList(restored);
+            // htmx wird mit `defer` geladen, ist beim Ausführen dieses
+            // Skripts also noch nicht da -- ohne das Warten fiele der Swap
+            // auf einen kompletten Reload zurück.
+            if (document.readyState === "loading") {
+                document.addEventListener("DOMContentLoaded", function () {
+                    swapList(restored);
+                });
+            } else {
+                swapList(restored);
+            }
         }
     }
 })();

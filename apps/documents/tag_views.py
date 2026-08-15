@@ -106,6 +106,11 @@ def tag_detail(request, pk):
         "show_correspondent": True,
         "show_vorgang_filter": True,
         "show_tag_filter": False,
+        # Die Wiedervorlagen-Ansicht (#1129) gibt es nur auf Home: sie listet
+        # DocumentComment statt Document und hat hier keine Entsprechung. Der
+        # Umschalter wird deshalb ausgeblendet statt einen Knopf anzubieten,
+        # der still auf die Tabelle zurückfällt (CLAUDE.md, "toter Button").
+        "show_followup_view": False,
         "correspondents": Correspondent.objects.all(),
         "vorgaenge": Vorgang.objects.all(),
         "status_choices": Document.ProcessingStatus.choices,
@@ -119,7 +124,10 @@ def tag_detail(request, pk):
             "direction": request.GET.get("direction", ""),
             "sphere": request.GET.get("sphere", ""),
             "tax_relevance": request.GET.get("tax_relevance", ""),
-            "view": request.GET.get("view", "timeline").strip(),
+            # Kachel ist der Default -- derselbe wie auf Home (#1124), damit
+            # die Ansicht beim Wechsel Home <-> Hub nicht springt. "" =
+            # Liste, "timeline" = Zeitleiste (#1087).
+            "view": request.GET.get("view", "grid").strip(),
         },
     }
 

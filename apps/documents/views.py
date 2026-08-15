@@ -313,6 +313,9 @@ def document_list(request):
         "show_search": True,
         "show_correspondent": True,
         "show_vorgang_filter": True,
+        # Home ist die einzige Seite, die die Wiedervorlagen-Ansicht (#1129)
+        # rendern kann -- nur hier gehört ihr Umschalter hin.
+        "show_followup_view": True,
         "correspondents": Correspondent.objects.all(),
         "vorgaenge": Vorgang.objects.all(),
         "tags": Tag.objects.all(),

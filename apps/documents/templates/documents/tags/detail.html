@@ -96,9 +96,12 @@ einem Viertel Breite stehen und die Formularfelder wären unbedienbar.
 
 {% block scripts %}
 <script>
-// Lightweight reset for this page's Kontakt/Status/Richtung/Vorgang
-// filters -- no localStorage persistence needed here (unlike Home's filter
-// bar), the Tag scope itself never changes.
+// Lightweight reset for this page's Kontakt/Status/Richtung/Vorgang filters -- der
+// Tag-Scope selbst ändert sich nie, ein gespeicherter Filter-State wie
+// auf Home wäre hier also sinnlos. Die *Ansicht* (Kachel/Liste/Timeline)
+// wird sehr wohl persistiert, aber seitenübergreifend in
+// `_filter_bar.html` -- der Reset lässt sie deshalb stehen (er fasst nur
+// die Selects an, nicht das Hidden-Feld `view`).
 (function () {
     var form = document.querySelector(".findus-filter-bar");
     var resetBtn = document.getElementById("filter-reset");
