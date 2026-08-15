@@ -4,4 +4,6 @@ die Verarbeitung von "{{ document_name }}" ist abgeschlossen.
 {% if document_url %}
 Dokument ansehen: {{ document_url }}
 {% endif %}
--- Findus
+--
+Findus
+Du bekommst diese Nachricht, weil Findus die Verarbeitung dieses Dokuments für dich abgeschlossen hat.
