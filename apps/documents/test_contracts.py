@@ -1,0 +1,273 @@
+"""Vertragstests fuer die Invarianten aus `CLAUDE.md`.
+
+Bewusst getrennt von den fachlichen Testmodulen (`test_views.py`,
+`test_analysis.py`, ...): hier wird Architektur geprueft, nicht Verhalten.
+Jeder Test ist nach der Regel benannt, die er absichert, nicht nach der
+Funktion, die er aufruft -- ein fehlschlagender Test soll sagen, welche
+Entscheidung gerade verletzt wird. Wer einen dieser Tests bewusst aendert,
+aendert `CLAUDE.md` im selben PR (siehe dort, "Pflegeregel").
+"""
+
+from __future__ import annotations
+
+import tempfile
+from unittest.mock import patch
+
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
+from django.test import TestCase, override_settings
+from django.urls import reverse
+
+from apps.accounts.models import Department
+from apps.ai.providers.fake import FakeEmbeddingProvider
+
+from . import urls as documents_urls
+from .analysis import analyze_document
+from .models import Chunk, Document, DocumentComment
+from .processing import process_document
+from .thumbnails import generate_thumbnail_for_document
+
+User = get_user_model()
+
+# Eigenes Temp-Verzeichnis statt des echten MEDIA_ROOT (gleiches Muster wie
+# test_thumbnails.py) -- sonst schreiben diese Tests echte Dateien ins
+# Repo-Arbeitsverzeichnis.
+_TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-contracts-media-")
+_LOCAL_STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+
+class CommentsAreNotEmbeddedTests(TestCase):
+    """Kommentare sind Notizen ueber ein Dokument, nicht dessen Inhalt --
+
+    in den Chunks wuerden sie die semantische Suche ueber den
+    Dokumentbestand verwaessern (#1125, CLAUDE.md "Pipelines & Services").
+    """
+
+    def test_comments_are_not_embedded(self):
+        document = Document.objects.create(
+            title="Rechnung.pdf",
+            text_content="Rechnungsinhalt " * 20,
+        )
+        DocumentComment.objects.create(
+            document=document,
+            body="Streng vertrauliche Notiz, die niemals in einem Chunk landen darf.",
+        )
+
+        process_document(
+            document.id,
+            embedding_provider=FakeEmbeddingProvider(
+                dimensions=settings.FINDUS_EMBEDDING_DIMENSIONS
+            ),
+        )
+
+        contents = list(
+            Chunk.objects.filter(document=document).values_list("content", flat=True)
+        )
+        self.assertTrue(contents, "process_document sollte Chunks fuer text_content anlegen")
+        self.assertFalse(
+            any("Streng vertrauliche Notiz" in content for content in contents),
+            "Kommentartext ist in einem Chunk gelandet -- Kommentare duerfen nicht embedded werden",
+        )
+
+
+class AllDocumentEndpointsScopeByVisibilityTests(TestCase):
+    """Jeder dokumentbezogene Endpunkt muss ueber
+
+    `Document.objects.visible_to(user)` laufen: ein fremdes Dokument ist ein
+    404, nie ein 403 oder gar sichtbarer Inhalt (CLAUDE.md "Sichtbarkeit &
+    Auslieferung"). Laeuft generisch ueber `documents/urls.py`, damit eine
+    neue, nicht gescopte View auffaellt, ohne dass jemand aktiv daran denken
+    muss, sie hier nachzutragen.
+    """
+
+    # Werte fuer Extra-Pfadparameter, die eine View selbst vor dem
+    # Sichtbarkeits-Check auswertet (`scope`/`kind`) -- muessen gueltig
+    # sein, sonst wird der Test durch einen fruehen, unabhaengigen 404
+    # bestehen, ohne die Sichtbarkeits-Pruefung ueberhaupt zu erreichen.
+    _STRING_PARAM_VALUES = {"scope": "vorgang", "kind": "correspondent"}
+    _NONEXISTENT_ID = 999999
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Eigene Abteilung")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+
+        foreign_dept = Department.objects.create(name="Fremde Abteilung")
+        self.foreign_document = Document.objects.create(
+            title="Fremdes Dokument", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.foreign_document.departments.add(foreign_dept)
+
+        self.client.force_login(self.user)
+
+    def _document_scoped_patterns(self):
+        for pattern in documents_urls.urlpatterns:
+            route = str(pattern.pattern)
+            if route.startswith("documents/<int:pk>"):
+                yield pattern
+
+    def _kwargs_for(self, pattern):
+        kwargs = {}
+        for name, converter in pattern.pattern.converters.items():
+            if name == "pk":
+                kwargs[name] = self.foreign_document.pk
+            elif type(converter).__name__ == "IntConverter":
+                kwargs[name] = self._NONEXISTENT_ID
+            else:
+                kwargs[name] = self._STRING_PARAM_VALUES.get(name, "x")
+        return kwargs
+
+    def test_all_document_endpoints_scope_by_visibility(self):
+        patterns = list(self._document_scoped_patterns())
+        self.assertGreater(
+            len(patterns), 0, "Erwartet mindestens die bekannten documents/<pk>/...-Routen"
+        )
+
+        failures = []
+        for pattern in patterns:
+            url = reverse(f"documents:{pattern.name}", kwargs=self._kwargs_for(pattern))
+
+            response = self.client.get(url)
+            if response.status_code == 405:
+                response = self.client.post(url)
+
+            if response.status_code != 404:
+                failures.append(
+                    f"{pattern.name} ({url}): erwartet 404 fuer fremdes Dokument, "
+                    f"bekam {response.status_code}"
+                )
+
+        self.assertEqual(
+            failures,
+            [],
+            "Endpunkt(e) ohne visible_to-Scoping fuer ein fremdes Dokument:\n"
+            + "\n".join(failures),
+        )
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class OriginalAndThumbnailAreNeverPublicUrlsTests(TestCase):
+    """Original und Thumbnail werden ausschliesslich ueber den
+
+    auth-gestuetzten Stream ausgeliefert, nie ueber eine direkte
+    Storage-/MEDIA-URL (CLAUDE.md "Sichtbarkeit & Auslieferung") -- die
+    Storage-Backend-URL ist ein oeffentlicher S3-/MinIO-Link, der die ACL
+    vollstaendig umgeht.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Abteilung")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+        self.client.force_login(self.user)
+
+        # application/zip ist weder inline-previewable noch ein Bildformat
+        # (siehe Document.is_inline_previewable) -- die Vorschau-Vorlage
+        # rendert damit sowohl das Thumbnail-<img> als auch den
+        # Original-Download-Link, ohne eine echte PDF/Bild-Datei zu brauchen.
+        self.document = Document.objects.create(
+            title="Archiv.zip",
+            metadata={"mime_type": "application/zip", "original_filename": "Archiv.zip"},
+        )
+        self.document.departments.add(self.dept)
+        self.document.original_file.save("Archiv.zip", _dummy_file(b"PK\x03\x04dummy"))
+        self.document.thumbnail.save("Archiv.webp", _dummy_file(b"dummy-thumbnail"))
+
+    def test_original_and_thumbnail_are_never_public_urls(self):
+        response = self.client.get(
+            reverse("documents:detail", kwargs={"pk": self.document.pk})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        markup = response.content.decode()
+
+        self.assertNotIn(settings.MEDIA_URL, markup)
+        self.assertNotIn("minio", markup.lower())
+
+        self.assertIn(
+            reverse("documents:original_download", kwargs={"pk": self.document.pk}), markup
+        )
+        self.assertIn(
+            reverse("documents:thumbnail", kwargs={"pk": self.document.pk}), markup
+        )
+
+
+class FailedAnalysisDoesNotFailDocumentTests(TestCase):
+    """Eine fehlschlagende KI-Analyse legt die Pipeline nicht lahm -- sie
+
+    loggt und laesst `processing_status` unangetastet statt ihn auf
+    `failed` zu setzen (CLAUDE.md "Pipelines & Services").
+    """
+
+    def test_failed_analysis_does_not_fail_document(self):
+        class _RaisingProvider:
+            def generate(self, messages, *, stream=False):
+                raise RuntimeError("provider down")
+
+        document = Document.objects.create(
+            title="doc.pdf",
+            text_content="Inhalt",
+            processing_status=Document.ProcessingStatus.ANALYZING,
+        )
+
+        result = analyze_document(document.id, generation_provider=_RaisingProvider())
+
+        self.assertNotEqual(result.processing_status, Document.ProcessingStatus.FAILED)
+        self.assertIn("analysis_error", result.metadata)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class FailedThumbnailDoesNotFailDocumentTests(TestCase):
+    """Ein fehlschlagendes Thumbnail-Rendering legt die Pipeline nicht lahm
+
+    -- gleiches Prinzip wie bei der KI-Analyse: loggen und weiterlaufen,
+    statt `processing_status` auf `failed` zu setzen (CLAUDE.md "Pipelines &
+    Services").
+    """
+
+    def test_failed_thumbnail_does_not_fail_document(self):
+        document = Document.objects.create(
+            title="Rechnung.pdf",
+            metadata={"mime_type": "application/pdf", "original_filename": "Rechnung.pdf"},
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        document.original_file.save("Rechnung.pdf", _dummy_file(b"%PDF-1.4 dummy"))
+
+        with patch(
+            "apps.documents.thumbnails.generate_thumbnail",
+            side_effect=RuntimeError("render kaputt"),
+        ):
+            generate_thumbnail_for_document(document.id)
+
+        document.refresh_from_db()
+        self.assertNotEqual(document.processing_status, Document.ProcessingStatus.FAILED)
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
+
+
+class NoSecondDoneStateOnCommentsTests(TestCase):
+    """`Document.action_status` ist die einzige Zustandsquelle fuer "hier
+
+    ist noch etwas zu tun" (CLAUDE.md "Zustand & Fachlogik") --
+    Strukturtest gegen eine versehentliche Wiedereinfuehrung eines eigenen
+    Erledigt-Felds an `DocumentComment`.
+    """
+
+    _FORBIDDEN_FIELD_NAMES = {"done", "is_done", "completed", "resolved", "status", "erledigt"}
+
+    def test_no_second_done_state_on_comments(self):
+        field_names = {field.name for field in DocumentComment._meta.get_fields()}
+
+        overlap = field_names & self._FORBIDDEN_FIELD_NAMES
+        self.assertFalse(
+            overlap,
+            f"DocumentComment traegt ein eigenes Erledigt-Feld ({overlap}) -- "
+            "der Zustand gehoert ausschliesslich auf Document.action_status.",
+        )
+
+
+def _dummy_file(data: bytes) -> ContentFile:
+    return ContentFile(data)
