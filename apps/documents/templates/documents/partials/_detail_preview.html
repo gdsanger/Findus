@@ -1,0 +1,52 @@
+{% comment %}
+Fest eingebettete Original-Vorschau (#1126, löst den Slide-Over aus #1036 ab):
+PDF als `<iframe>`, Bild als `<img>`, jeweils über den auth-gestützten Stream
+`documents:original_preview`. Kein inline-fähiges Format (docx, xlsx, zip,
+eml …) zeigt statt einer umspringenden Spalte einen einheitlichen
+Platzhalter -- Thumbnail bzw. Typ-Icon, Dateiname, Dateityp und Download --,
+damit das Layout über alle Dokumente hinweg gleich aussieht.
+{% endcomment %}
+<div class="findus-detail-preview">
+    {% if document.original_file %}
+    {% if document.is_inline_previewable %}
+    {% if document.mime_type == "application/pdf" %}
+    <iframe
+        class="findus-detail-preview-frame"
+        src="{% url 'documents:original_preview' document.pk %}"
+        title="Original: {{ document.original_filename }}"
+    ></iframe>
+    {% else %}
+    <img
+        class="findus-detail-preview-image"
+        src="{% url 'documents:original_preview' document.pk %}"
+        alt="Original: {{ document.original_filename }}"
+    >
+    {% endif %}
+    {% else %}
+    <div class="findus-detail-preview-placeholder">
+        {% if document.thumbnail %}
+        <img
+            class="findus-detail-preview-thumb"
+            src="{% url 'documents:thumbnail' document.pk %}"
+            alt="Vorschaubild: {{ document.original_filename }}"
+        >
+        {% else %}
+        <span class="findus-detail-preview-icon" aria-hidden="true">📄</span>
+        {% endif %}
+        <p class="findus-detail-preview-filename">{{ document.original_filename }}</p>
+        <p class="findus-detail-preview-filetype text-muted small">
+            {{ document.mime_type|default:"Unbekannter Dateityp" }}
+        </p>
+        <p class="text-muted small">Für dieses Format gibt es keine Inline-Vorschau.</p>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:original_download' document.pk %}">
+            Original herunterladen
+        </a>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="findus-detail-preview-placeholder">
+        <span class="findus-detail-preview-icon" aria-hidden="true">📄</span>
+        <p class="text-muted">Kein Original vorhanden.</p>
+    </div>
+    {% endif %}
+</div>

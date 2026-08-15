@@ -378,17 +378,19 @@ def _children_context(user, document):
     }
 
 
-def _related_context(user, document, *, link_error=None):
-    """Der "Ähnliche Dokumente"-Block des Details (#1088): manuell gesetzte
-    Querverweise (`DocumentLink`) und automatische Ähnlichkeits-Treffer in
-    einem gemeinsamen, im Template gekennzeichneten Block.
+def _links_context(user, document, *, link_error=None):
+    """Der "Verknüpfungen"-Tab des Details (#1126): manuell gesetzte
+    Querverweise (`DocumentLink`, #1088) dieses Dokuments -- ein- und
+    ausgehend -- plus die (gescopte) Auswahl zum Anlegen eines neuen.
 
-    Beide Seiten laufen durch `visible_to`: die Ähnlichkeit über den
-    `DocumentRetrievalService`, die Querverweise über das `in_bulk` auf
+    Läuft durch `visible_to`: die Querverweise über das `in_bulk` auf
     `visible_documents` -- ein Link auf ein Dokument, das der Nutzer nicht
     sehen darf, verschwindet damit still, statt dessen Titel zu leaken.
-    Bereits verknüpfte Dokumente fliegen aus der Ähnlichkeitsliste, damit
-    derselbe Treffer nicht zweimal im Block steht.
+
+    Bewusst getrennt von `_related_context` (#1126): die Verknüpfungen
+    werden direkt mitgerendert, die Ähnlichkeitssuche erst beim Öffnen
+    ihres Tabs nachgeladen -- die kNN-Query gehört nicht in jeden
+    Detailaufruf.
     """
     visible_documents = Document.objects.visible_to(user).select_related("correspondent")
 
@@ -402,13 +404,35 @@ def _related_context(user, document, *, link_error=None):
         if link.other_document_id(document) in linked_by_id
     ]
 
+    return {
+        "document": document,
+        "linked_documents": linked_documents,
+        "link_candidates": visible_documents.exclude(
+            pk__in=[document.pk, *linked_by_id]
+        ).order_by("-created_at")[: settings.FINDUS_DOCUMENT_LINK_PICKER_LIMIT],
+        "link_error": link_error,
+    }
+
+
+def _related_context(user, document):
+    """Der "Ähnliche Dokumente"-Tab des Details (#1088/#1126): die
+    automatischen Ähnlichkeits-Treffer aus dem `DocumentRetrievalService`.
+
+    Läuft durch `visible_to` (der Service scopet selbst). Bereits manuell
+    verknüpfte Dokumente fliegen aus der Ähnlichkeitsliste, damit derselbe
+    Treffer nicht zugleich unter "Verknüpfungen" und "Ähnliche" steht.
+    """
+    linked_ids = [
+        link.other_document_id(document)
+        for link in DocumentLink.objects.for_document(document)
+    ]
+
     similar_hits = DocumentRetrievalService(user).similar_documents(
-        document, exclude_ids=linked_by_id.keys()
+        document, exclude_ids=linked_ids
     )
 
     return {
         "document": document,
-        "linked_documents": linked_documents,
         "similar_hits": similar_hits,
         # Ohne Chunks gibt es kein Embedding und damit keine Ähnlichkeit --
         # das ist ein anderer Zustand als "nichts über dem Schwellwert" und
@@ -417,22 +441,36 @@ def _related_context(user, document, *, link_error=None):
         "similarity_min_score_percent": round(
             settings.FINDUS_SIMILAR_DOCUMENTS_MIN_SCORE * 100
         ),
-        "link_candidates": visible_documents.exclude(
-            pk__in=[document.pk, *linked_by_id]
-        ).order_by("-created_at")[: settings.FINDUS_DOCUMENT_LINK_PICKER_LIMIT],
-        "link_error": link_error,
     }
+
+
+@login_required
+def document_links(request, pk):
+    """Render the manual-links block on its own (#1126).
+
+    Swap-Ziel nach dem Anlegen/Löschen eines Querverweises und -- weil die
+    Verknüpfungen in einem eigenen Tab neben den Ähnlichen stehen --
+    zusätzlich per `findus:links-refresh` nachgeladen, wenn ein Detach
+    (#1111) einen Soft-Link anlegt, während der Tab gerade nicht sichtbar
+    ist.
+    """
+    document = _visible_document(request.user, pk)
+    return render(
+        request,
+        "documents/partials/_detail_links.html",
+        _links_context(request.user, document),
+    )
 
 
 @login_required
 def document_related(request, pk):
     """Render the related-documents block on its own (#1088).
 
-    Das Detail lädt den Block per HTMX nach (`hx-trigger="load"`), statt
-    ihn synchron mitzurendern: die kNN-Query ist zwar billig, aber sie ist
-    Beiwerk -- Titel, Zusammenfassung und Original sollen nicht auf sie
-    warten. Derselbe Endpunkt ist auch das Swap-Ziel nach dem Anlegen/
-    Löschen eines Querverweises.
+    Das Detail lädt den Block per HTMX erst beim Öffnen des Ähnlichkeits-Tabs
+    nach (#1126), statt ihn synchron mitzurendern: die kNN-Query ist zwar
+    billig, aber sie ist Beiwerk -- Titel, Zusammenfassung und Original
+    sollen nicht auf sie warten. Derselbe Endpunkt ist auch das Swap-Ziel
+    nach dem Anlegen/Löschen eines Querverweises (via `findus:related-refresh`).
     """
     document = _visible_document(request.user, pk)
     return render(
@@ -473,11 +511,16 @@ def document_link_create(request, pk):
             note=request.POST.get("note", "").strip()[:255],
         )
 
-    return render(
+    response = render(
         request,
-        "documents/partials/_detail_related.html",
-        _related_context(request.user, document, link_error=link_error),
+        "documents/partials/_detail_links.html",
+        _links_context(request.user, document, link_error=link_error),
     )
+    # Der Ähnlichkeits-Tab hängt an einem eigenen Target und weiß nichts vom
+    # Swap hier -- ein neu verknüpftes Dokument muss dort aus der
+    # Trefferliste verschwinden (#1126).
+    response["HX-Trigger"] = "findus:related-refresh"
+    return response
 
 
 @login_required
@@ -490,11 +533,15 @@ def document_link_delete(request, pk, link_id):
     document = _visible_document(request.user, pk)
     link = get_object_or_404(DocumentLink.objects.for_document(document), pk=link_id)
     link.delete()
-    return render(
+    response = render(
         request,
-        "documents/partials/_detail_related.html",
-        _related_context(request.user, document),
+        "documents/partials/_detail_links.html",
+        _links_context(request.user, document),
     )
+    # Ein gelöster Querverweis kann als Ähnlichkeits-Treffer wieder auftauchen
+    # -- der Ähnlichkeits-Tab muss sich also neu laden (#1126).
+    response["HX-Trigger"] = "findus:related-refresh"
+    return response
 
 
 def _references_context(user, document, *, reference_error=None):
@@ -679,6 +726,9 @@ def document_detail(request, pk):
         **_analysis_status_context(document),
         **_children_context(request.user, document),
         **_references_context(request.user, document),
+        # Verknüpfungen direkt mitrendern (#1126); der Ähnlichkeits-Tab
+        # lädt seinen Inhalt dagegen erst beim Öffnen nach.
+        **_links_context(request.user, document),
         # Direktzugriff auf ein Unterdokument zeigt den Elternkontext
         # (#1069) -- aber nur, wenn das Leitdokument auch sichtbar ist:
         # der Scope eines Kindes ist überschreibbar, ein sichtbares Kind
@@ -751,10 +801,10 @@ def document_original_download(request, pk):
     linked directly, only served through this auth-gated view.
 
     The global `XFrameOptionsMiddleware` defaults to `DENY`, which blocks the
-    inline PDF preview (#1036) from embedding this route in the slide-over's
-    iframe. `@xframe_options_sameorigin` relaxes the header to `SAMEORIGIN`
-    for *this endpoint only*, so our own app can embed it while DENY stays in
-    force everywhere else (no site-wide clickjacking weakening).
+    inline PDF preview (#1036) from embedding this route in an iframe.
+    `@xframe_options_sameorigin` relaxes the header to `SAMEORIGIN` for *this
+    endpoint only*, so our own app can embed it while DENY stays in force
+    everywhere else (no site-wide clickjacking weakening).
     """
     document = _visible_document(request.user, pk)
     if not document.original_file:
@@ -767,14 +817,15 @@ def document_original_download(request, pk):
 def document_original_preview(request, pk):
     """Inline variant of the same auth-gated stream (#1036), embedded by the
 
-    detail page's Slide-Over as an `<iframe>`/`<img>` source. Gated by the
-    same `mime_type` whitelist as `Document.is_inline_previewable` so a
-    format the browser can't render natively never reaches this view --
-    the template only offers the Download button for those.
+    detail page's fest eingebettete Vorschau (#1126) as an `<iframe>`/`<img>`
+    source. Gated by the same `mime_type` whitelist as
+    `Document.is_inline_previewable` so a format the browser can't render
+    natively never reaches this view -- the template only offers the
+    Download-Platzhalter for those.
 
-    This is the route the Slide-Over's iframe actually points at (see
-    `_detail_original_preview.html`), so it -- not `document_original_download`
-    -- needs `@xframe_options_sameorigin` to relax the global `DENY` from
+    This is the route the inline `<iframe>` in `detail.html` actually points
+    at, so it -- not `document_original_download` -- needs
+    `@xframe_options_sameorigin` to relax the global `DENY` from
     `XFrameOptionsMiddleware` for PDFs. `<img>` previews are unaffected by
     X-Frame-Options, but the decorator is harmless for them too.
     """
@@ -782,27 +833,6 @@ def document_original_preview(request, pk):
     if not document.original_file or not document.is_inline_previewable:
         raise Http404("Keine Vorschau verfügbar.")
     return _stream_original(document, as_attachment=False)
-
-
-@login_required
-def document_original_preview_panel(request, pk):
-    """Render the Slide-Over markup for `document_original_preview` (#1036).
-
-    Fetched via HTMX from the detail page's trigger button so opening the
-    preview never causes a full page reload -- the swapped-in markup is
-    then shown as a Bootstrap Offcanvas by `detail.html`'s `htmx:afterSwap`
-    handler. Re-checks `is_inline_previewable` even though the trigger
-    button only renders for previewable documents, since this view is
-    reachable directly by URL too.
-    """
-    document = _visible_document(request.user, pk)
-    if not document.original_file or not document.is_inline_previewable:
-        raise Http404("Keine Vorschau verfügbar.")
-    return render(
-        request,
-        "documents/partials/_detail_original_preview.html",
-        {"document": document},
-    )
 
 
 @login_required
@@ -962,10 +992,11 @@ def document_child_detach(request, pk, child_id):
             "documents/partials/_detail_children.html",
             _children_context(request.user, document),
         )
-        # Der Ähnlichkeits-/Querverweis-Block hängt an einem anderen Target
-        # und weiß nichts vom Swap hier -- der neue Soft-Link erscheint sonst
-        # erst beim nächsten Seitenaufbau.
-        response["HX-Trigger"] = "findus:related-refresh"
+        # Der Verknüpfungs- und der Ähnlichkeits-Tab hängen an eigenen
+        # Targets und wissen nichts vom Swap hier -- der neue Soft-Link
+        # (#1088) erscheint sonst erst beim nächsten Seitenaufbau, und das
+        # getrennte Kind taucht in beiden Blöcken erst dann auf (#1126).
+        response["HX-Trigger"] = "findus:links-refresh, findus:related-refresh"
         return response
     return redirect("documents:detail", pk=child.pk)
 

@@ -1,37 +1,15 @@
 {% comment %}
-Ähnliche Dokumente / Querverweise (#1088). Ein Block, zwei Herkünfte:
-manuell gesetzte Verweise ("Verknüpft") stehen oben und bleiben stehen,
-darunter die automatischen Treffer aus der Embedding-Ähnlichkeit
-("Ähnlich" + Prozentwert). Beide Sorten sind über das Badge unterscheidbar
-statt stillschweigend gemischt.
-{% endcomment %}
-{% if linked_documents or similar_hits %}
-<ul class="findus-detail-links">
-    {% for entry in linked_documents %}
-    <li class="findus-related-item">
-        <div class="findus-related-main">
-            <span class="badge text-bg-primary">Verknüpft</span>
-            <a href="{% url 'documents:detail' entry.document.pk %}">{{ entry.document.title }}</a>
-            <div class="findus-related-meta">
-                <span>{{ entry.document.correspondent.name|default:"—" }}</span>
-                <span>{{ entry.document.display_date|date:"d.m.Y" }}{% if entry.document.display_date_is_upload_fallback %} (Upload){% endif %}</span>
-                {% if entry.link.note %}<span>{{ entry.link.note }}</span>{% endif %}
-            </div>
-        </div>
-        <form
-            method="post"
-            action="{% url 'documents:link_delete' document.pk entry.link.pk %}"
-            hx-post="{% url 'documents:link_delete' document.pk entry.link.pk %}"
-            hx-target="#document-related"
-            hx-swap="innerHTML"
-            class="d-inline"
-        >
-            {% csrf_token %}
-            <button type="submit" class="btn btn-sm btn-outline-secondary">Verknüpfung lösen</button>
-        </form>
-    </li>
-    {% endfor %}
+Ähnliche Dokumente (#1088/#1126): rein automatische Treffer aus der
+Embedding-Ähnlichkeit, nachgeladen erst beim Öffnen des Tabs (die kNN-Query
+ist Beiwerk und gehört nicht in jeden Detailaufruf). Manuell gesetzte
+Querverweise stehen im eigenen Verknüpfungen-Tab.
 
+"Dauerhaft verknüpfen" legt einen `DocumentLink` an: das swappt den
+Verknüpfungen-Tab (`#document-links`) und stößt per `findus:related-refresh`
+diesen Block an, sodass der nun verknüpfte Treffer hier verschwindet.
+{% endcomment %}
+{% if similar_hits %}
+<ul class="findus-detail-links">
     {% for hit in similar_hits %}
     <li class="findus-related-item">
         <div class="findus-related-main">
@@ -47,7 +25,7 @@ statt stillschweigend gemischt.
             method="post"
             action="{% url 'documents:link_create' document.pk %}"
             hx-post="{% url 'documents:link_create' document.pk %}"
-            hx-target="#document-related"
+            hx-target="#document-links"
             hx-swap="innerHTML"
             class="d-inline"
         >
@@ -67,24 +45,3 @@ statt stillschweigend gemischt.
     Keine ähnlichen Dokumente über {{ similarity_min_score_percent }} % Ähnlichkeit gefunden.
 </p>
 {% endif %}
-
-<div class="findus-quick-create" id="document-link-create">
-    {% if link_error %}<div class="text-danger small w-100">{{ link_error }}</div>{% endif %}
-    <select name="target" class="form-select form-select-sm" aria-label="Dokument zum Verknüpfen">
-        <option value="">Dokument auswählen …</option>
-        {% for candidate in link_candidates %}
-        <option value="{{ candidate.pk }}">
-            {{ candidate.title }}{% if candidate.correspondent %} – {{ candidate.correspondent.name }}{% endif %}
-        </option>
-        {% endfor %}
-    </select>
-    <input type="text" name="note" class="form-control form-control-sm" placeholder="Notiz (optional)">
-    <button
-        type="button"
-        class="btn btn-sm btn-outline-secondary"
-        hx-post="{% url 'documents:link_create' document.pk %}"
-        hx-include="#document-link-create"
-        hx-target="#document-related"
-        hx-swap="innerHTML"
-    >+ Dokument verknüpfen</button>
-</div>
