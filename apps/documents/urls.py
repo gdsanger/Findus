@@ -125,13 +125,9 @@ urlpatterns = [
     ),
     path("documents/<int:pk>/original/", views.document_original_download, name="original_download"),
     path("documents/<int:pk>/original/preview/", views.document_original_preview, name="original_preview"),
-    path(
-        "documents/<int:pk>/original/preview/panel/",
-        views.document_original_preview_panel,
-        name="original_preview_panel",
-    ),
     path("documents/<int:pk>/thumbnail/", views.document_thumbnail, name="thumbnail"),
     path("documents/<int:pk>/related/", views.document_related, name="related"),
+    path("documents/<int:pk>/links/", views.document_links, name="links"),
     path("documents/<int:pk>/links/create/", views.document_link_create, name="link_create"),
     path(
         "documents/<int:pk>/links/<int:link_id>/delete/",

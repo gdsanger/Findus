@@ -9,7 +9,9 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import Client, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -963,6 +965,106 @@ class DocumentDetailViewTests(TestCase):
         self.assertNotContains(response, "<script>alert(1)</script>")
         self.assertContains(response, "&lt;script&gt;")
 
+    def test_detail_shows_five_tabs_with_details_as_default(self):
+        """Neue Struktur (#1126): Zusammenfassung ungetabbt, darunter die
+        fünf Tabs in fester Reihenfolge; "Details" ist per `active` der
+        Default nach jedem Reload.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        for label in [
+            "Details",
+            "Kommentare",
+            "Verknüpfungen &amp; Kontext",
+            "Ähnliche Dokumente",
+            "Unterdokumente",
+        ]:
+            self.assertContains(response, label)
+        # "Details" ist der einzige aktive Tab-Button.
+        self.assertContains(response, 'id="tab-details"')
+        self.assertContains(response, 'class="nav-link active"')
+
+    def test_similar_tab_is_not_rendered_inline(self):
+        """Der Ähnlichkeits-Tab lädt erst beim Öffnen per HTMX nach (#1126):
+        die Detailseite bringt nur den Platzhalter und den `hx-get`, keine
+        Trefferliste.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, reverse("documents:related", args=[self.doc.id]))
+        self.assertContains(response, "Wird geladen …")
+
+    def test_tab_titles_show_counts_as_badges(self):
+        DocumentComment.objects.create(
+            document=self.doc, author=self.user_a, body="Notiz"
+        )
+        other = Document.objects.create(
+            title="Gehört dazu", visibility=Document.Visibility.DEPARTMENT
+        )
+        other.departments.add(self.dept_a)
+        link_documents(self.doc, other, created_by=self.user_a)
+        child = Document.objects.create(
+            title="Anhang", visibility=Document.Visibility.DEPARTMENT, parent=self.doc
+        )
+        child.departments.add(self.dept_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        # Alle drei zählbaren Tabs stehen bei 1, keiner ist gedämpft.
+        self.assertContains(response, '<span class="badge rounded-pill text-bg-secondary">1</span>', count=3)
+
+    def test_empty_tab_badges_are_muted(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        # Kommentare, Verknüpfungen und Unterdokumente sind leer -> gedämpft.
+        self.assertContains(response, "findus-tab-empty", count=3)
+
+    def test_detail_tab_lists_do_not_cause_n_plus_one(self):
+        """Die direkt mitgerenderten Tab-Listen (Verknüpfungen, Unter-
+        dokumente, Aufgaben, Kommentare) müssen über
+        `select_related`/`prefetch_related` laufen -- ein größerer Bestand
+        darf die Query-Zahl nicht erhöhen (#1126, Anforderung 7).
+        """
+        def _populate(count):
+            for i in range(count):
+                linked = Document.objects.create(
+                    title=f"Verknüpft {self.doc.id}-{i}",
+                    visibility=Document.Visibility.DEPARTMENT,
+                )
+                linked.departments.add(self.dept_a)
+                link_documents(self.doc, linked, created_by=self.user_a)
+
+                child = Document.objects.create(
+                    title=f"Kind {i}",
+                    visibility=Document.Visibility.DEPARTMENT,
+                    parent=self.doc,
+                )
+                child.departments.add(self.dept_a)
+
+                DocumentComment.objects.create(
+                    document=self.doc, author=self.user_a, body=f"Kommentar {i}"
+                )
+                task = Task.objects.create(title=f"Aufgabe {i}", kind=Task.Kind.PAY)
+                task.departments.add(self.dept_a)
+                task.documents.add(self.doc)
+
+        self.client.force_login(self.user_a)
+        url = reverse("documents:detail", args=[self.doc.id])
+
+        _populate(1)
+        with CaptureQueriesContext(connection) as few:
+            self.client.get(url)
+
+        _populate(4)
+        with CaptureQueriesContext(connection) as many:
+            self.client.get(url)
+
+        self.assertEqual(len(many.captured_queries), len(few.captured_queries))
+
     def test_falls_back_to_text_content_when_markdown_cache_is_empty(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
@@ -1429,35 +1531,44 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.assertContains(response, download_url)
         self.assertNotContains(response, self.doc.original_file.url)
 
-    def test_preview_trigger_is_shown_for_previewable_document(self):
+    def test_inline_preview_embeds_iframe_for_previewable_document(self):
+        """Die Vorschau ist seit #1126 fest eingebettet (kein Slide-Over):
+        ein PDF landet direkt als `<iframe>` auf der Detailseite, der auf den
+        auth-gestützten Stream zeigt.
+        """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        panel_url = reverse("documents:original_preview_panel", args=[self.doc.id])
-        self.assertContains(response, "Original öffnen/herunterladen")
-        self.assertContains(response, panel_url)
+        preview_url = reverse("documents:original_preview", args=[self.doc.id])
+        self.assertContains(response, "<iframe")
+        self.assertContains(response, preview_url)
 
-    def test_preview_hint_shown_instead_of_trigger_for_non_previewable_document(self):
+    def test_non_previewable_document_shows_placeholder_with_download(self):
+        """Ein nicht inline-fähiges Format (#1126) verschwindet nicht, sondern
+        zeigt einen Platzhalter mit Dateiname und Download -- und bettet
+        keinen Preview-Stream ein.
+        """
         self.doc.metadata = {"mime_type": "application/zip", "original_filename": "anhang.zip"}
         self.doc.save(update_fields=["metadata"])
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertContains(response, "Vorschau nicht verfügbar")
-        self.assertNotContains(response, "Original öffnen/herunterladen")
+        self.assertContains(response, "keine Inline-Vorschau")
+        self.assertContains(response, "anhang.zip")
+        self.assertNotContains(response, reverse("documents:original_preview", args=[self.doc.id]))
         # Download must still be offered, unaffected by the missing preview.
         self.assertContains(response, "Original herunterladen")
         self.assertContains(response, reverse("documents:original_download", args=[self.doc.id]))
 
-    def test_no_actions_shown_without_original_file(self):
+    def test_no_download_shown_without_original_file(self):
         self.doc.original_file.delete(save=True)
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertNotContains(response, "Original öffnen/herunterladen")
         self.assertNotContains(response, "Original herunterladen")
+        self.assertContains(response, "Kein Original vorhanden.")
 
     def test_original_download_streams_file_content_as_attachment(self):
         self.client.force_login(self.user_a)
@@ -1521,11 +1632,10 @@ class DocumentDetailOriginalDownloadTests(TestCase):
         self.assertIn("inline", response["Content-Disposition"])
 
     def test_original_preview_allows_same_origin_framing(self):
-        """This is the route the Slide-Over's `<iframe>` actually points at
-        (see `_detail_original_preview.html`), so it -- not
-        `original_download` -- must relax the global XFrameOptionsMiddleware
-        DENY to SAMEORIGIN, or the browser refuses to display the PDF in the
-        iframe (bug report for #1042).
+        """This is the route the fest eingebettete `<iframe>` (#1126) actually
+        points at, so it -- not `original_download` -- must relax the global
+        XFrameOptionsMiddleware DENY to SAMEORIGIN, or the browser refuses to
+        display the PDF in the iframe (bug report for #1042).
         """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:original_preview", args=[self.doc.id]))
@@ -1547,40 +1657,17 @@ class DocumentDetailOriginalDownloadTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_original_preview_panel_renders_iframe_for_pdf(self):
-        self.client.force_login(self.user_a)
-        response = self.client.get(
-            reverse("documents:original_preview_panel", args=[self.doc.id])
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "<iframe")
-        self.assertContains(
-            response, reverse("documents:original_preview", args=[self.doc.id])
-        )
-
-    def test_original_preview_panel_renders_img_for_image(self):
+    def test_image_preview_embeds_img_on_detail_page(self):
         self.doc.metadata = {"mime_type": "image/jpeg", "original_filename": "scan.jpg"}
         self.doc.save(update_fields=["metadata"])
 
         self.client.force_login(self.user_a)
-        response = self.client.get(
-            reverse("documents:original_preview_panel", args=[self.doc.id])
-        )
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertEqual(response.status_code, 200)
         self.assertContains(response, "<img")
-
-    def test_original_preview_panel_404_for_non_previewable_mime_type(self):
-        self.doc.metadata = {"mime_type": "application/zip", "original_filename": "anhang.zip"}
-        self.doc.save(update_fields=["metadata"])
-
-        self.client.force_login(self.user_a)
-        response = self.client.get(
-            reverse("documents:original_preview_panel", args=[self.doc.id])
+        self.assertContains(
+            response, reverse("documents:original_preview", args=[self.doc.id])
         )
-
-        self.assertEqual(response.status_code, 404)
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
@@ -2039,11 +2126,15 @@ class DocumentChildDetachViewTests(TestCase):
         self.assertNotContains(response, "rechnung.pdf")
         self.assertContains(response, "Keine Unterdokumente.")
 
-    def test_detach_asks_htmx_to_reload_the_related_block(self):
+    def test_detach_asks_htmx_to_reload_the_links_and_related_blocks(self):
         self.client.force_login(self.user_a)
         response = self._detach(HTTP_HX_REQUEST="true")
 
-        self.assertEqual(response["HX-Trigger"], "findus:related-refresh")
+        # Der Soft-Link (#1088) muss im Verknüpfungs-Tab und das getrennte
+        # Kind im Ähnlichkeits-Tab erscheinen -- beide Tabs hängen an eigenen
+        # Targets (#1126).
+        self.assertIn("findus:links-refresh", response["HX-Trigger"])
+        self.assertIn("findus:related-refresh", response["HX-Trigger"])
 
     def test_detach_from_child_view_redirects_to_child_detail(self):
         self.client.force_login(self.user_a)
@@ -2766,6 +2857,11 @@ class DocumentRelatedViewTests(TestCase):
             reverse("documents:related", args=[(document or self.doc).id])
         )
 
+    def _links(self, document=None):
+        return self.client.get(
+            reverse("documents:links", args=[(document or self.doc).id])
+        )
+
     def test_detail_page_lazy_loads_the_block(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
@@ -2791,8 +2887,6 @@ class DocumentRelatedViewTests(TestCase):
         self.client.force_login(self.user_a)
         response = self._related()
 
-        # Nur die Trefferliste ist leer -- in der Auswahlliste für einen
-        # manuellen Querverweis darf das Dokument sehr wohl stehen.
         self.assertNotContains(
             response, reverse("documents:detail", args=[unrelated.id])
         )
@@ -2834,9 +2928,9 @@ class DocumentRelatedViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Gehört dazu")
         self.assertEqual(DocumentLink.objects.count(), 1)
-        # Ungerichtet: derselbe Verweis steht auch im Detail des anderen
-        # Dokuments, ohne dass eine zweite Zeile angelegt wurde.
-        self.assertContains(self._related(other), "Rechnung Acme")
+        # Ungerichtet: derselbe Verweis steht auch im Verknüpfungs-Tab des
+        # anderen Dokuments, ohne dass eine zweite Zeile angelegt wurde.
+        self.assertContains(self._links(other), "Rechnung Acme")
 
     def test_linking_the_same_pair_twice_does_not_create_a_second_link(self):
         other = self._document("Gehört dazu")
@@ -2920,13 +3014,13 @@ class DocumentRelatedViewTests(TestCase):
     def test_link_to_document_outside_visibility_is_not_shown(self):
         """Ein Querverweis auf ein Dokument, das der Nutzer nicht sehen darf
         (z. B. weil sich der Scope später geändert hat), verschwindet still
-        aus dem Block, statt dessen Titel zu leaken.
+        aus dem Verknüpfungs-Tab, statt dessen Titel zu leaken.
         """
         foreign = self._document("Fremdes Dokument", dept=self.dept_b)
         link_documents(self.doc, foreign, created_by=self.user_b)
 
         self.client.force_login(self.user_a)
-        response = self._related()
+        response = self._links()
 
         self.assertNotContains(response, "Fremdes Dokument")
 

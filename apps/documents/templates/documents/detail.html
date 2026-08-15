@@ -34,7 +34,7 @@
     {% comment %}
     Ein aus einer Brief-Vorlage erzeugtes Dokument (#1095) ist das PDF. Der
     editierbare Word-Master bleibt am Entwurf -- die Downloadlinks dazu
-    stehen unten in `findus-detail-letter-actions`.
+    stehen unten in der Aktionsleiste.
     `document.letter_draft` ist ein Reverse-OneToOne: fehlt er, schluckt die
     Template-Engine den DoesNotExist (silent_variable_failure).
     {% endcomment %}
@@ -43,28 +43,24 @@
 {% endif %}
 
 {% comment %}
-Sticky-Aktionsleiste (#1105): die Primäraktionen sollen beim Scrollen durch
-die Zusammenfassung/den Kontext immer erreichbar bleiben. Auf schmalen
-Viewports greift der `position: sticky` erst ab `lg` (siehe findus.css),
-darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
+Aktionsleiste (#1126): alle Aktionen des Dokuments an einer Stelle statt
+über die Seite verstreut. Sticky ab `lg` (siehe findus.css), damit die
+Primäraktionen beim Scrollen durch die linke Spalte erreichbar bleiben;
+darunter bricht die Leiste normal um. Löschen steht per `ms-auto` optisch
+abgesetzt am rechten Rand und bleibt bestätigungspflichtig.
 {% endcomment %}
 <section class="findus-section findus-detail-actions-bar">
     {% if document.original_file %}
-    {% if document.is_inline_previewable %}
-    <button
-        type="button"
-        class="btn btn-sm btn-outline-secondary"
-        hx-get="{% url 'documents:original_preview_panel' document.pk %}"
-        hx-target="#document-original-preview"
-        hx-swap="innerHTML"
-    >
-        Original öffnen/herunterladen
-    </button>
-    {% else %}
-    <span class="findus-preview-hint text-muted small">Vorschau nicht verfügbar – bitte herunterladen.</span>
-    {% endif %}
     <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:original_download' document.pk %}">
         Original herunterladen
+    </a>
+    {% endif %}
+    {% if document.letter_draft %}
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_download' document.letter_draft.pk 'docx' %}">
+        Word-Master herunterladen
+    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_detail' document.letter_draft.pk %}">
+        Entwurf ansehen
     </a>
     {% endif %}
     {% comment %}
@@ -84,33 +80,55 @@ darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
     >
         Im Graph anzeigen
     </a>
+    {% include "documents/partials/_detail_analysis_status.html" %}
     <form
         method="post"
         action="{% url 'documents:delete' document.pk %}"
-        class="d-inline"
+        class="d-inline ms-auto"
         onsubmit="return confirm('Dokument „{{ document.title }}“ wirklich löschen? Original und indizierte Inhalte werden entfernt.');"
     >
         {% csrf_token %}
         <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
     </form>
-    {% include "documents/partials/_detail_analysis_status.html" %}
 </section>
 
-{% if document.letter_draft %}
-<div class="findus-detail-letter-actions">
-    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_download' document.letter_draft.pk 'docx' %}">
-        Word-Master herunterladen
-    </a>
-    <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:letter_draft_detail' document.letter_draft.pk %}">
-        Entwurf ansehen
-    </a>
-</div>
-{% endif %}
+{% comment %}
+Aktionsleiste volle Breite, darunter zwei gleich breite Spalten (#1126):
+links Zusammenfassung + Tabs, rechts die fest eingebettete Vorschau. Das
+Grid platziert die drei Bereiche über `grid-template-areas`, damit sie am
+Handy in der Reihenfolge Zusammenfassung → Vorschau → Tabs stapeln (die
+Vorschau also vor den Detailfeldern), ohne dass das Markup dafür umsortiert
+werden muss.
+{% endcomment %}
+<div class="findus-detail-grid">
+    <div class="findus-detail-summary-area">
+        {% if document.correspondent or document.vorgaenge.all %}
+        {% comment %}
+        Schnellzugriff (#1098): von hier soll man ohne Umweg über die
+        Zuordnung direkt zum Kontakt- bzw. Vorgang-Hub springen können.
+        {% endcomment %}
+        <nav class="findus-detail-hub-links" aria-label="Schnellzugriff Kontakt und Vorgänge">
+            {% if document.correspondent %}
+            <div class="findus-detail-hub-link-group">
+                <span class="findus-detail-hub-link-label">Kontakt</span>
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:correspondent_detail' document.correspondent.pk %}">
+                    {{ document.correspondent.name }}
+                </a>
+            </div>
+            {% endif %}
+            {% if document.vorgaenge.all %}
+            <div class="findus-detail-hub-link-group">
+                <span class="findus-detail-hub-link-label">Vorgänge</span>
+                {% for vorgang in document.vorgaenge.all %}
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:vorgang_detail' vorgang.pk %}">
+                    {{ vorgang.name }}
+                </a>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </nav>
+        {% endif %}
 
-<div id="document-original-preview"></div>
-
-<div class="findus-detail-layout">
-    <div class="findus-detail-main">
         <section class="findus-section">
             <h2 class="findus-section-title">Zusammenfassung</h2>
             <div class="findus-card findus-detail-summary-primary">
@@ -172,200 +190,213 @@ darunter bleibt die Leiste normaler Fluss und die Buttons brechen um.
                 {% endif %}
             </div>
         </section>
-
-        {% comment %}
-        Verwandte Dokumente über gemeinsame Kennungen (#1108): bewusst in
-        der linken statt der rechten Spalte, damit die Trefferliste die
-        volle Spaltenbreite bekommt und Dokumenttitel nicht umbrechen. Die
-        Eingabe/Korrektur der Kennungen selbst bleibt rechts bei
-        "Kennungen & Referenznummern" -- sie gehört zur
-        Verknüpfungs-Verwaltung, nicht zur Ergebnisanzeige, und die
-        Formulare dort brauchen die schmalere Spalte nicht.
-        {% endcomment %}
-        <section class="findus-section">
-            <h2 class="findus-section-title">Verwandte Dokumente über gemeinsame Kennungen</h2>
-            <div id="document-reference-groups">
-                {% include "documents/partials/_detail_reference_groups.html" %}
-            </div>
-        </section>
     </div>
 
-    <aside class="findus-detail-sidebar">
-        {% if document.correspondent or document.vorgaenge.all %}
+    <div class="findus-detail-tabs-area">
         {% comment %}
-        Schnellzugriff (#1098): von hier soll man ohne Umweg über die
-        Zuordnung direkt zum Kontakt- bzw. Vorgang-Hub springen koennen.
+        Clientseitige Bootstrap-Tabs (#1126), keine Persistenz: nach einem
+        Reload steht wieder "Details". Tabs mit Inhalt tragen die Anzahl als
+        Badge; die mit Anzahl 0 bleiben sichtbar (kein wanderndes Layout),
+        sind aber über `findus-tab-empty` gedämpft.
         {% endcomment %}
-        <nav class="findus-section findus-detail-hub-links" aria-label="Schnellzugriff Kontakt und Vorgänge">
-            {% if document.correspondent %}
-            <div class="findus-detail-hub-link-group">
-                <span class="findus-detail-hub-link-label">Kontakt</span>
-                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:correspondent_detail' document.correspondent.pk %}">
-                    {{ document.correspondent.name }}
-                </a>
-            </div>
-            {% endif %}
-            {% if document.vorgaenge.all %}
-            <div class="findus-detail-hub-link-group">
-                <span class="findus-detail-hub-link-label">Vorgänge</span>
-                {% for vorgang in document.vorgaenge.all %}
-                <a class="btn btn-sm btn-outline-secondary" href="{% url 'documents:vorgang_detail' vorgang.pk %}">
-                    {{ vorgang.name }}
-                </a>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </nav>
-        {% endif %}
-
-        <section class="findus-section">
-            <div id="document-meta">
-                {% include "documents/partials/_detail_meta.html" %}
-            </div>
-        </section>
-
-        <section class="findus-section">
-            <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
-            <div id="document-tasks">
-                {% include "documents/partials/_detail_tasks.html" %}
-            </div>
-        </section>
-
-        <section class="findus-section">
-            <h2 class="findus-section-title">Kommentare</h2>
-            <div id="document-comments">
-                {% include "documents/partials/_detail_comments.html" %}
-            </div>
-        </section>
-
-        {% comment %}
-        Die drei Beziehungs-Blöcke gehören inhaltlich zusammen -- eine
-        gemeinsame Karte statt dreier gleichrangiger Sektionen macht das
-        sichtbar, ohne die einzelnen HTMX-Targets (#document-references,
-        #document-related, #document-children) anzufassen.
-        {% endcomment %}
-        <section class="findus-section findus-detail-context-group">
-            <h2 class="findus-section-title">Verknüpfungen &amp; Kontext</h2>
-
-            <div class="findus-detail-context-block">
-                <h3 class="findus-section-subtitle">Kennungen &amp; Referenznummern</h3>
-                {% comment %}
-                Anders als der Ähnlichkeits-Block (#1088) direkt mitgerendert: der
-                Match läuft über den Index auf (type, value_normalized) und ist
-                damit ein gewöhnlicher Lookup, kein kNN, das den Seitenaufbau
-                aufhalten würde.
-                {% endcomment %}
-                <div id="document-references">
-                    {% include "documents/partials/_detail_references.html" %}
-                </div>
-            </div>
-
-            <div class="findus-detail-context-block">
-                <h3 class="findus-section-subtitle">Ähnliche Dokumente</h3>
-                {% comment %}
-                Nachgeladen (#1088): die kNN-Query ist Beiwerk und soll den Aufbau
-                von Titel/Zusammenfassung/Original nicht aufhalten.
-
-                `findus:related-refresh` schickt die Detach-View (#1111) mit: das
-                getrennte Unterdokument taucht hier ab sofort als Querverweis auf,
-                und ohne den Nachlade-Trigger stünde der Block bis zum nächsten
-                Seitenaufbau veraltet daneben.
-                {% endcomment %}
-                <div
-                    id="document-related"
-                    hx-get="{% url 'documents:related' document.pk %}"
-                    hx-trigger="load, findus:related-refresh from:body"
-                    hx-swap="innerHTML"
+        <ul class="nav nav-tabs findus-detail-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link active"
+                    id="tab-details"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-details"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-details"
+                    aria-selected="true"
+                >Details</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link"
+                    id="tab-comments"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-comments"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-comments"
+                    aria-selected="false"
                 >
-                    <p class="text-muted">Wird geladen …</p>
-                </div>
+                    Kommentare
+                    <span class="badge rounded-pill {% if comments %}text-bg-secondary{% else %}text-bg-light findus-tab-empty{% endif %}">{{ comments|length }}</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link"
+                    id="tab-context"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-context"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-context"
+                    aria-selected="false"
+                >
+                    Verknüpfungen &amp; Kontext
+                    <span class="badge rounded-pill {% if linked_documents %}text-bg-secondary{% else %}text-bg-light findus-tab-empty{% endif %}">{{ linked_documents|length }}</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link"
+                    id="tab-similar"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-similar"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-similar"
+                    aria-selected="false"
+                >Ähnliche Dokumente</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link"
+                    id="tab-children"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-children"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-children"
+                    aria-selected="false"
+                >
+                    Unterdokumente
+                    <span class="badge rounded-pill {% if children %}text-bg-secondary{% else %}text-bg-light findus-tab-empty{% endif %}">{{ children|length }}</span>
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content findus-detail-tab-content">
+            <div class="tab-pane fade show active" id="pane-details" role="tabpanel" aria-labelledby="tab-details">
+                <section class="findus-section">
+                    <div id="document-meta">
+                        {% include "documents/partials/_detail_meta.html" %}
+                    </div>
+                </section>
+
+                {% comment %}
+                Verknüpfte Aufgaben (#1023): vor #1126 stand dieser Block in
+                der Sidebar. Er zieht mit in den Details-Tab, statt ersatzlos
+                zu verschwinden -- die Umstrukturierung ist rein strukturell.
+                Der Kommentare-Tab zeigt seit #1125 echte Kommentare, nicht
+                mehr diesen Block.
+                {% endcomment %}
+                <section class="findus-section">
+                    <h2 class="findus-section-title">Verknüpfte Aufgaben</h2>
+                    <div id="document-tasks">
+                        {% include "documents/partials/_detail_tasks.html" %}
+                    </div>
+                </section>
             </div>
 
-            <div class="findus-detail-context-block">
-                <h3 class="findus-section-subtitle">Unterdokumente</h3>
-                <div id="document-children">
-                    {% include "documents/partials/_detail_children.html" %}
-                </div>
+            <div class="tab-pane fade" id="pane-comments" role="tabpanel" aria-labelledby="tab-comments">
+                <section class="findus-section">
+                    <div id="document-comments">
+                        {% include "documents/partials/_detail_comments.html" %}
+                    </div>
+                </section>
             </div>
-        </section>
-    </aside>
+
+            <div class="tab-pane fade" id="pane-context" role="tabpanel" aria-labelledby="tab-context">
+                <section class="findus-section">
+                    <div class="findus-detail-context-block">
+                        <h3 class="findus-section-subtitle">Verknüpfte Dokumente</h3>
+                        {% comment %}
+                        Direkt mitgerendert (#1126). Reagiert auf
+                        `findus:links-refresh`, damit ein per Detach (#1111)
+                        angelegter Soft-Link auch dann erscheint, wenn dieser
+                        Tab beim Trennen nicht sichtbar war.
+                        {% endcomment %}
+                        <div
+                            id="document-links"
+                            hx-get="{% url 'documents:links' document.pk %}"
+                            hx-trigger="findus:links-refresh from:body"
+                            hx-swap="innerHTML"
+                        >
+                            {% include "documents/partials/_detail_links.html" %}
+                        </div>
+                    </div>
+
+                    <div class="findus-detail-context-block">
+                        <h3 class="findus-section-subtitle">Kennungen &amp; Referenznummern</h3>
+                        {% comment %}
+                        Anders als der Ähnlichkeits-Block direkt mitgerendert: der
+                        Match läuft über den Index auf (type, value_normalized) und
+                        ist damit ein gewöhnlicher Lookup, kein kNN.
+                        {% endcomment %}
+                        <div id="document-references">
+                            {% include "documents/partials/_detail_references.html" %}
+                        </div>
+                    </div>
+
+                    <div class="findus-detail-context-block">
+                        <h3 class="findus-section-subtitle">Verwandte Dokumente über gemeinsame Kennungen</h3>
+                        <div id="document-reference-groups">
+                            {% include "documents/partials/_detail_reference_groups.html" %}
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="tab-pane fade" id="pane-similar" role="tabpanel" aria-labelledby="tab-similar">
+                <section class="findus-section">
+                    {% comment %}
+                    Lazy geladen (#1088/#1126): die kNN-Query läuft erst beim
+                    Öffnen des Tabs (JS unten stößt `findus:show-similar` an).
+                    `findus:related-refresh` hält den Block aktuell, wenn ein
+                    Querverweis angelegt/gelöst oder ein Kind getrennt wird.
+                    {% endcomment %}
+                    <div
+                        id="document-related"
+                        hx-get="{% url 'documents:related' document.pk %}"
+                        hx-trigger="findus:show-similar, findus:related-refresh from:body"
+                        hx-swap="innerHTML"
+                    >
+                        <p class="text-muted">Wird geladen …</p>
+                    </div>
+                </section>
+            </div>
+
+            <div class="tab-pane fade" id="pane-children" role="tabpanel" aria-labelledby="tab-children">
+                <section class="findus-section">
+                    <div id="document-children">
+                        {% include "documents/partials/_detail_children.html" %}
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <div class="findus-detail-preview-area">
+        {% include "documents/partials/_detail_preview.html" %}
+    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    // The preview panel is fetched via HTMX (no hard reload); once it's
-    // swapped in, show it as a Bootstrap Offcanvas -- closing again is
-    // plain Bootstrap (data-bs-dismiss), no request involved.
-    var PREVIEW_WIDTH_STORAGE_KEY = "findus-preview-panel-width";
-    var PREVIEW_MIN_WIDTH = 360;
-    var PREVIEW_MAX_WIDTH_RATIO = 0.8;
-    var PREVIEW_MOBILE_BREAKPOINT = 768;
-
-    function applyStoredPreviewWidth(panel) {
-        // Unterhalb der Mobile-Breakpoint erzwingt das CSS 100vw; eine
-        // per Inline-Style gesetzte Breite hätte dank höherer Spezifität
-        // Vorrang und würde das aushebeln.
-        if (window.innerWidth <= PREVIEW_MOBILE_BREAKPOINT) {
+    // Lazy-Load des Ähnlichkeits-Tabs (#1126): die Vektorsuche läuft erst,
+    // wenn der Tab zum ersten Mal geöffnet wird -- ein per HTMX geladener
+    // Block würde sonst schon beim Seitenaufbau feuern. `dataset.loaded`
+    // sorgt dafür, dass wiederholtes Umschalten keine zweite Abfrage auslöst;
+    // spätere Aktualisierungen laufen über `findus:related-refresh`.
+    document.addEventListener("DOMContentLoaded", function () {
+        var similarTab = document.getElementById("tab-similar");
+        if (!similarTab) {
             return;
         }
-        var stored = parseFloat(localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY));
-        if (stored) {
-            panel.style.width = stored + "px";
-        }
-    }
-
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-        if (event.detail.target.id !== "document-original-preview") {
-            return;
-        }
-        var panel = event.detail.target.querySelector(".findus-preview-offcanvas");
-        if (panel) {
-            applyStoredPreviewWidth(panel);
-            bootstrap.Offcanvas.getOrCreateInstance(panel).show();
-        }
-    });
-
-    // Drag-Resize am linken Panelrand (#1106). Pointer-Capture auf dem
-    // Handle sorgt dafür, dass move/up-Events dort ankommen, auch wenn der
-    // Zeiger während des Ziehens über das PDF-<iframe> wandert (dessen
-    // eigenes Dokument würde sonst die Maus-Events schlucken).
-    document.body.addEventListener("pointerdown", function (event) {
-        var handle = event.target.closest(".findus-preview-resize-handle");
-        if (!handle) {
-            return;
-        }
-        var panel = handle.closest(".findus-preview-offcanvas");
-        if (!panel) {
-            return;
-        }
-
-        var startX = event.clientX;
-        var startWidth = panel.getBoundingClientRect().width;
-        handle.setPointerCapture(event.pointerId);
-        document.body.classList.add("findus-preview-resizing");
-
-        function onMove(moveEvent) {
-            var delta = startX - moveEvent.clientX;
-            var maxWidth = window.innerWidth * PREVIEW_MAX_WIDTH_RATIO;
-            var newWidth = Math.min(maxWidth, Math.max(PREVIEW_MIN_WIDTH, startWidth + delta));
-            panel.style.width = newWidth + "px";
-        }
-
-        function onUp(upEvent) {
-            handle.releasePointerCapture(upEvent.pointerId);
-            handle.removeEventListener("pointermove", onMove);
-            handle.removeEventListener("pointerup", onUp);
-            document.body.classList.remove("findus-preview-resizing");
-            localStorage.setItem(
-                PREVIEW_WIDTH_STORAGE_KEY,
-                Math.round(panel.getBoundingClientRect().width)
-            );
-        }
-
-        handle.addEventListener("pointermove", onMove);
-        handle.addEventListener("pointerup", onUp);
-        event.preventDefault();
+        similarTab.addEventListener("shown.bs.tab", function () {
+            var target = document.getElementById("document-related");
+            if (target && !target.dataset.loaded) {
+                target.dataset.loaded = "true";
+                htmx.trigger(target, "findus:show-similar");
+            }
+        });
     });
 </script>
 {% endblock %}
