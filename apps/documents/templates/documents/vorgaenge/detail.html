@@ -6,12 +6,14 @@
 
 <section class="findus-section findus-hub-actions">
     {% comment %}
-    Zweiter Einstieg in den Brief-Assistenten (#1095) -- ohne
-    Bezugsdokument, dafür mit dem Vorgang als Kontext.
+    Zweiter Einstieg in den Brief-Assistenten (#1095) -- seit #1138 über die
+    Frage „Auf welches Dokument antworten?": ein Schreiben ohne
+    Bezugsdokument könnte Empfänger, Betreff und Key-Facts nur raten, weil
+    ein Vorgang mehrere Dokumente bündelt.
     {% endcomment %}
     <a
         class="btn btn-sm btn-outline-secondary"
-        href="{% url 'documents:letter_draft_start' %}?vorgang={{ vorgang.pk }}"
+        href="{% url 'documents:letter_draft_pick_source' vorgang.pk %}"
     >
         Schreiben erstellen
     </a>

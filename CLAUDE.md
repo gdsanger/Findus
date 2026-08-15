@@ -99,6 +99,38 @@ Funktion.
     bewusst unangetastet (kein `update_fields`-Eintrag dafür), sonst
     würde der Klick auf „erstellen" selbst die Basis verfälschen, gegen
     die später verglichen wird.
+- **Ein Schreiben ist immer eine Antwort auf ein Dokument** (#1138). Es gibt
+  keinen zweiten Modus: `letter_draft_start` ohne sichtbares Bezugsdokument
+  gibt es nicht, der Einstieg aus dem Vorgang führt über
+  `letter_draft_pick_source` („Auf welches Dokument antworten?"). Der Grund
+  ist kein UI-Geschmack, sondern Eindeutigkeit — ein Vorgang bündelt mehrere
+  Dokumente und mehrere Kontakte, und ohne Anker blieben genau die Werte aus
+  Kontakt und Dokument (Empfänger, Betreff, Key-Facts) leer, während Vorgang
+  und eigene Identität sich auflösen.
+  - **Kein Rückgriff auf andere Dokumente des Vorgangs.** Fehlt ein Wert,
+    bleibt er sichtbar leer und wird nicht aus einem Nachbardokument
+    beschafft — ein fremder Betrag in einem Schreiben mit Fristsetzung wäre
+    ein gefährlicher Komfort. Wer das „nachrüstet", braucht Rateregeln
+    („welches Dokument gewinnt?"), und genau die sollte diese Festlegung
+    abschaffen.
+  - Die Auflösung ist **eine** Funktion: `letter_bindings.resolve_bindings`
+    liefert je Platzhalter Wert **plus Herkunft plus Grund bei Fehlen**
+    (`ResolvedBinding`). Anzeige (Provenienz-Block, Eingabefelder für
+    Lücken), Formularfelder und Prompt-Werte speisen sich daraus — nicht aus
+    drei eigenen Schleifen in View, Formular und Template.
+  - Jeder Platzhalter ohne Wert wird zum Eingabefeld, auch ein gebundener:
+    an einem fehlenden Stammdatum soll ein Entwurf nicht scheitern. Was der
+    Nutzer einträgt, landet in `manual_values` und **gewinnt gegen seine
+    Bindung** — sonst überschriebe das nächste Auflösen den nachgetragenen
+    Wert wieder. Adresse/E-Mail lassen sich zusätzlich am Kontakt speichern;
+    der Name bewusst nicht (`Correspondent.name` ist die Identität des
+    Kontakts, `unique` — das wäre eine Umbenennung, keine geschlossene Lücke).
+  - Das abgelegte Schreiben ist mit seinem Bezugsdokument verknüpft
+    (`link_documents`, Notiz „Antwortschreiben"), trägt `direction=ausgang`
+    und liegt in **genau dem** Vorgang, der beim Erzeugen gewählt wurde —
+    nicht in allen Vorgängen des Bezugsdokuments. Die Richtung der Aussage
+    steckt in den beiden Dokumenten, nicht im Link: `DocumentLink` ist und
+    bleibt ungerichtet (siehe dort).
 - KI-Analyse (`analysis.analyze_document`) und Thumbnail-Rendering
   (`thumbnails.generate_thumbnail_for_document`) sind **fehlertolerant**: Ein
   Fehlschlag loggt und läuft weiter (Fehler landet in `metadata["analysis_

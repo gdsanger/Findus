@@ -5,12 +5,14 @@ from django.test import TestCase
 
 from .analysis import _KEY_FACT_FIELDS
 from .letter_bindings import (
+    MANUAL_ORIGIN_LABEL,
     LetterContext,
     SourceField,
     SourceNamespace,
     UnknownSourceError,
     build_context,
     missing_required_keys,
+    resolve_bindings,
     resolve_placeholders,
     resolve_source,
     source_choices,
@@ -185,3 +187,117 @@ class ResolveSourceTests(TestCase):
         self.assertEqual(source_label("document.keyfacts.amount"), "Dokument · Key-Fact: Betrag")
         self.assertEqual(source_label("manual"), "Manuelle Eingabe · Bei der Erzeugung ausfüllen")
         self.assertEqual(source_label("crm.kunde"), "crm.kunde")
+
+
+class ResolveBindingsTests(TestCase):
+    """Die eine Auflösung (#1138): je Platzhalter Wert **plus Herkunft plus
+    Grund bei Fehlen** -- die Quelle, aus der sich Anzeige und Prüfung
+    gemeinsam speisen.
+    """
+
+    def setUp(self):
+        self.self_identity = Correspondent.objects.create(
+            name="Perculasoft e.K.", address="Musterweg 1\n12345 Musterstadt", is_self=True
+        )
+        self.kontakt = Correspondent.objects.create(name="Finanzamt Musterstadt")
+        self.vorgang = Vorgang.objects.create(name="Steuer 2026")
+        self.document = Document.objects.create(
+            title="Bescheid 2026",
+            correspondent=self.kontakt,
+            document_date=datetime.date(2026, 7, 1),
+            key_facts={"amount": "1.234,00"},
+        )
+        self.document.vorgaenge.add(self.vorgang)
+
+        self.template = LetterTemplate.objects.create(name="Widerspruch")
+        self._placeholder("betreff", "document.title", 1)
+        self._placeholder("empfaenger_adresse", "kontakt.address", 2, required=True)
+        self._placeholder("frist", "document.keyfacts.due_date", 3)
+        self._placeholder("aktenzeichen", "manual", 4)
+
+    def _placeholder(self, key, source, order, **extra):
+        return LetterTemplatePlaceholder.objects.create(
+            template=self.template, key=key, source=source, order=order, **extra
+        )
+
+    def _bindings(self, **context_kwargs):
+        context = build_context(document=self.document, **context_kwargs)
+        return {binding.key: binding for binding in resolve_bindings(self.template, context)}
+
+    def test_resolved_binding_carries_value_and_origin(self):
+        binding = self._bindings()["betreff"]
+
+        self.assertEqual(binding.value, "Bescheid 2026")
+        self.assertEqual(binding.origin, "Dokument · Titel (Betreff)")
+        self.assertFalse(binding.is_missing)
+        self.assertEqual(binding.missing_reason, "")
+
+    def test_a_gap_in_the_contact_names_the_contact_as_the_reason(self):
+        binding = self._bindings()["empfaenger_adresse"]
+
+        self.assertTrue(binding.is_missing)
+        self.assertEqual(binding.missing_reason, "am Kontakt nicht hinterlegt")
+        # Genau diese Lücke gehört dauerhaft an den Kontakt -- deshalb bietet
+        # das Formular hier „am Kontakt speichern" an.
+        self.assertEqual(binding.contact_field, "address")
+
+    def test_a_gap_in_the_document_names_the_document_as_the_reason(self):
+        binding = self._bindings()["frist"]
+
+        self.assertEqual(binding.missing_reason, "im Dokument nicht gefunden")
+        # Eine Key-Fact-Lücke gehört ins Dokument, nicht an den Kontakt.
+        self.assertEqual(binding.contact_field, "")
+
+    def test_a_missing_context_object_reads_differently_than_an_empty_field(self):
+        """„Es gibt gar keinen Kontakt" und „am Kontakt nicht hinterlegt"
+        führen zu verschiedenen Handlungen und dürfen nicht gleich klingen.
+        """
+        self.document.correspondent = None
+        self.document.save(update_fields=["correspondent"])
+
+        binding = self._bindings()["empfaenger_adresse"]
+
+        self.assertEqual(
+            binding.missing_reason,
+            "kein Empfänger gewählt (das Bezugsdokument hat keinen Kontakt)",
+        )
+
+    def test_a_manually_entered_value_wins_over_its_binding(self):
+        """Sonst stünde der nachgetragene Wert zwar im Formular, käme aber
+        nie im Brief an -- die Bindung überschriebe ihn beim nächsten
+        Auflösen wieder.
+        """
+        bindings = self._bindings(manual_values={"empfaenger_adresse": "Amtsgasse 2"})
+
+        self.assertEqual(bindings["empfaenger_adresse"].value, "Amtsgasse 2")
+        self.assertEqual(bindings["empfaenger_adresse"].origin, MANUAL_ORIGIN_LABEL)
+        self.assertFalse(bindings["empfaenger_adresse"].is_missing)
+
+    def test_an_unknown_source_stays_empty_with_a_reason(self):
+        LetterTemplatePlaceholder.objects.filter(key="betreff").update(source="crm.kunde")
+
+        binding = self._bindings()["betreff"]
+
+        self.assertTrue(binding.is_missing)
+        self.assertEqual(binding.missing_reason, "Quelle ist nicht (mehr) bekannt")
+
+    def test_resolve_placeholders_is_the_narrow_view_on_the_same_answer(self):
+        context = build_context(document=self.document)
+
+        values = resolve_placeholders(self.template, context)
+        bindings = resolve_bindings(self.template, context)
+
+        self.assertEqual(values, {binding.key: binding.value for binding in bindings})
+
+    def test_no_value_is_taken_from_another_document_of_the_vorgang(self):
+        """Ein Betrag aus einem fremden Dokument in einem Schreiben mit
+        Fristsetzung wäre ein gefährlicher Komfort (#1138).
+        """
+        sibling = Document.objects.create(
+            title="Mahnung 2026",
+            correspondent=self.kontakt,
+            key_facts={"due_date": "2026-09-30"},
+        )
+        sibling.vorgaenge.add(self.vorgang)
+
+        self.assertTrue(self._bindings()["frist"].is_missing)

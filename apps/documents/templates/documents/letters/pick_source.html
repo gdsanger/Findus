@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Auf welches Dokument antworten? – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Auf welches Dokument antworten?" %}
+
+{% comment %}
+Der vorgeschaltete Schritt beim Einstieg aus dem Vorgang (#1138). Ein
+Schreiben ist immer eine Antwort auf ein Dokument -- ohne diesen Anker
+wären Empfänger, Betreff und Key-Facts nicht eindeutig, weil ein Vorgang
+mehrere Dokumente und mehrere Kontakte bündelt.
+{% endcomment %}
+<section class="findus-section">
+    <p class="text-muted small">
+        Vorgang: <a href="{% url 'documents:vorgang_detail' vorgang.pk %}">{{ vorgang.name }}</a>
+    </p>
+
+    {% if documents %}
+    <p class="text-muted small">
+        Das gewählte Dokument liefert Empfänger, Betreff und Key-Facts des Schreibens –
+        und wird beim Ablegen als beantwortetes Dokument damit verknüpft.
+    </p>
+
+    <div class="findus-card">
+        <ul class="list-unstyled mb-0">
+            {% for candidate in documents %}
+            <li class="findus-letter-source-option">
+                <a
+                    class="btn btn-sm btn-outline-primary"
+                    href="{% url 'documents:letter_draft_start' %}?document={{ candidate.pk }}&amp;vorgang={{ vorgang.pk }}"
+                >
+                    Darauf antworten
+                </a>
+                <span>
+                    <a href="{% url 'documents:detail' candidate.pk %}">{{ candidate.title }}</a>
+                    <span class="text-muted small">
+                        · {{ candidate.display_date|date:"d.m.Y" }}{% if candidate.display_date_is_upload_fallback %} (Upload){% endif %}
+                        {% if candidate.correspondent %} · {{ candidate.correspondent.name }}{% endif %}
+                    </span>
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% else %}
+    <div class="alert alert-warning py-2 px-3 small" role="alert">
+        In diesem Vorgang liegt kein für Sie sichtbares Dokument. Ein Schreiben entsteht
+        immer als Antwort auf ein Dokument – ordnen Sie dem Vorgang zuerst eines zu.
+    </div>
+    {% endif %}
+
+    <div class="findus-detail-meta-edit-actions">
+        <a href="{% url 'documents:vorgang_detail' vorgang.pk %}" class="btn btn-sm btn-outline-secondary">
+            Abbrechen
+        </a>
+    </div>
+</section>
+{% endblock %}
