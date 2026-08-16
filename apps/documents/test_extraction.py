@@ -3,11 +3,12 @@ import shutil
 import tempfile
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.ai.providers.fake import FakeVisionProvider
+from config.test_requirements import requires_ocr, requires_pdf_rasterizer
 
-from .extraction import _OcrOutput, build_markdown, extract_document
+from .extraction import _OcrOutput, _ocr_image, build_markdown, extract_document
 from .models import Document
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-extraction-media-")
@@ -197,6 +198,7 @@ class ExtractDocumentOcrTests(TestCase):
         super().tearDownClass()
         shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
 
+    @requires_pdf_rasterizer("OCR-Eskalation eines gescannten PDF")
     def test_scanned_pdf_escalates_to_ocr_when_text_layer_is_empty(self):
         pdf_bytes = _make_pdf([None])
         document = _make_document(filename="scan.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -236,6 +238,7 @@ class ExtractDocumentOcrTests(TestCase):
         self.assertEqual(result.text_content, _GERMAN_PARAGRAPH)
         self.assertEqual(vision_provider.calls, [])
 
+    @requires_pdf_rasterizer("Vision-Eskalation bei schwacher OCR-Konfidenz")
     def test_weak_ocr_confidence_escalates_to_vision(self):
         pdf_bytes = _make_pdf([None])
         document = _make_document(filename="scan.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -251,6 +254,7 @@ class ExtractDocumentOcrTests(TestCase):
         self.assertEqual(result.text_content, "Vision-Transkript des Scans.")
         self.assertEqual(len(vision_provider.calls), 1)
 
+    @requires_pdf_rasterizer("Vision-Eskalation bei zu kurzem OCR-Text")
     def test_weak_ocr_text_length_escalates_to_vision_even_with_high_confidence(self):
         pdf_bytes = _make_pdf([None])
         document = _make_document(filename="scan.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -296,6 +300,7 @@ class ExtractDocumentVisionTests(TestCase):
         self.assertEqual(image.mime_type, "image/png")
         self.assertTrue(prompt)
 
+    @requires_pdf_rasterizer("gemischtes mehrseitiges PDF")
     def test_multi_page_pdf_reports_the_most_expensive_stage_used(self):
         pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, None])
         document = _make_document(filename="mixed.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -367,6 +372,7 @@ class ExtractDocumentFailureTests(TestCase):
         self.assertEqual(document.processing_status, Document.ProcessingStatus.FAILED)
         self.assertIn("nicht unterstuetzter Dateityp", document.processing_error)
 
+    @requires_pdf_rasterizer("Fehlerpfad des Vision-Providers")
     def test_vision_provider_failure_marks_failed_and_reraises(self):
         pdf_bytes = _make_pdf([None])
         document = _make_document(filename="scan.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -410,6 +416,41 @@ class ExtractDocumentNulByteTests(TestCase):
         self.assertNotIn("\x00", result.text_content)
         self.assertNotIn("\x00", result.markdown)
         self.assertIn("nach dem Nullbyte", result.text_content)
+
+
+@requires_ocr("Direkttest der OCR-Stufe")
+class OcrImageTests(SimpleTestCase):
+    """`_ocr_image` ist die einzige Stelle, die wirklich das `tesseract`-Binary
+    aufruft -- in allen Kaskaden-Tests oben ist sie gemockt, damit die
+    Eskalationslogik ohne Systemwerkzeug pruefbar bleibt. Damit die Anbindung
+    an das Binary trotzdem abgedeckt ist, prueft diese Klasse sie direkt; ohne
+    `tesseract` bzw. ohne die konfigurierten Sprachdaten wird sie mit
+    sichtbarem Grund uebersprungen (#1145).
+    """
+
+    @staticmethod
+    def _image_with_text(text: str):
+        from PIL import Image, ImageDraw, ImageFont
+
+        image = Image.new("RGB", (900, 200), "white")
+        ImageDraw.Draw(image).text(
+            (20, 60), text, fill="black", font=ImageFont.load_default(size=64)
+        )
+        return image
+
+    def test_printed_text_is_recognised_with_a_confidence(self):
+        result = _ocr_image(self._image_with_text("Rechnung 2026"))
+
+        self.assertIn("Rechnung", result.text)
+        self.assertGreater(result.confidence, 0.0)
+
+    def test_blank_page_yields_no_text_and_zero_confidence(self):
+        from PIL import Image
+
+        result = _ocr_image(Image.new("RGB", (400, 200), "white"))
+
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.confidence, 0.0)
 
 
 class BuildMarkdownTests(TestCase):
