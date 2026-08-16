@@ -995,6 +995,40 @@ class DocumentDetailViewTests(TestCase):
         self.assertNotContains(response, "<script>alert(1)</script>")
         self.assertContains(response, "&lt;script&gt;")
 
+    def test_markdown_content_format_renders_tables_in_the_content_tab(self):
+        """#1149: `content_format == "markdown"` (KI-Vision-Neuextraktion)
+        rendert im "Inhalt"-Tab als echte HTML-Tabelle statt als rohen,
+        vorformatierten Markdown-Quelltext.
+        """
+        self.doc.text_content = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+        self.doc.content_format = Document.ContentFormat.MARKDOWN
+        self.doc.save(update_fields=["text_content", "content_format"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "<table>")
+        self.assertNotContains(response, "| A | B |")
+
+    def test_plain_text_content_format_still_renders_as_preformatted_text(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, '<pre class="findus-detail-content-text">')
+        self.assertContains(response, "Betrag: 123 EUR")
+
+    def test_markdown_content_is_never_truncated_in_the_content_tab(self):
+        self.doc.text_content = "| A |\n| --- |\n" + "\n".join(f"| {i} |" for i in range(50))
+        self.doc.content_format = Document.ContentFormat.MARKDOWN
+        self.doc.save(update_fields=["text_content", "content_format"])
+
+        self.client.force_login(self.user_a)
+        with override_settings(FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS=20):
+            response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Vollständig anzeigen")
+        self.assertContains(response, "<td>49</td>")
+
     def test_detail_shows_six_tabs_with_details_as_default(self):
         """Neue Struktur (#1126, #1142): Zusammenfassung ungetabbt, darunter
         die sechs Tabs in fester Reihenfolge -- "Inhalt" zwischen "Details"
@@ -1930,6 +1964,7 @@ class DocumentVisionReextractActionViewTests(TestCase):
         mock_async_task.assert_called_once_with(
             reextract_document_with_vision_task,
             self.doc.id,
+            False,
             timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
             hook=reextract_document_with_vision_hook,
         )
@@ -2004,6 +2039,72 @@ class DocumentVisionReextractActionViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Refresh"], "true")
+
+    def _mark_up_to_date(self):
+        """Versetzt `self.doc` in den Zustand "unveraendert seit dem
+        letzten erfolgreichen Vision-Markdown-Lauf" (#1149) -- derselbe
+        Fingerabdruck, den `reextract_document_with_vision()` nach einem
+        vollstaendigen Erfolg speichert.
+        """
+        from .extraction import vision_markdown_fingerprint
+
+        self.doc.sha256 = "deadbeef" * 8
+        self.doc.vision_reextraction_status = Document.VisionReextractionStatus.READY
+        self.doc.vision_reextraction_fingerprint = vision_markdown_fingerprint(self.doc)
+        self.doc.save(
+            update_fields=["sha256", "vision_reextraction_status", "vision_reextraction_fingerprint"]
+        )
+
+    def test_unchanged_file_without_force_dispatches_no_worker_task(self):
+        self._mark_up_to_date()
+        self.client.force_login(self.user_a)
+
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            response = self.client.post(reverse("documents:vision_reextract", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        mock_async_task.assert_not_called()
+        self.doc.refresh_from_db()
+        # Kein Lauf wurde gestartet -- `running` wurde nie gesetzt.
+        self.assertEqual(
+            self.doc.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+
+    def test_unchanged_file_with_force_dispatches_the_worker_task(self):
+        from apps.documents.tasks import (
+            reextract_document_with_vision_hook,
+            reextract_document_with_vision_task,
+        )
+
+        self._mark_up_to_date()
+        self.client.force_login(self.user_a)
+
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            response = self.client.post(
+                reverse("documents:vision_reextract", args=[self.doc.id]), {"force": "1"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_async_task.assert_called_once_with(
+            reextract_document_with_vision_task,
+            self.doc.id,
+            True,
+            timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
+            hook=reextract_document_with_vision_hook,
+        )
+        self.doc.refresh_from_db()
+        self.assertEqual(
+            self.doc.vision_reextraction_status, Document.VisionReextractionStatus.RUNNING
+        )
+
+    def test_up_to_date_button_label_offers_a_forced_rerun(self):
+        self._mark_up_to_date()
+        self.client.force_login(self.user_a)
+
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+
+        self.assertContains(response, "Erneut mit KI-Vision extrahieren")
+        self.assertContains(response, 'name="force" value="1"')
 
 
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-detail-media-")

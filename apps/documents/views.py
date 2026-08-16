@@ -18,7 +18,11 @@ from apps.ingest.service import ingest_eml_file, ingest_file, sniff_mime_type
 from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
 from .document_dates import MANUAL_SOURCE as MANUAL_DATE_SOURCE
-from .extraction import expire_vision_reextraction_if_stalled, start_vision_reextraction
+from .extraction import (
+    expire_vision_reextraction_if_stalled,
+    start_vision_reextraction,
+    vision_markdown_fingerprint,
+)
 from .forms import DocumentDateInlineForm
 from .long_summary import (
     document_long_summary_is_stale,
@@ -573,11 +577,22 @@ def _content_context(document, *, truncated=True):
     paar hundert Zeichen bei einem mehrseitigen Dokument sind bereits der
     Befund. `document_content_full` ruft mit `truncated=False`, um denselben
     Endpunkt fuer "vollstaendig anzeigen" und "Text kopieren" zu bedienen.
+
+    Fuer `content_format == "markdown"` (#1149) wird nie gekuerzt: eine
+    Tabelle, die mitten in einer Zeile abgeschnitten wird, rendert als
+    kaputtes Markdown statt als das, was das Feature eigentlich zeigen
+    soll. Ein mehrseitiges Vision-Ergebnis ist damit zwar ein groesserer
+    Erstladeaufwand, aber immer noch derselbe Text, der ohnehin schon
+    vollstaendig in der Datenbank steht.
     """
     text = document.text_content
     char_count = len(text)
     preview_limit = settings.FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS
-    is_truncated = truncated and char_count > preview_limit
+    is_truncated = (
+        truncated
+        and char_count > preview_limit
+        and document.content_format != Document.ContentFormat.MARKDOWN
+    )
 
     extracted_at_raw = document.metadata.get("extracted_at")
     extracted_at = None
@@ -1308,6 +1323,19 @@ def document_action_status_toggle(request, pk):
     )
 
 
+def _vision_reextraction_up_to_date(document):
+    """True, wenn ein erneuter Klick auf "Mit KI-Vision neu extrahieren"
+    (ohne `force`) keinen Modellaufruf ausloesen wuerde (#1149) -- dieselbe
+    Idempotenz-Pruefung wie in `extraction.reextract_document_with_vision`,
+    hier nur fuers Button-Label/den versteckten `force`-Wert, nicht fuer
+    die eigentliche Entscheidung (die trifft der Service selbst noch
+    einmal).
+    """
+    return bool(document.sha256) and document.vision_reextraction_fingerprint == (
+        vision_markdown_fingerprint(document)
+    )
+
+
 def _analysis_status_context(document):
     """Kontext des Panels "Analyse erneut ausfuehren"/"Neu verarbeiten"/"Mit
     KI-Vision neu extrahieren" -- prueft nebenbei auf einen
@@ -1320,6 +1348,7 @@ def _analysis_status_context(document):
         "document": document,
         "pending_statuses": PENDING_STATUSES,
         "vision_reextract_page_limit": settings.FINDUS_VISION_REEXTRACT_MAX_PAGES,
+        "vision_reextraction_up_to_date": _vision_reextraction_up_to_date(document),
     }
 
 
@@ -1494,11 +1523,27 @@ def document_vision_reextract(request, pk):
     (`start_vision_reextraction`), damit die UI ab dem Klick den Spinner
     zeigt -- der bisherige Text bleibt bis zu einem erfolgreichen Ergebnis
     unangetastet.
+
+    Ist die Datei seit dem letzten vollstaendig erfolgreichen Lauf
+    unveraendert (#1149, `_vision_reextraction_up_to_date`) und kommt
+    `force` nicht mit im POST, wird gar kein Task eingereiht -- das Template
+    setzt `force=1` dann selbst, sobald es genau diesen Zustand anzeigt
+    (siehe `_detail_analysis_status.html`), ein Klick ohne `force` bedeutet
+    also "es gibt noch etwas zu tun". Kein Job, kein Spinner, keine
+    Wartezeit fuer einen Klick, der ohnehin nichts veraendert haette.
     """
     document = _visible_document(request.user, pk)
     if not document.supports_vision_reextraction:
         return HttpResponseBadRequest(
             "KI-Vision-Neuextraktion ist fuer dieses Dateiformat nicht verfuegbar."
+        )
+
+    force = request.POST.get("force") == "1"
+    if not force and _vision_reextraction_up_to_date(document):
+        return render(
+            request,
+            "documents/partials/_detail_analysis_status.html",
+            _analysis_status_context(document),
         )
 
     start_vision_reextraction(document)
@@ -1510,6 +1555,7 @@ def document_vision_reextract(request, pk):
     async_task(
         reextract_document_with_vision_task,
         document.id,
+        force,
         timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
         hook=reextract_document_with_vision_hook,
     )

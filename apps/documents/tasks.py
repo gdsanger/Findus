@@ -224,7 +224,7 @@ def generate_vorgang_long_summary_hook(task):
     )
 
 
-def reextract_document_with_vision_task(document_id):
+def reextract_document_with_vision_task(document_id, force=False):
     """Django-Q2 worker entry point fuer die manuelle KI-Vision-
     Neuextraktion (#1143) -- nur auf Knopfdruck vom Detail aus, nie von der
     Ingest-Pipeline.
@@ -236,13 +236,20 @@ def reextract_document_with_vision_task(document_id):
     Prozess neu startet. Dieselbe Aufgabenteilung wie
     `generate_document_long_summary_task`.
 
+    `force` (#1149) reicht unveraendert an den Service durch -- die View
+    dispatcht diesen Task fuer eine unveraendert bereits transkribierte
+    Datei ueberhaupt nur, wenn `force=True` war (siehe
+    `views.document_vision_reextract`), aber der Service prueft die
+    Idempotenz selbst noch einmal (Verteidigung in der Tiefe fuer jeden
+    kuenftigen Aufrufer, der nicht ueber die View geht).
+
     Nur bei Erfolg wird `analyze_document_task` angestossen (das seinerseits
     `process_document_task` anschliesst, siehe `extract_document_task`) --
     sonst durchsucht Findus weiterhin den alten Text, und Zusammenfassung/
     Key-Facts blieben die alten, obwohl sich `text_content` gar nicht
     geaendert hat.
     """
-    document = reextract_document_with_vision(document_id)
+    document = reextract_document_with_vision(document_id, force=force)
     if document.vision_reextraction_status != document.VisionReextractionStatus.READY:
         return
 
