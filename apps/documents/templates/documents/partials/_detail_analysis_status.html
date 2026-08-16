@@ -1,7 +1,7 @@
 <div
     id="document-analysis-status"
     class="findus-analysis-status"
-    {% if document.processing_status in pending_statuses %}
+    {% if document.processing_status in pending_statuses or document.vision_reextraction_is_running %}
     hx-get="{% url 'documents:analysis_status' document.pk %}"
     hx-trigger="every 3s"
     hx-target="this"
@@ -11,6 +11,9 @@
     {% if document.processing_status in pending_statuses %}
     <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
     <span class="text-muted small">{{ document.get_processing_status_display }} …</span>
+    {% elif document.vision_reextraction_is_running %}
+    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+    <span class="text-muted small">KI-Vision-Neuextraktion läuft …</span>
     {% else %}
     <form
         method="post"
@@ -40,9 +43,33 @@
             Neu verarbeiten
         </button>
     </form>
+    {% if document.supports_vision_reextraction %}
+    <form
+        method="post"
+        action="{% url 'documents:vision_reextract' document.pk %}"
+        class="d-inline"
+        hx-post="{% url 'documents:vision_reextract' document.pk %}"
+        hx-target="#document-analysis-status"
+        hx-swap="outerHTML"
+        onsubmit="return confirm('Mit KI-Vision neu extrahieren? Das ersetzt den bisherigen Text und verursacht zusätzliche KI-Kosten.{% if document.metadata.page_count %} Das Dokument hat {{ document.metadata.page_count }} Seite(n){% if document.metadata.page_count > vision_reextract_page_limit %}, verarbeitet werden nur die ersten {{ vision_reextract_page_limit }}{% endif %}.{% endif %}');"
+    >
+        {% csrf_token %}
+        <button
+            type="submit"
+            class="btn btn-sm {% if document.vision_reextraction_status == 'failed' %}btn-warning{% else %}btn-outline-secondary{% endif %}"
+        >
+            Mit KI-Vision neu extrahieren
+        </button>
+    </form>
+    {% endif %}
     {% if document.processing_status == 'failed' %}
     <span class="text-danger small">
         Verarbeitung fehlgeschlagen{% if document.processing_error %}: {{ document.processing_error }}{% endif %}
+    </span>
+    {% endif %}
+    {% if document.vision_reextraction_status == 'failed' %}
+    <span class="text-danger small">
+        KI-Vision-Neuextraktion fehlgeschlagen{% if document.vision_reextraction_error %}: {{ document.vision_reextraction_error }}{% endif %}
     </span>
     {% endif %}
     {% endif %}

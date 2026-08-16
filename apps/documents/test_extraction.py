@@ -1,3 +1,4 @@
+import datetime
 import io
 import shutil
 import tempfile
@@ -8,7 +9,13 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from apps.ai.providers.fake import FakeVisionProvider
 from config.test_requirements import requires_ocr, requires_pdf_rasterizer
 
-from .extraction import _OcrOutput, _ocr_image, build_markdown, extract_document
+from .extraction import (
+    _OcrOutput,
+    _ocr_image,
+    build_markdown,
+    extract_document,
+    reextract_document_with_vision,
+)
 from .models import Document
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-extraction-media-")
@@ -471,3 +478,114 @@ class BuildMarkdownTests(TestCase):
         markdown = build_markdown("Leer", [""])
 
         self.assertIn("_Kein Text erkannt._", markdown)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class ReextractDocumentWithVisionTests(TestCase):
+    """Manuelle KI-Vision-Neuextraktion (#1143): erzwingt Vision fuer jede
+    Seite, unabhaengig davon, ob Text-Layer/OCR ausgereicht haetten --
+    siehe CLAUDE.md "Manuelle KI-Vision-Neuextraktion".
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def test_image_is_replaced_by_the_vision_transcript(self):
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+        document = _make_document(
+            filename="scan.png", data=buffer.getvalue(), mime_type="image/png"
+        )
+        document.text_content = "Alter, verstuemmelter OCR-Text."
+        document.processing_status = Document.ProcessingStatus.READY
+        document.save()
+        vision_provider = FakeVisionProvider(reply="Sauberes Vision-Transkript.")
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertEqual(result.text_content, "Sauberes Vision-Transkript.")
+        self.assertEqual(result.extraction_method, Document.ExtractionMethod.VISION)
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+        self.assertIsNotNone(result.vision_reextraction_completed_at)
+        self.assertEqual(result.vision_reextraction_pages_processed, 1)
+        self.assertEqual(result.vision_reextraction_pages_total, 1)
+        self.assertFalse(result.vision_reextraction_truncated)
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.READY)
+        self.assertEqual(len(vision_provider.calls), 1)
+
+    @requires_pdf_rasterizer("mehrseitige KI-Vision-Neuextraktion")
+    def test_multi_page_pdf_joins_pages_with_visible_page_markers(self):
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
+        document = _make_document(filename="mixed.pdf", data=pdf_bytes, mime_type="application/pdf")
+        vision_provider = FakeVisionProvider(reply="Transkript.")
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertEqual(result.vision_reextraction_pages_processed, 2)
+        self.assertEqual(result.vision_reextraction_pages_total, 2)
+        self.assertIn("--- Seite 1 ---", result.text_content)
+        self.assertIn("--- Seite 2 ---", result.text_content)
+        self.assertEqual(len(vision_provider.calls), 2)
+        # Text-Layer wird bewusst NICHT beruecksichtigt -- jede Seite geht
+        # trotz vorhandenem Text-Layer durch Vision.
+        image, prompt = vision_provider.calls[0]
+        self.assertEqual(image.mime_type, "image/png")
+        self.assertTrue(prompt)
+
+    @requires_pdf_rasterizer("Seitenobergrenze der KI-Vision-Neuextraktion")
+    @override_settings(FINDUS_VISION_REEXTRACT_MAX_PAGES=1)
+    def test_page_limit_truncates_and_is_reported(self):
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
+        document = _make_document(filename="lang.pdf", data=pdf_bytes, mime_type="application/pdf")
+        vision_provider = FakeVisionProvider(reply="Transkript.")
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertEqual(len(vision_provider.calls), 1)
+        self.assertEqual(result.vision_reextraction_pages_processed, 1)
+        self.assertEqual(result.vision_reextraction_pages_total, 3)
+        self.assertTrue(result.vision_reextraction_truncated)
+        self.assertEqual(result.metadata["page_count"], 3)
+
+    def test_unsupported_mime_type_fails_without_touching_processing_status(self):
+        document = _make_document(
+            filename="archiv.zip", data=b"PK\x03\x04", mime_type="application/zip"
+        )
+        document.text_content = "Unveraendert."
+        document.processing_status = Document.ProcessingStatus.READY
+        document.save()
+
+        result = reextract_document_with_vision(document.id, vision_provider=FakeVisionProvider())
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.FAILED
+        )
+        self.assertIn("application/zip", result.vision_reextraction_error)
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.READY)
+        self.assertEqual(result.text_content, "Unveraendert.")
+
+    def test_manual_document_date_is_untouched(self):
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+        document = _make_document(
+            filename="scan.png", data=buffer.getvalue(), mime_type="image/png"
+        )
+        manual_date = datetime.date(2025, 1, 15)
+        document.document_date = manual_date
+        document.metadata = {**document.metadata, "document_date_source": "manuell"}
+        document.save()
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=FakeVisionProvider(reply="Transkript.")
+        )
+
+        self.assertEqual(result.document_date, manual_date)
+        self.assertEqual(result.metadata["document_date_source"], "manuell")

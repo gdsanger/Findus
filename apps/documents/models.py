@@ -297,6 +297,22 @@ class Document(TimeStampedModel, LongSummaryMixin):
         OCR = "ocr", "OCR"
         VISION = "vision", "Vision AI"
 
+    class VisionReextractionStatus(models.TextChoices):
+        """Eigenes Statusfeld fuer die manuelle KI-Vision-Neuextraktion
+        (#1143) -- bewusst getrennt von `processing_status`: ein
+        Fehlschlag hier darf ein sonst `ready` Dokument nicht als
+        `failed` erscheinen lassen (der bisherige Text bleibt ja
+        stehen, siehe `apps.documents.extraction.
+        reextract_document_with_vision`). Gleiche Bauart wie
+        `LongSummaryMixin.LongSummaryStatus`: ein On-Demand-Zusatzlauf,
+        kein Pipeline-Schritt.
+        """
+
+        NONE = "none", "Nicht ausgeführt"
+        RUNNING = "running", "Läuft"
+        READY = "ready", "Fertig"
+        FAILED = "failed", "Fehlgeschlagen"
+
     class Source(models.TextChoices):
         """Woher die Datei kam. `generiert_brief` ist der einzige Wert, den
         Findus selbst erzeugt (#1095): ein aus einer Brief-Vorlage
@@ -537,6 +553,28 @@ class Document(TimeStampedModel, LongSummaryMixin):
     metadata = models.JSONField(default=dict, blank=True)
     processing_error = models.TextField(blank=True)
 
+    # Manuelle KI-Vision-Neuextraktion (#1143): eigene Provenienz- und
+    # Job-Felder statt `metadata` -- anders als `extracted_at`/`page_count`
+    # (reine Extraktions-Provenienz) braucht dieser Zusatzlauf ein
+    # abfragbares Statusfeld fuers Polling/Retry der UI, analog
+    # `LongSummaryMixin`. `_run_started_at` ist reine Job-Buchfuehrung
+    # fuers Stall-Erkennen, bewusst getrennt von `updated_at` (dasselbe
+    # Argument wie beim `LongSummaryMixin`-Docstring). Ein nachfolgender
+    # regulaerer Reprocess setzt diese Felder ueber
+    # `extraction.extract_document()` wieder zurueck, damit die Anzeige nie
+    # einen Vision-Lauf behauptet, dessen Text laengst ueberschrieben ist.
+    vision_reextraction_status = models.CharField(
+        max_length=20,
+        choices=VisionReextractionStatus.choices,
+        default=VisionReextractionStatus.NONE,
+    )
+    vision_reextraction_error = models.TextField(blank=True)
+    vision_reextraction_run_started_at = models.DateTimeField(null=True, blank=True)
+    vision_reextraction_completed_at = models.DateTimeField(null=True, blank=True)
+    vision_reextraction_pages_processed = models.PositiveIntegerField(null=True, blank=True)
+    vision_reextraction_pages_total = models.PositiveIntegerField(null=True, blank=True)
+    vision_reextraction_truncated = models.BooleanField(default=False)
+
     # KI-Analyse (#1020, apps.documents.analysis): lesbare Kurz-Zusammenfassung
     # plus strukturierte Key-Facts (Absender/Datum/Typ/Betrag/Frist, jeweils
     # KI-extrahiert -- daher hier statt in `metadata`, das reine
@@ -586,6 +624,16 @@ class Document(TimeStampedModel, LongSummaryMixin):
     # Model gekapselt (analog `INLINE_PREVIEW_MIME_TYPES`), damit Template,
     # View und Rendering dieselbe Quelle nutzen statt drei Whitelists.
     THUMBNAIL_MIME_TYPES = {"application/pdf"}
+
+    # KI-Vision-neuextrahierbar heißt: die Seiten lassen sich als Bild
+    # rendern -- PDF (pdf2image) und alle Bildformate (Pillow), sonst gibt
+    # es kein Pixelbild, das ein Vision-Modell lesen könnte (#1143). Eigene
+    # Konstante statt Wiederverwendung von `THUMBNAIL_MIME_TYPES`, obwohl
+    # beide heute denselben Formatkreis abdecken -- derselbe bewusste
+    # Auseinanderhalt wie bei `INLINE_PREVIEW_MIME_TYPES`/
+    # `THUMBNAIL_MIME_TYPES`: zwei fachlich unabhängige Fragen, die zufällig
+    # dieselbe Antwort haben.
+    VISION_REEXTRACTABLE_MIME_TYPES = {"application/pdf"}
 
     class Meta:
         ordering = ["-created_at"]
@@ -766,6 +814,20 @@ class Document(TimeStampedModel, LongSummaryMixin):
         """
         mime = self.mime_type
         return mime in self.THUMBNAIL_MIME_TYPES or mime.startswith("image/")
+
+    @property
+    def supports_vision_reextraction(self):
+        """Whitelist check (#1143) fuer den "Mit KI-Vision neu
+        extrahieren"-Button -- nur Formate, die sich seitenweise als Bild
+        rendern lassen (PDF, Bilder); alles andere zeigt den Button gar
+        nicht erst.
+        """
+        mime = self.mime_type
+        return mime in self.VISION_REEXTRACTABLE_MIME_TYPES or mime.startswith("image/")
+
+    @property
+    def vision_reextraction_is_running(self):
+        return self.vision_reextraction_status == self.VisionReextractionStatus.RUNNING
 
     @property
     def has_tax_assessment(self):

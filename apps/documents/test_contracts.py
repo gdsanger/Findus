@@ -292,6 +292,51 @@ class FailedThumbnailDoesNotFailDocumentTests(TestCase):
         self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
 
 
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class FailedVisionReextractionDoesNotFailDocumentTests(TestCase):
+    """Ein fehlschlagender manueller KI-Vision-Neuextraktionslauf (#1143)
+    legt weder die Pipeline lahm noch verliert er den bisherigen Text --
+    er ist ein On-Demand-Zusatzlauf außerhalb der Pipeline (CLAUDE.md,
+    "Manuelle KI-Vision-Neuextraktion"), sein Fehlschlag landet
+    ausschließlich in `vision_reextraction_status`/`_error`.
+    """
+
+    def test_failed_vision_reextraction_leaves_processing_status_and_text_untouched(self):
+        import io
+
+        from PIL import Image
+
+        from .extraction import reextract_document_with_vision
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (40, 20), color="white").save(buffer, format="PNG")
+
+        document = Document.objects.create(
+            title="Scan.png",
+            metadata={"mime_type": "image/png", "original_filename": "Scan.png"},
+            processing_status=Document.ProcessingStatus.READY,
+            text_content="Alter, bereits erfasster Text.",
+            vision_reextraction_status=Document.VisionReextractionStatus.RUNNING,
+        )
+        document.original_file.save("Scan.png", _dummy_file(buffer.getvalue()))
+
+        class _RaisingVisionProvider:
+            def describe_image(self, image, prompt):
+                raise RuntimeError("vision boom")
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=_RaisingVisionProvider()
+        )
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.FAILED
+        )
+        self.assertIn("vision boom", result.vision_reextraction_error)
+        self.assertNotEqual(result.processing_status, Document.ProcessingStatus.FAILED)
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.READY)
+        self.assertEqual(result.text_content, "Alter, bereits erfasster Text.")
+
+
 class NoSecondDoneStateOnCommentsTests(TestCase):
     """`Document.action_status` ist die einzige Zustandsquelle fuer "hier
 
@@ -520,6 +565,22 @@ class QClusterRetryOutlivesTimeoutTests(SimpleTestCase):
         self.assertGreater(
             settings.FINDUS_VORGANG_LONG_SUMMARY_POLL_TIMEOUT_SECONDS,
             settings.FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        )
+
+    def test_retry_exceeds_the_vision_reextract_task_timeout(self):
+        """Dieselbe Invariante, fuer die manuelle KI-Vision-Neuextraktion
+        (#1143) -- ihr Task-Timeout ist grosszuegiger als jeder bisherige
+        Single-Call-Job, weil er bis zu `FINDUS_VISION_REEXTRACT_MAX_PAGES`
+        `describe_image()`-Aufrufe in einem Task macht.
+        """
+        self.assertGreater(
+            settings.Q_CLUSTER["retry"], settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS
+        )
+
+    def test_poll_timeout_exceeds_the_vision_reextract_task_timeout(self):
+        self.assertGreater(
+            settings.FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS,
+            settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
         )
 
 

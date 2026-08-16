@@ -202,6 +202,11 @@ urlpatterns = [
         name="reprocess",
     ),
     path(
+        "documents/<int:pk>/vision-reextract/",
+        views.document_vision_reextract,
+        name="vision_reextract",
+    ),
+    path(
         "documents/<int:pk>/lang-zusammenfassung/",
         views.document_long_summary_status,
         name="long_summary_status",

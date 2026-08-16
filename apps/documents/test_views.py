@@ -1738,6 +1738,128 @@ class DocumentAnalysisActionsViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class DocumentVisionReextractActionViewTests(TestCase):
+    """Covers the #1143 detail-page control "Mit KI-Vision neu
+    extrahieren": queued on the Django-Q worker with its own generous
+    task timeout, gated by the same `visible_to` scope as every other
+    document action, and only offered for formats that render as an
+    image (PDF/Bild).
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+            metadata={"mime_type": "application/pdf", "original_filename": "rechnung.pdf"},
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_vision_reextract_post_sets_running_and_queues_worker_task(self):
+        from apps.documents.tasks import (
+            reextract_document_with_vision_hook,
+            reextract_document_with_vision_task,
+        )
+
+        self.client.force_login(self.user_a)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            mock_async_task.return_value = "task-1"
+            response = self.client.post(reverse("documents:vision_reextract", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(
+            self.doc.vision_reextraction_status, Document.VisionReextractionStatus.RUNNING
+        )
+        self.assertIsNotNone(self.doc.vision_reextraction_run_started_at)
+        mock_async_task.assert_called_once_with(
+            reextract_document_with_vision_task,
+            self.doc.id,
+            timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
+            hook=reextract_document_with_vision_hook,
+        )
+        self.assertContains(response, "KI-Vision-Neuextraktion läuft")
+
+    def test_vision_reextract_get_is_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:vision_reextract", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_vision_reextract_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            response = self.client.post(reverse("documents:vision_reextract", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 404)
+        mock_async_task.assert_not_called()
+        self.doc.refresh_from_db()
+        self.assertEqual(
+            self.doc.vision_reextraction_status, Document.VisionReextractionStatus.NONE
+        )
+
+    def test_vision_reextract_unsupported_mime_type_returns_400(self):
+        self.doc.metadata = {
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "original_filename": "vertrag.docx",
+        }
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            response = self.client.post(reverse("documents:vision_reextract", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 400)
+        mock_async_task.assert_not_called()
+        self.doc.refresh_from_db()
+        self.assertEqual(
+            self.doc.vision_reextraction_status, Document.VisionReextractionStatus.NONE
+        )
+
+    def test_button_only_shown_for_vision_reextractable_formats(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+        self.assertContains(response, "Mit KI-Vision neu extrahieren")
+
+        self.doc.metadata = {
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "original_filename": "vertrag.docx",
+        }
+        self.doc.save(update_fields=["metadata"])
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+        self.assertNotContains(response, "Mit KI-Vision neu extrahieren")
+
+    def test_status_partial_polls_while_vision_reextraction_running(self):
+        self.doc.vision_reextraction_status = Document.VisionReextractionStatus.RUNNING
+        self.doc.save(update_fields=["vision_reextraction_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-trigger="every 3s"')
+        self.assertNotIn("HX-Refresh", response)
+
+    def test_status_partial_sends_hx_refresh_once_vision_reextraction_finishes(self):
+        self.doc.vision_reextraction_status = Document.VisionReextractionStatus.READY
+        self.doc.save(update_fields=["vision_reextraction_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:analysis_status", args=[self.doc.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Refresh"], "true")
+
+
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-detail-media-")
 _LOCAL_STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},

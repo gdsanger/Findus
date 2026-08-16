@@ -127,6 +127,43 @@ Upload-Tag) als Dokumentdatum trugen und damit die Timeline entwerteten.
   verworfen: Diese Rolle übernimmt der MCP-Endpunkt mit dem KI-Client des
   Nutzers. Kein zweiter Dialogkanal innerhalb der App.
 
+### Manuelle KI-Vision-Neuextraktion
+
+Zweiter Anlauf für Dokumente, bei denen Text-Layer/OCR bereits
+unvollständigen oder verstümmelten Text geliefert haben — bewusst
+ausgelöst, nie automatisch, weil er teurer und langsamer ist als die
+normale Kaskade (`apps.documents.extraction`).
+
+- **Eigenes Statusfeld** (`Document.vision_reextraction_status`), nicht
+  `processing_status`. Das Dokument war vor dem Klick bereits fertig
+  verarbeitet (sonst wäre der Button gar nicht sichtbar); ein Fehlschlag
+  des Zusatzlaufs darf es nicht als `failed` erscheinen lassen und rührt
+  `text_content` nicht an — der bisherige Text bleibt bis zu einem
+  erfolgreichen Ergebnis stehen. Damit ist dies **kein** dritter Ort, der
+  die Pipeline auf `failed` stellen darf (Abschnitt „Pipelines &
+  Services") — der Lauf steht außerhalb der Pipeline.
+- Erzwingt Vision für **jede** Seite, statt wie die automatische Kaskade
+  nur bei Bedarf zu eskalieren — genau dafür wird er ja ausgelöst. Mehrere
+  Seiten laufen als getrennte `describe_image()`-Aufrufe (die
+  Provider-Schicht kennt keinen Mehrbild-Call); die Seiten werden im
+  Klartext mit `--- Seite N ---` getrennt, damit Absätze nicht
+  zusammenlaufen.
+- Bei Erfolg wird automatisch `analyze_document_task` angestoßen (das
+  seinerseits `process_document_task` anschließt) — sonst durchsucht
+  Findus weiterhin den alten Text. Bleibt der Lauf ohne Ergebnis, läuft
+  auch nichts nach; das schützt zugleich ein manuell gesetztes
+  Dokumentdatum, weil dessen „einmal befüllen, nie ungefragt
+  überschreiben"-Schutz ohnehin nur in der Analyse greift, die dann gar
+  nicht erst läuft.
+- Ein regulärer Reprocess (`extract_document()`) setzt die
+  `vision_reextraction_*`-Provenienzfelder zurück, sobald er
+  `text_content` neu schreibt — sonst würde der „Inhalt"-Tab einen
+  Vision-Lauf behaupten, dessen Text längst überschrieben ist.
+- Seitenobergrenze und Rendering-Auflösung sind eigene Einstellungen
+  (`FINDUS_VISION_REEXTRACT_MAX_PAGES`/`_PDF_RENDER_DPI`), unabhängig von
+  der Kaskade — deren DPI ist bewusst niedrig und reicht für die manuelle
+  Neuextraktion nicht.
+
 ### Schreiben sind immer eine Antwort auf ein Dokument
 
 Es gibt keinen zweiten Modus — der Einstieg aus dem Vorgang führt über die

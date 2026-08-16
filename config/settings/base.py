@@ -209,13 +209,18 @@ CACHES = {
 # itself did), so a slow-but-alive job runs twice: doubled provider calls,
 # doubled token cost, worst case an unbounded loop. Checked in
 # `apps.documents.test_contracts.QClusterRetryOutlivesTimeoutTests`.
+#
+# 3600 (not the previous 900) since #1143's manual KI-Vision-Neuextraktion
+# can make up to `FINDUS_VISION_REEXTRACT_MAX_PAGES` describe_image() calls
+# in one task -- its own task timeout below needs headroom no single-call
+# job (recommendations, long summary) ever did.
 # --------------------------------------------------------------------------
 Q_CLUSTER = {
     "name": "findus",
     "workers": int(env("FINDUS_WORKER_COUNT", "2")),
     "recycle": 500,
     "timeout": 120,
-    "retry": 900,
+    "retry": 3600,
     "compress": True,
     "label": "Findus Background Tasks",
     "redis": REDIS_URL,
@@ -577,6 +582,32 @@ FINDUS_EXTRACTION_MIN_CHARS_PER_PAGE = int(env("FINDUS_EXTRACTION_MIN_CHARS_PER_
 FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE = float(env("FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE", "60"))
 FINDUS_EXTRACTION_OCR_LANGUAGES = env("FINDUS_EXTRACTION_OCR_LANGUAGES", "deu+eng")
 FINDUS_EXTRACTION_PDF_RENDER_DPI = int(env("FINDUS_EXTRACTION_PDF_RENDER_DPI", "200"))
+
+# --------------------------------------------------------------------------
+# Manuelle KI-Vision-Neuextraktion (apps.documents.extraction.
+# reextract_document_with_vision, #1143): bewusst ausgeloester, teurerer
+# zweiter Anlauf fuer Dokumente, bei denen Text-Layer/OCR bereits
+# verstuemmelten oder unvollstaendigen Text geliefert haben -- erzwingt
+# Vision fuer jede Seite statt der obigen Kaskade nur eskalieren zu lassen.
+# MAX_PAGES begrenzt Laufzeit/Kosten je Lauf (ueberzaehlige Seiten werden
+# sichtbar als "abgeschnitten" markiert, nicht stillschweigend ignoriert).
+# PDF_RENDER_DPI ist eigens hoeher als FINDUS_EXTRACTION_PDF_RENDER_DPI --
+# der dort gewaehlte niedrige Wert reicht fuer eine einzelne Fallback-
+# Beschreibung, nicht aber, um Text zuverlaessig lesbar zu rastern.
+# TASK_TIMEOUT_SECONDS < Q_CLUSTER["retry"] und
+# POLL_TIMEOUT_SECONDS > TASK_TIMEOUT_SECONDS -- abgesichert durch
+# apps.documents.test_contracts.QClusterRetryOutlivesTimeoutTests.
+# --------------------------------------------------------------------------
+FINDUS_VISION_REEXTRACT_MAX_PAGES = int(env("FINDUS_VISION_REEXTRACT_MAX_PAGES", "20"))
+FINDUS_VISION_REEXTRACT_PDF_RENDER_DPI = int(
+    env("FINDUS_VISION_REEXTRACT_PDF_RENDER_DPI", "300")
+)
+FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS = int(
+    env("FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS", "1800")
+)
+FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS = int(
+    env("FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS", "2400")
+)
 
 # --------------------------------------------------------------------------
 # Thumbnails (apps.documents.thumbnails, #1123): beim Ingest gerendertes
