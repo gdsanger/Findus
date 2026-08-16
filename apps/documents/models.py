@@ -60,6 +60,7 @@ class Correspondent(TimeStampedModel):
 
     name = models.CharField(max_length=255, unique=True)
     email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=64, blank=True)
     address = models.TextField(blank=True, default="")
     is_self = models.BooleanField(default=False, db_index=True)
     is_own_business = models.BooleanField(default=False, db_index=True)

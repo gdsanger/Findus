@@ -194,7 +194,7 @@ class VorgangReferenceInline(OwnerReferenceInline):
 class CorrespondentAdmin(admin.ModelAdmin):
     list_display = ("name", "email", "is_self", "vat_id", "iban", "created_at")
     list_filter = ("is_self",)
-    search_fields = ("name", "email", "vat_id", "tax_number", "iban")
+    search_fields = ("name", "email", "phone", "vat_id", "tax_number", "iban")
     inlines = [CorrespondentReferenceInline]
 
 

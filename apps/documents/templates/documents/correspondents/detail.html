@@ -61,10 +61,11 @@ Mindestbreite von 10rem zusammenfallen; ab `lg` gilt das gewohnte 3/9.
                 </form>
             </div>
             <div class="card-footer">
-                {% if correspondent.is_self or correspondent.email or correspondent.address or correspondent.vat_id or correspondent.iban %}
+                {% if correspondent.is_self or correspondent.email or correspondent.phone or correspondent.address or correspondent.vat_id or correspondent.iban %}
                 <div class="findus-chip-row">
                     {% if correspondent.is_self %}<span class="badge text-bg-info">Das bin ich</span>{% endif %}
                     {% if correspondent.email %}<span class="badge text-bg-secondary fw-normal">{{ correspondent.email }}</span>{% endif %}
+                    {% if correspondent.phone %}<span class="badge text-bg-secondary fw-normal">{{ correspondent.phone }}</span>{% endif %}
                     {% if correspondent.address %}<span class="badge text-bg-secondary fw-normal" title="{{ correspondent.address }}">{{ correspondent.address|truncatechars:40 }}</span>{% endif %}
                     {% if correspondent.vat_id %}<span class="badge text-bg-secondary fw-normal">USt-IdNr. {{ correspondent.vat_id }}</span>{% endif %}
                     {% if correspondent.iban %}<span class="badge text-bg-secondary fw-normal">IBAN {{ correspondent.iban }}</span>{% endif %}

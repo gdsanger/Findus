@@ -421,6 +421,7 @@ register_source_namespace(
             SourceField("name", "Name", _correspondent_getter("name")),
             SourceField("address", "Adresse", _correspondent_getter("address")),
             SourceField("email", "E-Mail", _correspondent_getter("email")),
+            SourceField("phone", "Telefon", _correspondent_getter("phone")),
             SourceField("vat_id", "USt-IdNr.", _correspondent_getter("vat_id")),
             SourceField("tax_number", "Steuernummer", _correspondent_getter("tax_number")),
             SourceField("iban", "IBAN", _correspondent_getter("iban")),
