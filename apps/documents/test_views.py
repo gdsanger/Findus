@@ -998,7 +998,9 @@ class DocumentDetailViewTests(TestCase):
     def test_markdown_content_format_renders_tables_in_the_content_tab(self):
         """#1149: `content_format == "markdown"` (KI-Vision-Neuextraktion)
         rendert im "Inhalt"-Tab als echte HTML-Tabelle statt als rohen,
-        vorformatierten Markdown-Quelltext.
+        vorformatierten Markdown-Quelltext -- die sichtbare Darstellung,
+        nicht die unsichtbare Kopierquelle `#document-content-raw` (#1150),
+        die bewusst weiterhin den rohen Markdown-Text trägt.
         """
         self.doc.text_content = "| A | B |\n| --- | --- |\n| 1 | 2 |"
         self.doc.content_format = Document.ContentFormat.MARKDOWN
@@ -1006,15 +1008,21 @@ class DocumentDetailViewTests(TestCase):
 
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+        content = response.content.decode()
+        visible_markdown = content.split(
+            '<div class="findus-markdown findus-detail-content-markdown">'
+        )[1].split('<pre id="document-content-raw"')[0]
 
         self.assertContains(response, "<table>")
-        self.assertNotContains(response, "| A | B |")
+        self.assertNotIn("| A | B |", visible_markdown)
 
     def test_plain_text_content_format_still_renders_as_preformatted_text(self):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
-        self.assertContains(response, '<pre class="findus-detail-content-text">')
+        self.assertContains(
+            response, '<pre id="document-content-raw" class="findus-detail-content-text">'
+        )
         self.assertContains(response, "Betrag: 123 EUR")
 
     def test_markdown_content_is_never_truncated_in_the_content_tab(self):
@@ -1134,6 +1142,40 @@ class DocumentDetailViewTests(TestCase):
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         self.assertNotContains(response, "Vollständig anzeigen")
+
+    def test_content_tab_copy_button_references_raw_text_element(self):
+        """#1150: "Text kopieren" tat nichts, weil das Skript ausschließlich
+        `<pre>` durchsuchte -- bei Markdown-Inhalt (#1149) gibt es keins.
+        Der Knopf trägt jetzt `data-content-target` auf ein Element mit
+        genau dieser `id`, das den vollständigen Rohtext enthält.
+        """
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, 'data-content-target="document-content-raw"')
+        self.assertContains(response, 'id="document-content-raw"')
+        self.assertContains(response, "Betrag: 123 EUR")
+
+    def test_content_tab_copy_source_holds_raw_markdown_text(self):
+        """Bei `content_format == "markdown"` zeigt der Tab gerendertes HTML
+        (echte Tabelle) -- das Kopierziel muss trotzdem den rohen
+        Markdown-Text tragen, nicht den durch Rendering veränderten
+        sichtbaren Text (#1150).
+        """
+        self.doc.text_content = "| Feld | Wert |\n| --- | --- |\n| Betrag | 123 EUR |"
+        self.doc.content_format = Document.ContentFormat.MARKDOWN
+        self.doc.save(update_fields=["text_content", "content_format"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "<table>")
+        self.assertContains(
+            response,
+            '<pre id="document-content-raw" class="d-none">'
+            "| Feld | Wert |\n| --- | --- |\n| Betrag | 123 EUR |</pre>",
+            html=False,
+        )
 
     def test_tab_titles_show_counts_as_badges(self):
         DocumentComment.objects.create(

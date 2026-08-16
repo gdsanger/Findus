@@ -13,12 +13,20 @@ rendert statt des rohen `<pre>`-Texts -- der Strukturgewinn (echte
 Tabellen) muss auch beim Ansehen ankommen, nicht nur im Prompt. Für
 `text` bleibt es beim rohen `<pre>`: das ist weiterhin die schnellste
 Diagnose für eine verstümmelte Text-Layer-/OCR-Extraktion (#1142).
+
+`#document-content-raw` (#1150) trägt in beiden Fällen denselben Text roh
+und unformatiert -- Quelle für den "Text kopieren"-Knopf, der so nie vom
+gerenderten Markdown-HTML abhängt (dessen sichtbarer Text weicht vom
+Rohtext ab, z. B. bei Tabellen). Bei Markdown ist das ein zusätzliches,
+unsichtbares Element; beim rohen `<pre>`-Text ist es dasselbe Element wie
+die Anzeige, nur mit zusätzlicher `id`.
 {% endcomment %}
 <div id="document-content-body" data-truncated="{{ content_truncated|yesno:"true,false" }}">
     {% if document.content_format == "markdown" %}
     <div class="findus-markdown findus-detail-content-markdown">{{ content_text|render_markdown }}</div>
+    <pre id="document-content-raw" class="d-none">{{ content_text }}</pre>
     {% else %}
-    <pre class="findus-detail-content-text">{{ content_text }}</pre>
+    <pre id="document-content-raw" class="findus-detail-content-text">{{ content_text }}</pre>
     {% endif %}
     {% if content_truncated %}
     <button

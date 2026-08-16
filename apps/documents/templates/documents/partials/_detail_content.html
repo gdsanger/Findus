@@ -9,28 +9,44 @@ vollständige (ungekürzte) Fassung lädt bei Bedarf nach.
 {% endcomment %}
 {% if document.text_content %}
 <div class="findus-detail-content-header text-muted small">
-    <span>Extraktionsmethode: {{ document.get_extraction_method_display|default:"—" }}</span>
-    <span>Extrahiert am: {% if content_extracted_at %}{{ content_extracted_at|date:"d.m.Y H:i" }}{% else %}unbekannt{% endif %}</span>
-    <span>Zeichen: {{ content_char_count }}</span>
+    {% comment %}
+    Jede inhaltliche Zeile ist eine eigene Flex-Reihe (#1150): die
+    Kopfzeile stapelt per `flex-direction: column`, statt alle Zeilen in
+    einer einzigen `flex-wrap`-Reihe mit dem Knopf zusammenzuwerfen -- bei
+    langem Prüfhinweis-Text lag der Knopf sonst in derselben Zeile wie der
+    Hinweistext und beide drängten sich mit dem nachfolgenden Inhaltsbereich.
+    {% endcomment %}
+    <div class="findus-detail-content-header-row">
+        <span>Extraktionsmethode: {{ document.get_extraction_method_display|default:"—" }}</span>
+        <span>Extrahiert am: {% if content_extracted_at %}{{ content_extracted_at|date:"d.m.Y H:i" }}{% else %}unbekannt{% endif %}</span>
+        <span>Zeichen: {{ content_char_count }}</span>
+    </div>
     {% if document.vision_reextraction_completed_at %}
-    <span>
-        KI-Vision-Neuextraktion am {{ document.vision_reextraction_completed_at|date:"d.m.Y H:i" }}
-        ({{ document.vision_reextraction_pages_processed }}{% if document.vision_reextraction_pages_total %} von {{ document.vision_reextraction_pages_total }}{% endif %} Seite(n){% if document.vision_reextraction_truncated %}, Seitengrenze erreicht{% endif %}{% if document.vision_reextraction_pages_failed %}, {{ document.vision_reextraction_pages_failed }} Seite(n) technisch fehlgeschlagen{% endif %}){% if document.vision_reextraction_model %} – Modell {{ document.vision_reextraction_model }}{% if document.vision_reextraction_model_version %} ({{ document.vision_reextraction_model_version }}){% endif %}{% endif %}
-    </span>
+    <div class="findus-detail-content-header-row">
+        <span>
+            KI-Vision-Neuextraktion am {{ document.vision_reextraction_completed_at|date:"d.m.Y H:i" }}
+            ({{ document.vision_reextraction_pages_processed }}{% if document.vision_reextraction_pages_total %} von {{ document.vision_reextraction_pages_total }}{% endif %} Seite(n){% if document.vision_reextraction_truncated %}, Seitengrenze erreicht{% endif %}{% if document.vision_reextraction_pages_failed %}, {{ document.vision_reextraction_pages_failed }} Seite(n) technisch fehlgeschlagen{% endif %}){% if document.vision_reextraction_model %} – Modell {{ document.vision_reextraction_model }}{% if document.vision_reextraction_model_version %} ({{ document.vision_reextraction_model_version }}){% endif %}{% endif %}
+        </span>
+    </div>
     {% if document.vision_reextraction_number_check.performed %}
     {% with unmatched=document.vision_reextraction_number_check.unmatched %}
-    <span class="{% if unmatched %}text-warning{% endif %}">
-        {% if unmatched %}Prüfhinweis: {{ unmatched|length }} Zahl{{ unmatched|length|pluralize:"en" }} ohne Entsprechung im Text-Layer{% else %}Zahlen-Prüfung gegen Text-Layer: keine Abweichung{% endif %}
-    </span>
+    <div class="findus-detail-content-header-row">
+        <span class="{% if unmatched %}text-warning{% endif %}">
+            {% if unmatched %}Prüfhinweis: {{ unmatched|length }} Zahl{{ unmatched|length|pluralize:"en" }} ohne Entsprechung im Text-Layer{% else %}Zahlen-Prüfung gegen Text-Layer: keine Abweichung{% endif %}
+        </span>
+    </div>
     {% endwith %}
     {% endif %}
     {% endif %}
-    <button
-        type="button"
-        class="btn btn-sm btn-outline-secondary"
-        id="document-content-copy"
-        data-content-url="{% url 'documents:content_full' document.pk %}"
-    >Text kopieren</button>
+    <div class="findus-detail-content-header-row findus-detail-content-header-actions">
+        <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            id="document-content-copy"
+            data-content-url="{% url 'documents:content_full' document.pk %}"
+            data-content-target="document-content-raw"
+        >Text kopieren</button>
+    </div>
 </div>
 {% include "documents/partials/_detail_content_body.html" %}
 {% else %}
