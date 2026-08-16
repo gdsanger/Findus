@@ -297,6 +297,19 @@ class Document(TimeStampedModel, LongSummaryMixin):
         OCR = "ocr", "OCR"
         VISION = "vision", "Vision AI"
 
+    class ContentFormat(models.TextChoices):
+        """Ist `text_content` durchgängiger Text oder strukturerhaltendes
+        Markdown (#1149)? Bewusst getrennt von `ExtractionMethod`: dessen
+        `vision`-Wert kommt auch von der automatischen Kaskade
+        (`extraction._extract_page_via_cascade`), die weiterhin flachen
+        Text transkribiert -- nur die manuelle KI-Vision-Neuextraktion legt
+        echte Markdown-Tabellen an. Downstream-Code (Chunking, Anzeige)
+        muss beide Formen kennen, siehe CLAUDE.md.
+        """
+
+        TEXT = "text", "Text"
+        MARKDOWN = "markdown", "Markdown"
+
     class VisionReextractionStatus(models.TextChoices):
         """Eigenes Statusfeld fuer die manuelle KI-Vision-Neuextraktion
         (#1143) -- bewusst getrennt von `processing_status`: ein
@@ -550,6 +563,9 @@ class Document(TimeStampedModel, LongSummaryMixin):
     extraction_method = models.CharField(
         max_length=20, choices=ExtractionMethod.choices, blank=True
     )
+    content_format = models.CharField(
+        max_length=20, choices=ContentFormat.choices, default=ContentFormat.TEXT
+    )
     metadata = models.JSONField(default=dict, blank=True)
     processing_error = models.TextField(blank=True)
 
@@ -574,6 +590,40 @@ class Document(TimeStampedModel, LongSummaryMixin):
     vision_reextraction_pages_processed = models.PositiveIntegerField(null=True, blank=True)
     vision_reextraction_pages_total = models.PositiveIntegerField(null=True, blank=True)
     vision_reextraction_truncated = models.BooleanField(default=False)
+    # Wie viele der verarbeiteten Seiten technisch fehlgeschlagen sind (#1149,
+    # z. B. Provider-Timeout auf einer einzelnen Seite) -- getrennt von einer
+    # Seite, die das Modell selbst als "leer/unlesbar" transkribiert: Letzteres
+    # ist ein erfolgreiches Ergebnis, Ersteres ein Platzhalter, weil die Seite
+    # gar nicht erst beim Modell ankam/beantwortet wurde. Ein Fehlschlag auf
+    # *manchen* Seiten entwertet die anderen nicht (siehe
+    # `extraction.reextract_document_with_vision`); erst wenn jede Seite
+    # fehlschlägt, gilt der gesamte Lauf als gescheitert.
+    vision_reextraction_pages_failed = models.PositiveIntegerField(null=True, blank=True)
+    # Modell/-version des zuletzt erfolgreichen Laufs (#1149) -- anders als
+    # `Chunk.embedding_model`/`_version` gab es dafür bislang kein Feld, obwohl
+    # CLAUDE.md ("Hintergrundjobs mit LLM-Aufruf") Herkunft grundsätzlich
+    # verlangt. Kommt aus der `VisionResult` der ersten erfolgreichen Seite
+    # dieses Laufs, nicht aus der Konfiguration -- so bleibt es auch dann
+    # korrekt, wenn ein Provider ein von der Konfiguration abweichendes Modell
+    # zurückmeldet.
+    vision_reextraction_model = models.CharField(max_length=100, blank=True)
+    vision_reextraction_model_version = models.CharField(max_length=100, blank=True)
+    # Idempotenz-Merker (#1149): `sha256` der Originaldatei plus
+    # `extraction._VISION_MARKDOWN_PROMPT_VERSION`, zusammen der einzige
+    # Vergleichswert, der einen erneuten Klick ohne inhaltliche Änderung
+    # kostenlos macht (kein Modellaufruf). Bewusst OHNE das verwendete Modell
+    # -- eine reine Konfigurationsänderung (Modellwechsel) soll nicht
+    # automatisch den ganzen Bestand neu durch Vision schicken, dafür gibt es
+    # den expliziten "erneut ausführen"-Weg (`force=True`). Wird NUR nach
+    # einem vollständigen Erfolg gesetzt (keine Seitengrenze erreicht, keine
+    # Seite technisch fehlgeschlagen) -- ein unvollständiger Lauf bleibt sonst
+    # ohne `force` unwiederholbar, weil er sich selbst als "aktuell" ausgibt.
+    vision_reextraction_fingerprint = models.CharField(max_length=140, blank=True)
+    # Zahlen-Gegenprobe (#1149) gegen den PDF-Text-Layer, wo vorhanden:
+    # `performed=False` heißt "kein brauchbarer Text-Layer, Prüfung
+    # entfällt", nicht "keine Abweichung gefunden" -- die beiden Fälle sehen
+    # in der UI sonst gleich aus. Siehe `apps.documents.number_crosscheck`.
+    vision_reextraction_number_check = models.JSONField(default=dict, blank=True)
 
     # KI-Analyse (#1020, apps.documents.analysis): lesbare Kurz-Zusammenfassung
     # plus strukturierte Key-Facts (Absender/Datum/Typ/Betrag/Frist, jeweils
