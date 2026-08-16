@@ -12,6 +12,12 @@ vollständige (ungekürzte) Fassung lädt bei Bedarf nach.
     <span>Extraktionsmethode: {{ document.get_extraction_method_display|default:"—" }}</span>
     <span>Extrahiert am: {% if content_extracted_at %}{{ content_extracted_at|date:"d.m.Y H:i" }}{% else %}unbekannt{% endif %}</span>
     <span>Zeichen: {{ content_char_count }}</span>
+    {% if document.vision_reextraction_completed_at %}
+    <span>
+        KI-Vision-Neuextraktion am {{ document.vision_reextraction_completed_at|date:"d.m.Y H:i" }}
+        ({{ document.vision_reextraction_pages_processed }}{% if document.vision_reextraction_pages_total %} von {{ document.vision_reextraction_pages_total }}{% endif %} Seite(n){% if document.vision_reextraction_truncated %}, Seitengrenze erreicht{% endif %})
+    </span>
+    {% endif %}
     <button
         type="button"
         class="btn btn-sm btn-outline-secondary"

@@ -23,13 +23,15 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 from django.conf import settings
 from django.utils import timezone
+from django_q.exceptions import TimeoutException
 
-from apps.ai.providers import ImageInput, VisionProvider, get_vision_provider
+from apps.ai.providers import ImageInput, Usage, VisionProvider, capture_usage, get_vision_provider
 
 from .mime import resolve_mime_type
 from .models import Document
@@ -98,10 +100,15 @@ def _ocr_image(image) -> _OcrOutput:
     return _OcrOutput(text=" ".join(words), confidence=confidence)
 
 
-def _render_pdf_page(data: bytes, page_number: int):
+def _render_pdf_page(data: bytes, page_number: int, *, dpi: Optional[int] = None):
     """Rasterize one 1-based PDF page to a Pillow image via poppler (the
     `pdftoppm`/`pdftocairo` binaries pdf2image wraps) -- both the OCR and
     vision stages need pixels, not the PDF's internal text layer.
+
+    `dpi` defaults to the cascade's own (deliberately low) setting; the
+    manual vision re-extraction (#1143) passes its own, higher value --
+    that DPI is chosen for a single last-resort description, not for
+    reading dense text reliably.
     """
     from pdf2image import convert_from_bytes
 
@@ -109,7 +116,7 @@ def _render_pdf_page(data: bytes, page_number: int):
         data,
         first_page=page_number,
         last_page=page_number,
-        dpi=settings.FINDUS_EXTRACTION_PDF_RENDER_DPI,
+        dpi=dpi or settings.FINDUS_EXTRACTION_PDF_RENDER_DPI,
     )
     return images[0]
 
@@ -353,12 +360,29 @@ def extract_document(
             # spaetere Analyse/Einbettung das Dokument erneut speichert.
             "extracted_at": timezone.now().isoformat(),
         }
+        # Ein regulaerer (Re-)Extract ersetzt `text_content` unabhaengig
+        # von einer frueheren manuellen KI-Vision-Neuextraktion (#1143) --
+        # deren Provenienz-Felder muessen mit zurueckgesetzt werden, sonst
+        # behauptet der "Inhalt"-Tab weiterhin einen Vision-Lauf fuer Text,
+        # der laengst wieder ueberschrieben wurde.
+        document.vision_reextraction_status = Document.VisionReextractionStatus.NONE
+        document.vision_reextraction_error = ""
+        document.vision_reextraction_completed_at = None
+        document.vision_reextraction_pages_processed = None
+        document.vision_reextraction_pages_total = None
+        document.vision_reextraction_truncated = False
         document.save(
             update_fields=[
                 "text_content",
                 "markdown",
                 "extraction_method",
                 "metadata",
+                "vision_reextraction_status",
+                "vision_reextraction_error",
+                "vision_reextraction_completed_at",
+                "vision_reextraction_pages_processed",
+                "vision_reextraction_pages_total",
+                "vision_reextraction_truncated",
                 "updated_at",
             ]
         )
@@ -368,5 +392,229 @@ def extract_document(
         document.processing_error = str(exc)
         document.save(update_fields=["processing_status", "processing_error", "updated_at"])
         raise
+
+    return document
+
+
+# -- Manuelle KI-Vision-Neuextraktion (#1143) --------------------------------
+#
+# Anders als die automatische Kaskade oben eskaliert dieser Weg NICHT je
+# Seite (Text-Layer -> OCR -> Vision) -- er erzwingt Vision fuer jede Seite,
+# unabhaengig davon, ob eine billigere Stufe ausgereicht haette. Gedacht als
+# bewusst ausgeloester zweiter Anlauf fuer Dokumente, bei denen Text-Layer/
+# OCR bereits verstuemmelten oder unvollstaendigen Text geliefert haben --
+# teurer und langsamer, deshalb nie automatisch (siehe CLAUDE.md).
+
+
+def _page_count_for_vision(data: bytes, mime_type: str) -> int:
+    if mime_type == _PDF_MIME:
+        from pypdf import PdfReader
+
+        return len(PdfReader(io.BytesIO(data)).pages)
+    return 1
+
+
+def _render_page_for_vision(data: bytes, mime_type: str, page_number: int):
+    if mime_type == _PDF_MIME:
+        return _render_pdf_page(
+            data, page_number, dpi=settings.FINDUS_VISION_REEXTRACT_PDF_RENDER_DPI
+        )
+    from PIL import Image
+
+    return Image.open(io.BytesIO(data))
+
+
+def start_vision_reextraction(document: Document) -> None:
+    """Markiert das Dokument synchron als `running` (analog
+    `long_summary.start_document_long_summary`), damit die UI ab dem Klick
+    den Spinner zeigt statt bis zum Anlaufen des Workers noch den alten
+    Stand zu behaupten. `text_content` bleibt dabei unangetastet -- er ist
+    bis zu einem erfolgreichen Ergebnis weiterhin die beste verfuegbare
+    Auskunft.
+    """
+    document.vision_reextraction_status = Document.VisionReextractionStatus.RUNNING
+    document.vision_reextraction_error = ""
+    document.vision_reextraction_run_started_at = timezone.now()
+    document.save(
+        update_fields=[
+            "vision_reextraction_status",
+            "vision_reextraction_error",
+            "vision_reextraction_run_started_at",
+        ]
+    )
+
+
+def expire_vision_reextraction_if_stalled(document: Document) -> None:
+    """Netz gegen einen Job, der spurlos verschwindet (Worker-Neustart,
+    OOM-Kill), bevor `reextract_document_with_vision()` den eigenen
+    except-Block *oder* der Django-Q-`hook`
+    (`tasks.reextract_document_with_vision_hook`) erreicht -- dasselbe
+    Prinzip wie `long_summary.expire_document_long_summary_if_stalled`.
+    """
+    if document.vision_reextraction_status != Document.VisionReextractionStatus.RUNNING:
+        return
+    started = document.vision_reextraction_run_started_at
+    if started is None:
+        return
+    age_seconds = (timezone.now() - started).total_seconds()
+    if age_seconds < settings.FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS:
+        return
+    document.vision_reextraction_status = Document.VisionReextractionStatus.FAILED
+    document.vision_reextraction_error = (
+        "Der Hintergrundjob hat sich nicht zurückgemeldet (Zeitüberschreitung "
+        "beim Warten auf ein Ergebnis)."
+    )
+    document.save(update_fields=["vision_reextraction_status", "vision_reextraction_error"])
+
+
+def reextract_document_with_vision(
+    document_id: int, *, vision_provider: Optional[VisionProvider] = None
+) -> Document:
+    """Erzwingt die Vision-Stufe fuer jede Seite von `document.original_file`
+    (#1143) und ersetzt `text_content`/`markdown`/`extraction_method` bei
+    Erfolg -- ein bewusst ausgeloester, kostenpflichtiger zweiter Anlauf,
+    keine automatische Eskalation.
+
+    Anders als `extract_document()` legt ein Fehlschlag hier NICHT
+    `processing_status` auf `failed` und ruehrt `text_content` nicht an:
+    das Dokument war vor dem Klick auf diesen Button bereits fertig
+    verarbeitet (sonst waere der Button nicht sichtbar, siehe
+    `Document.supports_vision_reextraction`), ein Fehlschlag des
+    Zusatzlaufs darf es nicht schlechter dastehen lassen als vorher.
+    Terminaler Fehlerfall ist deshalb das eigene
+    `vision_reextraction_status`-Feld -- genau die in CLAUDE.md
+    ("Hintergrundjobs mit LLM-Aufruf") verlangte Wiederverwendung eines
+    vorhandenen Statusfelds, nur eben des dediziert dafuer angelegten,
+    nicht der Pipeline-weiten `processing_status`.
+
+    `TimeoutException` (Django-Q, erbt von `SystemExit`) wird aufgezeichnet,
+    dann aber weitergereicht, damit Django-Q den Worker-Prozess neu
+    startet -- exakt wie bei `long_summary.generate_document_long_summary`.
+    Jeder andere Fehler wird aufgezeichnet, aber NICHT weitergereicht: der
+    Nutzer hat auf einen Knopf gedrueckt und erwartet eine sichtbare
+    Antwort, kein stillschweigend fehlgeschlagener Task.
+    """
+    document = Document.objects.get(pk=document_id)
+
+    started = time.monotonic()
+    usages: list[Usage] = []
+    pages_processed = 0
+    pages_total = 0
+    try:
+        document.original_file.open("rb")
+        try:
+            data = document.original_file.read()
+        finally:
+            document.original_file.close()
+
+        mime_type = resolve_mime_type(
+            data,
+            filename=document.original_filename,
+            declared=document.metadata.get("mime_type", ""),
+        )
+        if mime_type != _PDF_MIME and not mime_type.startswith("image/"):
+            raise ValueError(
+                f"KI-Vision-Neuextraktion: nicht unterstuetzter Dateityp "
+                f"'{mime_type}'. Unterstuetzt werden PDF und Bilder."
+            )
+
+        pages_total = _page_count_for_vision(data, mime_type)
+        max_pages = settings.FINDUS_VISION_REEXTRACT_MAX_PAGES
+        pages_to_process = min(pages_total, max_pages)
+        truncated = pages_total > max_pages
+
+        provider_factory: VisionProviderFactory = (
+            (lambda: vision_provider) if vision_provider is not None else get_vision_provider
+        )
+
+        page_texts: list[str] = []
+        with capture_usage() as usages:
+            active_provider = provider_factory()
+            for page_number in range(1, pages_to_process + 1):
+                image = _render_page_for_vision(data, mime_type, page_number)
+                text = _describe_with_vision(active_provider, _image_to_png_bytes(image))
+                page_texts.append(text.strip())
+                pages_processed += 1
+
+        if len(page_texts) > 1:
+            # Seitengrenzen bleiben im Fliesstext kenntlich (#1143), damit
+            # Absaetze nicht ueber Seiten hinweg verkleben -- anders als
+            # `build_markdown()`s "## Seite N"-Ueberschriften, die nur fuer
+            # die Markdown-Ansicht gedacht sind, nicht fuer `text_content`.
+            text_content = "\n\n".join(
+                f"--- Seite {index} ---\n\n{text}" for index, text in enumerate(page_texts, start=1)
+            )
+        else:
+            text_content = page_texts[0] if page_texts else ""
+
+        document.text_content = clean_text(text_content.strip())
+        document.markdown = clean_text(build_markdown(document.title, page_texts))
+        document.extraction_method = Document.ExtractionMethod.VISION
+        document.metadata = {
+            **document.metadata,
+            "mime_type": mime_type,
+            "language": _detect_language(document.text_content),
+            "page_count": pages_total,
+            "extracted_at": timezone.now().isoformat(),
+        }
+        document.vision_reextraction_status = Document.VisionReextractionStatus.READY
+        document.vision_reextraction_error = ""
+        document.vision_reextraction_completed_at = timezone.now()
+        document.vision_reextraction_pages_processed = pages_processed
+        document.vision_reextraction_pages_total = pages_total
+        document.vision_reextraction_truncated = truncated
+        document.save(
+            update_fields=[
+                "text_content",
+                "markdown",
+                "extraction_method",
+                "metadata",
+                "vision_reextraction_status",
+                "vision_reextraction_error",
+                "vision_reextraction_completed_at",
+                "vision_reextraction_pages_processed",
+                "vision_reextraction_pages_total",
+                "vision_reextraction_truncated",
+                "updated_at",
+            ]
+        )
+    except TimeoutException:
+        logger.exception(
+            "KI-Vision-Neuextraktion fuer Document %s: Task-Zeitbudget "
+            "aufgebraucht, waehrend noch auf die KI-Antwort gewartet wurde",
+            document_id,
+        )
+        document.vision_reextraction_status = Document.VisionReextractionStatus.FAILED
+        document.vision_reextraction_error = (
+            "Zeitüberschreitung – die KI-Antwort kam nicht rechtzeitig zurück. "
+            "Bitte erneut versuchen."
+        )
+        document.save(
+            update_fields=["vision_reextraction_status", "vision_reextraction_error"]
+        )
+        raise
+    except Exception as exc:
+        logger.exception("KI-Vision-Neuextraktion fehlgeschlagen fuer Document %s", document_id)
+        document.vision_reextraction_status = Document.VisionReextractionStatus.FAILED
+        document.vision_reextraction_error = str(exc)
+        document.save(
+            update_fields=["vision_reextraction_status", "vision_reextraction_error"]
+        )
+    finally:
+        duration_seconds = time.monotonic() - started
+        prompt_tokens = sum(usage.prompt_tokens for usage in usages)
+        completion_tokens = sum(usage.completion_tokens for usage in usages)
+        image_tokens = sum(usage.image_tokens for usage in usages)
+        logger.info(
+            "KI-Vision-Neuextraktion fuer Document %s: %.1fs Laufzeit, %s/%s "
+            "Seiten verarbeitet, %s Prompt-/%s Completion-/%s Bild-Tokens",
+            document_id,
+            duration_seconds,
+            pages_processed,
+            pages_total,
+            prompt_tokens,
+            completion_tokens,
+            image_tokens,
+        )
 
     return document

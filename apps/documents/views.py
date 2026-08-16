@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import DateField, Exists, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, TruncDate
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
@@ -18,6 +18,7 @@ from apps.ingest.service import ingest_eml_file, ingest_file, sniff_mime_type
 from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
 from .document_dates import MANUAL_SOURCE as MANUAL_DATE_SOURCE
+from .extraction import expire_vision_reextraction_if_stalled, start_vision_reextraction
 from .long_summary import (
     document_long_summary_is_stale,
     expire_document_long_summary_if_stalled,
@@ -1307,7 +1308,18 @@ def document_action_status_toggle(request, pk):
 
 
 def _analysis_status_context(document):
-    return {"document": document, "pending_statuses": PENDING_STATUSES}
+    """Kontext des Panels "Analyse erneut ausfuehren"/"Neu verarbeiten"/"Mit
+    KI-Vision neu extrahieren" -- prueft nebenbei auf einen
+    haengengebliebenen Vision-Neuextraktions-Job (#1143, analog
+    `_long_summary_context`/`expire_document_long_summary_if_stalled`),
+    bevor das Panel gerendert wird.
+    """
+    expire_vision_reextraction_if_stalled(document)
+    return {
+        "document": document,
+        "pending_statuses": PENDING_STATUSES,
+        "vision_reextract_page_limit": settings.FINDUS_VISION_REEXTRACT_MAX_PAGES,
+    }
 
 
 def _long_summary_context(document):
@@ -1376,13 +1388,14 @@ def document_long_summary_generate(request, pk):
 @login_required
 def document_analysis_status(request, pk):
     """Poll target for the detail page's "Analyse erneut ausfuehren"/"Neu
-    verarbeiten" controls (#1063): while `processing_status` is still
-    pending, the swapped-in partial keeps polling itself via
-    `hx-trigger="every ...s"`. Once a poll observes a terminal status, it
-    sends `HX-Refresh` instead of just re-rendering the small status
-    fragment, so the rest of the page (summary, key facts, suggestions)
-    catches up too -- reusing the full-page render rather than
-    duplicating every affected partial's logic here.
+    verarbeiten"/"Mit KI-Vision neu extrahieren" controls (#1063, #1143):
+    while `processing_status` is still pending, or the vision
+    re-extraction is `running`, the swapped-in partial keeps polling
+    itself via `hx-trigger="every ...s"`. Once a poll observes both are
+    terminal, it sends `HX-Refresh` instead of just re-rendering the small
+    status fragment, so the rest of the page (summary, key facts,
+    suggestions, the "Inhalt" tab) catches up too -- reusing the full-page
+    render rather than duplicating every affected partial's logic here.
     """
     document = _visible_document(request.user, pk)
     response = render(
@@ -1390,7 +1403,10 @@ def document_analysis_status(request, pk):
         "documents/partials/_detail_analysis_status.html",
         _analysis_status_context(document),
     )
-    if document.processing_status not in PENDING_STATUSES:
+    still_pending = (
+        document.processing_status in PENDING_STATUSES or document.vision_reextraction_is_running
+    )
+    if not still_pending:
         response["HX-Refresh"] = "true"
     return response
 
@@ -1448,6 +1464,54 @@ def document_reprocess(request, pk):
     from .tasks import extract_document_task
 
     async_task(extract_document_task, document.id)
+
+    return render(
+        request,
+        "documents/partials/_detail_analysis_status.html",
+        _analysis_status_context(document),
+    )
+
+
+@login_required
+@require_POST
+def document_vision_reextract(request, pk):
+    """Loest die manuelle KI-Vision-Neuextraktion aus (#1143) -- Text-Layer/
+    OCR liefern bei manchen Vorlagen (schlechte Scans, Handschrift,
+    mehrspaltige Layouts) unvollstaendigen oder verstuemmelten Text; ein
+    bildfaehiges Modell liest solche Seiten oft zuverlaessiger. Bewusst
+    ausgeloest statt automatisch -- teurer und langsamer als die normale
+    Kaskade (CLAUDE.md, "KI-Funktionen").
+
+    `Document.supports_vision_reextraction` gated denselben Formatkreis wie
+    der Button im Template (nur PDF/Bild); ein direkter POST auf ein
+    anderes Format bekommt trotzdem eine klare Antwort statt eines 404,
+    das faelschlich "Dokument existiert nicht" suggerieren wuerde --
+    anders als eine fehlende Sichtbarkeit, die *soll* wie "existiert nicht"
+    aussehen (`_visible_document`).
+
+    `vision_reextraction_status` flippt synchron auf `running`
+    (`start_vision_reextraction`), damit die UI ab dem Klick den Spinner
+    zeigt -- der bisherige Text bleibt bis zu einem erfolgreichen Ergebnis
+    unangetastet.
+    """
+    document = _visible_document(request.user, pk)
+    if not document.supports_vision_reextraction:
+        return HttpResponseBadRequest(
+            "KI-Vision-Neuextraktion ist fuer dieses Dateiformat nicht verfuegbar."
+        )
+
+    start_vision_reextraction(document)
+
+    from django_q.tasks import async_task
+
+    from .tasks import reextract_document_with_vision_hook, reextract_document_with_vision_task
+
+    async_task(
+        reextract_document_with_vision_task,
+        document.id,
+        timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
+        hook=reextract_document_with_vision_hook,
+    )
 
     return render(
         request,

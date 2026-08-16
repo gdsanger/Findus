@@ -1,7 +1,7 @@
 from django.utils import timezone
 
 from .analysis import analyze_document
-from .extraction import extract_document
+from .extraction import extract_document, reextract_document_with_vision
 from .letter_generation import generate_letter_draft
 from .long_summary import generate_document_long_summary, generate_vorgang_long_summary
 from .processing import process_document
@@ -221,4 +221,54 @@ def generate_vorgang_long_summary_hook(task):
     ).update(
         long_summary_status=Vorgang.LongSummaryStatus.FAILED,
         long_summary_error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
+    )
+
+
+def reextract_document_with_vision_task(document_id):
+    """Django-Q2 worker entry point fuer die manuelle KI-Vision-
+    Neuextraktion (#1143) -- nur auf Knopfdruck vom Detail aus, nie von der
+    Ingest-Pipeline.
+
+    `reextract_document_with_vision()` zeichnet einen gewoehnlichen
+    Provider-/Parsing-Fehler selbst als `vision_reextraction_status="failed"`
+    + `vision_reextraction_error` auf und wirft dafuer nicht -- reicht aber
+    eine Django-Q-`TimeoutException` weiter, damit Django-Q den Worker-
+    Prozess neu startet. Dieselbe Aufgabenteilung wie
+    `generate_document_long_summary_task`.
+
+    Nur bei Erfolg wird `analyze_document_task` angestossen (das seinerseits
+    `process_document_task` anschliesst, siehe `extract_document_task`) --
+    sonst durchsucht Findus weiterhin den alten Text, und Zusammenfassung/
+    Key-Facts blieben die alten, obwohl sich `text_content` gar nicht
+    geaendert hat.
+    """
+    document = reextract_document_with_vision(document_id)
+    if document.vision_reextraction_status != document.VisionReextractionStatus.READY:
+        return
+
+    from django_q.tasks import async_task
+
+    async_task(analyze_document_task, document_id)
+
+
+def reextract_document_with_vision_hook(task):
+    """Sicherheitsnetz fuer `reextract_document_with_vision_task`, analog
+    `generate_document_long_summary_hook`: faengt einen Worker ab, der
+    abstuerzt, bevor der eigene except-Block im Modul den Fehler noch
+    aufzeichnen konnte.
+    """
+    if task.success:
+        return
+
+    from .models import Document
+
+    document_id = task.args[0] if task.args else None
+    if document_id is None:
+        return
+
+    Document.objects.filter(
+        pk=document_id, vision_reextraction_status=Document.VisionReextractionStatus.RUNNING
+    ).update(
+        vision_reextraction_status=Document.VisionReextractionStatus.FAILED,
+        vision_reextraction_error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
     )
