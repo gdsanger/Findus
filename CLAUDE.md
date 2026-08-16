@@ -127,42 +127,85 @@ Upload-Tag) als Dokumentdatum trugen und damit die Timeline entwerteten.
   verworfen: Diese Rolle übernimmt der MCP-Endpunkt mit dem KI-Client des
   Nutzers. Kein zweiter Dialogkanal innerhalb der App.
 
-### Manuelle KI-Vision-Neuextraktion
+### KI-Vision-Extraktion nach Markdown
 
-Zweiter Anlauf für Dokumente, bei denen Text-Layer/OCR bereits
-unvollständigen oder verstümmelten Text geliefert haben — bewusst
-ausgelöst, nie automatisch, weil er teurer und langsamer ist als die
-normale Kaskade (`apps.documents.extraction`).
+Anlauf für Dokumente, bei denen Text-Layer/OCR unvollständigen oder
+verstümmelten Text geliefert haben — teurer und langsamer als die normale
+Kaskade (`apps.documents.extraction`), deshalb entweder auf Knopfdruck oder
+nur so weit automatisch, wie es ausdrücklich konfiguriert ist. **Ein** Lauf,
+zwei Auslöser; zwei Kopien liefen bei der ersten Prompt-Änderung
+auseinander.
 
+- **Das Ergebnis ist strukturerhaltendes Markdown, nicht Fließtext.** Genau
+  deshalb lohnt der Lauf: zeilenweise OCR zerreißt eine Tabelle in
+  entkoppelte Spaltenlisten („Wert X gehört zu Zeile Y" ist weg), ein
+  Vision-Modell sieht die Seite zweidimensional und kann eine
+  Markdown-Tabelle daraus machen. Der **Ausgabekontrakt** (Tabellen als
+  Tabellen, Handschrift in einem eigenen Abschnitt, Unsicheres markiert
+  statt geraten, leere/unlesbare Seiten ausgewiesen statt halluziniert,
+  keinerlei Kommentar oder Deutung) steht in
+  `apps.documents.vision_markdown` — ein Modul für den Kontrakt, nicht
+  verstreut über Prompt-Strings im Lauf. Das Markdown landet in
+  `markdown` **und** `text_content`: Struktur, die es nicht in die Chunks
+  schafft, hilft dem Retrieval nicht.
+- **Datenschutz ist eine Einstellung, kein Nebeneffekt des Uploads.**
+  `FINDUS_VISION_MARKDOWN_AUTO_SCOPE` (`off`/`scans`/`all`) entscheidet,
+  welche Anhänge *automatisch* an den Provider gehen; Default ist `off`,
+  und jeder unbekannte oder fehlende Wert wirkt wie `off`. Bewusst **keine**
+  Steuerung je Vorgang: ein Dokument hängt an beliebig vielen Vorgängen,
+  zwei davon könnten „darf das raus?" verschieden beantworten. Knopf und
+  Management-Command sind die Einzelfall-Entscheidung eines Menschen und
+  richten sich deshalb nicht nach diesem Schalter.
+- **Idempotent über einen Fingerabdruck** (`sha256` + Prompt-Version, in
+  `vision_reextraction_fingerprint`): dieselbe unveränderte Datei löst nie
+  einen zweiten Modellaufruf aus. Gesetzt wird er nur nach einem
+  vollständigen Erfolg — ein Fehlschlag oder ein an der Seitengrenze
+  abgeschnittener Lauf bleibt wiederholbar. Ein Modellwechsel invalidiert
+  ihn *nicht*: das wäre ein ungefragter Neulauf über den ganzen Bestand bei
+  der nächsten Konfigurationsänderung; dafür gibt es `--force`.
+- **Eine ausgefallene Seite entwertet die anderen nicht.** Sie bleibt als
+  benannter Platzhalter an ihrer Stelle stehen (sonst verschiebt sich die
+  Seitenzählung); erst wenn *keine* Seite durchkommt, gilt der Lauf als
+  fehlgeschlagen und `text_content` bleibt unangetastet.
 - **Eigenes Statusfeld** (`Document.vision_reextraction_status`), nicht
-  `processing_status`. Das Dokument war vor dem Klick bereits fertig
+  `processing_status`. Beim Knopf war das Dokument vorher bereits fertig
   verarbeitet (sonst wäre der Button gar nicht sichtbar); ein Fehlschlag
   des Zusatzlaufs darf es nicht als `failed` erscheinen lassen und rührt
   `text_content` nicht an — der bisherige Text bleibt bis zu einem
   erfolgreichen Ergebnis stehen. Damit ist dies **kein** dritter Ort, der
   die Pipeline auf `failed` stellen darf (Abschnitt „Pipelines &
-  Services") — der Lauf steht außerhalb der Pipeline.
+  Services") — der Lauf steht außerhalb der Pipeline, auch wenn die
+  Automatik ihn mitten in sie hineinstellt.
 - Erzwingt Vision für **jede** Seite, statt wie die automatische Kaskade
   nur bei Bedarf zu eskalieren — genau dafür wird er ja ausgelöst. Mehrere
   Seiten laufen als getrennte `describe_image()`-Aufrufe (die
   Provider-Schicht kennt keinen Mehrbild-Call); die Seiten werden im
   Klartext mit `--- Seite N ---` getrennt, damit Absätze nicht
   zusammenlaufen.
-- Bei Erfolg wird automatisch `analyze_document_task` angestoßen (das
+- Nach dem **Knopf** wird bei Erfolg `analyze_document_task` angestoßen (das
   seinerseits `process_document_task` anschließt) — sonst durchsucht
   Findus weiterhin den alten Text. Bleibt der Lauf ohne Ergebnis, läuft
   auch nichts nach; das schützt zugleich ein manuell gesetztes
   Dokumentdatum, weil dessen „einmal befüllen, nie ungefragt
   überschreiben"-Schutz ohnehin nur in der Analyse greift, die dann gar
   nicht erst läuft.
+- Die **Automatik** läuft dagegen *vor* der Analyse und reicht immer weiter,
+  auch nach einem Fehlschlag: sie steht mitten in der Ingest-Pipeline, ein
+  misslungener Zusatzlauf darf ein Dokument nicht unindiziert liegen lassen.
+  Sie ist ein **eigener Task** mit eigenem, großzügigem Timeout — nicht
+  inline in `extract_document_task`, dessen knapper Cluster-Default einen
+  hängenden Ingest weiterhin schnell auffallen lassen soll. Und sie läuft
+  vor der Analyse, nicht nach der fertigen Pipeline, sonst liefen Analyse
+  und Embedding zweimal.
 - Ein regulärer Reprocess (`extract_document()`) setzt die
-  `vision_reextraction_*`-Provenienzfelder zurück, sobald er
-  `text_content` neu schreibt — sonst würde der „Inhalt"-Tab einen
-  Vision-Lauf behaupten, dessen Text längst überschrieben ist.
+  `vision_reextraction_*`-Provenienzfelder **samt Fingerabdruck** zurück,
+  sobald er `text_content` neu schreibt — sonst würde der „Inhalt"-Tab einen
+  Vision-Lauf behaupten, dessen Text längst überschrieben ist, und die
+  Automatik hielte die überschriebene Markdown-Fassung für aktuell.
 - Seitenobergrenze und Rendering-Auflösung sind eigene Einstellungen
   (`FINDUS_VISION_REEXTRACT_MAX_PAGES`/`_PDF_RENDER_DPI`), unabhängig von
-  der Kaskade — deren DPI ist bewusst niedrig und reicht für die manuelle
-  Neuextraktion nicht.
+  der Kaskade — deren DPI ist bewusst niedrig und reicht für diesen Lauf
+  nicht.
 
 ### Schreiben sind immer eine Antwort auf ein Dokument
 
