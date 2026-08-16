@@ -131,6 +131,33 @@ Funktion.
     nicht in allen Vorgängen des Bezugsdokuments. Die Richtung der Aussage
     steckt in den beiden Dokumenten, nicht im Link: `DocumentLink` ist und
     bleibt ungerichtet (siehe dort).
+- **Das Dokumentdatum wählt der Code, nicht das Modell** (#1141). Die
+  Analyse fragt eine *Liste* typisierter Datumsangaben ab (`dates`:
+  `belegdatum`/`zeitraum_beginn`/`zeitraum_ende`/`briefkopf`/`erstellt`);
+  welche davon `Document.document_date` wird, entscheidet
+  `apps.documents.document_dates` nach fester Rangfolge — Belegdatum vor
+  Zeitraum-Ende vor Briefkopf vor Erstell-/Druckdatum. Wer die Auswahl
+  zurück in den Prompt verlagert, macht sie von der Tagesform des jeweiligen
+  Modells abhängig; Anlass waren 40 Kontoauszüge, die alle das „Erstellt am"
+  aus dem Fuß (= den Upload-Tag) trugen und damit die Timeline entwerteten.
+  - `zeitraum_beginn` steht **nicht** in der Rangfolge: ein Zeitraum datiert
+    auf sein Ende. Beide Grenzen landen trotzdem als Key-Facts
+    (`period_start`/`period_end`) — aus derselben `dates`-Liste abgeleitet,
+    nicht als zweites Antwortfeld, sonst gäbe es zwei Wege zum selben Wert.
+  - Die Plausibilitätsprüfung gegen den Upload-Tag gehört in den Code, nicht
+    in den Prompt: sie braucht das Upload-Datum, das dem Modell gar nicht
+    vorliegt. Sie nimmt bewusst in Kauf, dass ein am selben Tag
+    eingescannter Beleg mit Zeitraum auf dessen Ende umgebogen wird — bei
+    einem Archiv ist „datiert ausgerechnet heute" die Ausnahme.
+  - `metadata["document_date_source"]` ist Herkunftsvermerk **und**
+    Schreibschutz in einem: die Analyse überschreibt nur, was sie selbst
+    gesetzt hat. `"manuell"` (von `document_meta` gesetzt) und ein Datum
+    ganz ohne Vermerk (EML-`Date`-Header, Bestand) bleiben unangetastet —
+    ein Wartungslauf darf keine Handkorrektur einkassieren. Genau deshalb
+    stempelt die Migration `0035` nur dort, wo `document_date` dem von der
+    KI abgelegten `key_facts["document_date"]` exakt entspricht.
+  - Abgesichert in `apps/documents/test_contracts.py`
+    (`DocumentDateIsChosenByCodeNotByTheModelTests`).
 - KI-Analyse (`analysis.analyze_document`) und Thumbnail-Rendering
   (`thumbnails.generate_thumbnail_for_document`) sind **fehlertolerant**: Ein
   Fehlschlag loggt und läuft weiter (Fehler landet in `metadata["analysis_

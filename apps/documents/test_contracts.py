@@ -10,6 +10,7 @@ aendert `CLAUDE.md` im selben PR (siehe dort, "Pflegeregel").
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import tempfile
@@ -611,6 +612,64 @@ class ActionStatusToggleTargetsExistTests(TestCase):
             "Zwei Wiedervorlagen desselben Dokuments teilen sich denselben "
             "hx-target -- ein Klick traefe damit den falschen Eintrag.",
         )
+
+
+class DocumentDateIsChosenByCodeNotByTheModelTests(TestCase):
+    """Welche der gefundenen Datumsangaben das Dokumentdatum wird, entscheidet
+
+    der Code nach fester Rangfolge (#1141) -- nicht das Modell. Wer die
+    Auswahl zurueck in den Prompt verlagert (etwa indem `document_date` aus
+    der Antwort wieder direkt uebernommen wird), macht die Entscheidung von
+    der Tagesform des jeweiligen Modells abhaengig und dieses Ticket
+    rueckgaengig. Der Test stellt dazu genau den Widerspruch her, um den es
+    ging: das Modell nennt das Abrufdatum als Dokumentdatum, die typisierte
+    Liste nennt den Abrechnungszeitraum.
+    """
+
+    def _analyze(self, reply, **document_kwargs):
+        document = Document.objects.create(
+            title="auszug.pdf", text_content="Kontoauszug", **document_kwargs
+        )
+        provider = FakeGenerationProvider(
+            model="fake-generate", version="1", reply=json.dumps(reply)
+        )
+        return analyze_document(document.id, generation_provider=provider)
+
+    def test_typed_period_beats_the_models_own_document_date(self):
+        result = self._analyze(
+            {
+                "title": "Kontoauszug 11/2023",
+                "summary": "",
+                "key_facts": {"document_date": "2026-08-15"},
+                "dates": [
+                    {"kind": "zeitraum_beginn", "value": "2023-11-01"},
+                    {"kind": "zeitraum_ende", "value": "2023-11-30"},
+                    {"kind": "erstellt", "value": "2026-08-15"},
+                ],
+            }
+        )
+
+        self.assertEqual(result.document_date, datetime.date(2023, 11, 30))
+        self.assertEqual(result.metadata["document_date_source"], "zeitraum_ende")
+
+    def test_a_manual_date_survives_every_re_analysis(self):
+        """Die Kehrseite: der Wartungslauf darf den Bestand korrigieren, aber
+
+        nie eine Handkorrektur (`document_date_source = "manuell"`).
+        """
+        result = self._analyze(
+            {
+                "title": "Kontoauszug 11/2023",
+                "summary": "",
+                "key_facts": {},
+                "dates": [{"kind": "zeitraum_ende", "value": "2023-11-30"}],
+            },
+            document_date=datetime.date(2019, 5, 4),
+            metadata={"document_date_source": "manuell"},
+        )
+
+        self.assertEqual(result.document_date, datetime.date(2019, 5, 4))
+        self.assertEqual(result.metadata["document_date_source"], "manuell")
 
 
 def _dummy_file(data: bytes) -> ContentFile:

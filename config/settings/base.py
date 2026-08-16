@@ -372,6 +372,17 @@ FINDUS_ANALYSIS_MAX_CONTACTS = int(env("FINDUS_ANALYSIS_MAX_CONTACTS", "200"))
 # Referenznummer hält, statt sie ins Archiv zu schreiben.
 FINDUS_ANALYSIS_MAX_REFERENCES = int(env("FINDUS_ANALYSIS_MAX_REFERENCES", "12"))
 
+# Plausibilitätsprüfung des Dokumentdatums (#1141,
+# apps.documents.document_dates): Fällt das abgeleitete Dokumentdatum in
+# dieses Fenster um den Upload-Tag und nennt das Dokument zugleich eine
+# andere Datumsquelle, gewinnt die andere Quelle -- der beobachtete Fall
+# waren Kontoauszüge, deren "Erstellt am" der Tag des Hochladens war. 1 Tag
+# statt 0, damit ein am Vortag gezogener Auszug genauso erkannt wird; 0
+# schaltet die Prüfung auf exakt den Upload-Tag ein.
+FINDUS_DOCUMENT_DATE_UPLOAD_TOLERANCE_DAYS = int(
+    env("FINDUS_DOCUMENT_DATE_UPLOAD_TOLERANCE_DAYS", "1")
+)
+
 # --------------------------------------------------------------------------
 # Handlungsempfehlungen je Vorgang (#1093,
 # apps.documents.recommendations): ein `generate()`-Call pro Generierung,

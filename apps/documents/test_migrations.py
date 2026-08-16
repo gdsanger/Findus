@@ -1,3 +1,4 @@
+import datetime
 import importlib
 
 from django.apps import apps
@@ -10,6 +11,9 @@ _migration = importlib.import_module(
 )
 _stuck_analyzing_migration = importlib.import_module(
     "apps.documents.migrations.0013_repair_stuck_analyzing_documents"
+)
+_document_date_source_migration = importlib.import_module(
+    "apps.documents.migrations.0035_document_date_source_backfill"
 )
 
 
@@ -126,3 +130,81 @@ class RepairStuckAnalyzingDocumentsTests(TestCase):
         embedding.refresh_from_db()
         self.assertEqual(ready.processing_status, Document.ProcessingStatus.READY)
         self.assertEqual(embedding.processing_status, Document.ProcessingStatus.EMBEDDING)
+
+
+class StampAiDocumentDatesTests(TestCase):
+    """Covers the one-off data migration for #1141 -- ohne den
+
+    Herkunftsvermerk waere der komplette Bestand vor einer erneuten
+    KI-Analyse gesperrt, ausgerechnet die falsch datierten Kontoauszuege
+    also unkorrigierbar. Gestempelt wird nur, was nachweislich die Analyse
+    gesetzt hat; alles andere bleibt geschuetzt.
+    """
+
+    def _run(self):
+        _document_date_source_migration.stamp_ai_document_dates(apps, None)
+
+    def test_stamps_a_date_matching_the_key_facts(self):
+        document = Document.objects.create(
+            title="Kontoauszug",
+            document_date=datetime.date(2026, 8, 15),
+            key_facts={"document_date": "2026-08-15"},
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertEqual(document.metadata["document_date_source"], "modell")
+
+    def test_leaves_a_hand_corrected_date_unmarked(self):
+        document = Document.objects.create(
+            title="Kontoauszug",
+            document_date=datetime.date(2023, 11, 30),
+            key_facts={"document_date": "2026-08-15"},
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertNotIn("document_date_source", document.metadata)
+
+    def test_leaves_a_date_without_key_facts_unmarked(self):
+        """z. B. `document_date` aus dem `Date`-Header eines EML-Imports."""
+        document = Document.objects.create(
+            title="Mail", document_date=datetime.date(2025, 7, 1)
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertNotIn("document_date_source", document.metadata)
+
+    def test_keeps_an_existing_source_marker(self):
+        document = Document.objects.create(
+            title="Kontoauszug",
+            document_date=datetime.date(2026, 8, 15),
+            key_facts={"document_date": "2026-08-15"},
+            metadata={"document_date_source": "manuell"},
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertEqual(document.metadata["document_date_source"], "manuell")
+
+    def test_does_not_touch_updated_at(self):
+        """Ein Wartungslauf soll den Bestand nicht als "gerade bearbeitet"
+
+        erscheinen lassen -- dieselbe Ruecksicht wie bei den
+        `long_summary_*`-Saves (siehe CLAUDE.md).
+        """
+        document = Document.objects.create(
+            title="Kontoauszug",
+            document_date=datetime.date(2026, 8, 15),
+            key_facts={"document_date": "2026-08-15"},
+        )
+        before = Document.objects.get(pk=document.pk).updated_at
+
+        self._run()
+
+        self.assertEqual(Document.objects.get(pk=document.pk).updated_at, before)
