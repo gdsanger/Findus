@@ -1,12 +1,25 @@
 import datetime
+import re
 import shutil
 import tempfile
 import zipfile
 from io import BytesIO
 
 from django.test import TestCase, override_settings
+from docx.shared import Mm
 
 from .letter_render import (
+    ADDRESS_FIELD_HEIGHT_MM,
+    ADDRESS_FIELD_TOP_MM,
+    ADDRESS_FIELD_WIDTH_MM,
+    FOLD_MARK_1_MM,
+    FOLD_MARK_2_MM,
+    INFO_BLOCK_TOP_MM,
+    INFO_BLOCK_WIDTH_MM,
+    PAGE_MARGIN_LEFT_MM,
+    PAGE_MARGIN_RIGHT_MM,
+    PAGE_WIDTH_MM,
+    PUNCH_MARK_MM,
     build_content,
     file_slug,
     plain_text,
@@ -14,7 +27,7 @@ from .letter_render import (
     render_draft_files,
     render_pdf,
 )
-from .models import LetterDraft, LetterTemplate, default_letter_layout
+from .models import Correspondent, LetterDraft, LetterTemplate, default_letter_layout
 
 _TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="findus-letter-render-media-")
 _LOCAL_STORAGES = {
@@ -30,6 +43,17 @@ def _docx_text(data: bytes) -> str:
     """
     with zipfile.ZipFile(BytesIO(data)) as archive:
         return archive.read("word/document.xml").decode("utf-8")
+
+
+def _frame_positions(xml: str) -> list[dict]:
+    """Jeder `w:framePr` als `{x, y, w, h}` in Twips -- die Position eines
+    Textrahmens (Anschriftfeld, Informationsblock, Falz-/Lochmarken).
+    """
+    positions = []
+    for tag in re.findall(r"<w:framePr[^>]*/>", xml):
+        attrs = dict(re.findall(r'w:(x|y|w|h)="(-?\d+)"', tag))
+        positions.append({key: int(value) for key, value in attrs.items()})
+    return positions
 
 
 def _draft(**overrides):
@@ -112,6 +136,86 @@ class LetterContentTests(TestCase):
         self.assertIn("hiermit widerspreche ich.", text)
         self.assertIn("Mit freundlichen Grüßen", text)
 
+    def test_a_closing_duplicated_at_the_start_of_the_signature_is_stripped(self):
+        """Der real beobachtete Fehler (#1151): eine Vorlage trägt die
+        Grußformel zusätzlich am Anfang ihrer Signatur ein -- das Layout
+        setzt sie schon über `closing`, ein zweites Mal darf sie nicht
+        erscheinen.
+        """
+        draft = _draft(signature="Mit freundlichen Grüßen,\n\nAnna Beispiel")
+
+        content = build_content(draft)
+
+        self.assertEqual(content.signature, "Anna Beispiel")
+
+    def test_a_signature_without_a_duplicated_closing_is_untouched(self):
+        content = build_content(_draft(signature="Anna Beispiel"))
+
+        self.assertEqual(content.signature, "Anna Beispiel")
+
+    def test_sender_footer_lines_are_empty_without_a_sender(self):
+        content = build_content(_draft())
+
+        self.assertEqual(content.sender_footer_lines, ())
+
+    def test_sender_footer_lines_carry_only_whats_on_file(self):
+        sender = Correspondent.objects.create(
+            name="Christian Angermeier",
+            address="Benatzkyweg 19b\n84032 Landshut",
+            is_self=True,
+        )
+
+        content = build_content(_draft(sender=sender))
+
+        self.assertEqual(
+            content.sender_footer_lines,
+            ("Christian Angermeier · Benatzkyweg 19b · 84032 Landshut",),
+        )
+
+    def test_sender_footer_lines_add_contact_and_business_fields_when_present(self):
+        sender = Correspondent.objects.create(
+            name="Perculasoft e.K.",
+            address="Musterweg 1\n12345 Musterstadt",
+            email="info@perculasoft.de",
+            phone="0871 123456",
+            is_self=True,
+            is_own_business=True,
+            vat_id="DE123456789",
+            tax_number="123/456/78901",
+            iban="DE02120300000000202051",
+        )
+
+        content = build_content(_draft(sender=sender))
+
+        self.assertEqual(
+            content.sender_footer_lines,
+            (
+                "Perculasoft e.K. · Musterweg 1 · 12345 Musterstadt · "
+                "info@perculasoft.de · 0871 123456",
+                "USt-IdNr. DE123456789 · St-Nr. 123/456/78901 · "
+                "IBAN DE02120300000000202051",
+            ),
+        )
+
+    def test_sender_footer_lines_omit_business_fields_for_a_private_sender(self):
+        """`is_own_business=False`: Steuerdaten bleiben aus der Fußzeile
+        eines privaten Absenders draußen, auch wenn eine USt-IdNr. am
+        Kontakt gepflegt ist.
+        """
+        sender = Correspondent.objects.create(
+            name="Christian Angermeier",
+            address="Benatzkyweg 19b\n84032 Landshut",
+            vat_id="DE123456789",
+            is_self=True,
+        )
+
+        content = build_content(_draft(sender=sender))
+
+        self.assertEqual(
+            content.sender_footer_lines,
+            ("Christian Angermeier · Benatzkyweg 19b · 84032 Landshut",),
+        )
+
 
 class LetterDocxTests(TestCase):
     """Word als editierbarer Master (#1095)."""
@@ -137,6 +241,145 @@ class LetterDocxTests(TestCase):
         xml = _docx_text(render_docx(build_content(_draft())))
 
         self.assertGreaterEqual(xml.count("<w:p>"), 5)
+
+    def test_greeting_appears_exactly_once(self):
+        """Der Akzeptanzkriterien-Fall (#1151): egal was in der Signatur
+        steht, „Mit freundlichen Grüßen" landet genau einmal im Dokument.
+        """
+        draft = _draft(signature="Mit freundlichen Grüßen,\n\nAnna Beispiel")
+
+        xml = _docx_text(render_docx(build_content(draft)))
+
+        self.assertEqual(xml.count("Mit freundlichen Grüßen"), 1)
+
+    def test_signature_zone_has_three_blank_lines_after_the_closing(self):
+        xml = _docx_text(render_docx(build_content(_draft())))
+
+        closing_index = xml.index("Mit freundlichen Grüßen")
+        signature_index = xml.index("Anna Beispiel", closing_index)
+        between = xml[closing_index:signature_index]
+
+        # Grußformel-Absatz, 3 Leerzeilen, dann der Signatur-Absatz -- macht
+        # 4 weitere `<w:p>`-Absätze zwischen dem Grußformel- und dem
+        # Signatur-Text.
+        self.assertEqual(between.count("<w:p>") + between.count("<w:p "), 4)
+
+
+class LetterDocxDin5008Tests(TestCase):
+    """DIN 5008 Form B: Anschriftfeld, Informationsblock, Falz-/Lochmarken,
+    Fußzeile, Kopf ab Seite 2, Dokumentsprache (#1151).
+    """
+
+    def test_document_page_size_is_a4(self):
+        xml = _docx_text(render_docx(build_content(_draft())))
+
+        self.assertIn(f'w:w="{Mm(PAGE_WIDTH_MM).twips}"', xml)
+
+    def test_document_language_is_german(self):
+        data = render_docx(build_content(_draft()))
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            core = archive.read("docProps/core.xml").decode("utf-8")
+            styles = archive.read("word/styles.xml").decode("utf-8")
+
+        self.assertIn("<dc:language>de-DE</dc:language>", core)
+        self.assertIn('w:lang w:val="de-DE"', styles)
+
+    def test_address_field_is_pinned_at_the_din5008_position(self):
+        """Anschriftfeld: 25 mm/45 mm, 85 x 40 mm -- die Position, die den
+        Empfänger im Sichtfenster eines Fensterumschlags DIN lang landen
+        lässt.
+        """
+        xml = _docx_text(render_docx(build_content(_draft())))
+
+        expected = {
+            "x": Mm(PAGE_MARGIN_LEFT_MM).twips,
+            "y": Mm(ADDRESS_FIELD_TOP_MM).twips,
+            "w": Mm(ADDRESS_FIELD_WIDTH_MM).twips,
+            "h": Mm(ADDRESS_FIELD_HEIGHT_MM).twips,
+        }
+        self.assertIn(expected, _frame_positions(xml))
+
+    def test_address_field_position_is_unaffected_by_letterhead_length(self):
+        """Der eigentliche Punkt eines Textrahmens gegenüber gestapelten
+        Leerzeilen: ein langer Briefkopf darf die Anschrift nicht
+        verschieben.
+        """
+        short = _frame_positions(_docx_text(render_docx(build_content(_draft()))))
+        draft = _draft()
+        draft.layout["letterhead"] = "Anna Beispiel – Steuerberatung und Rechtsberatung, seit 1998"
+        draft.save(update_fields=["layout"])
+        long_ = _frame_positions(_docx_text(render_docx(build_content(draft))))
+
+        address = {
+            "x": Mm(PAGE_MARGIN_LEFT_MM).twips,
+            "y": Mm(ADDRESS_FIELD_TOP_MM).twips,
+            "w": Mm(ADDRESS_FIELD_WIDTH_MM).twips,
+            "h": Mm(ADDRESS_FIELD_HEIGHT_MM).twips,
+        }
+        self.assertIn(address, short)
+        self.assertIn(address, long_)
+
+    def test_info_block_carries_the_date_on_the_right(self):
+        xml = _docx_text(render_docx(build_content(_draft())))
+
+        expected = {
+            "x": Mm(PAGE_WIDTH_MM - PAGE_MARGIN_RIGHT_MM - INFO_BLOCK_WIDTH_MM).twips,
+            "y": Mm(INFO_BLOCK_TOP_MM).twips,
+            "w": Mm(INFO_BLOCK_WIDTH_MM).twips,
+        }
+        positions = [
+            {key: value for key, value in position.items() if key != "h"}
+            for position in _frame_positions(xml)
+        ]
+        self.assertIn(expected, positions)
+
+    def test_fold_and_punch_marks_are_present_at_their_din5008_heights(self):
+        xml = _docx_text(render_docx(build_content(_draft())))
+
+        mark_y_positions = {
+            position["y"] for position in _frame_positions(xml) if position.get("x") == 0
+        }
+        self.assertEqual(
+            mark_y_positions,
+            {Mm(FOLD_MARK_1_MM).twips, Mm(PUNCH_MARK_MM).twips, Mm(FOLD_MARK_2_MM).twips},
+        )
+
+    def test_continuation_header_shows_the_subject_and_a_page_number_field(self):
+        data = render_docx(build_content(_draft()))
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            header_xml = archive.read("word/header1.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+
+        self.assertIn("Widerspruch gegen Bescheid 4711", header_xml)
+        self.assertIn("Seite", header_xml)
+        self.assertIn("PAGE", header_xml)
+        # Seite 1 zeigt keinen Kopf -- die Anschrift steht bereits im Rahmen.
+        self.assertIn("<w:titlePg/>", document_xml)
+
+    def test_footer_appears_on_every_page(self):
+        sender = Correspondent.objects.create(
+            name="Christian Angermeier",
+            address="Benatzkyweg 19b\n84032 Landshut",
+            is_self=True,
+        )
+        data = render_docx(build_content(_draft(sender=sender)))
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            footer_parts = [
+                archive.read(name).decode("utf-8")
+                for name in archive.namelist()
+                if re.match(r"word/footer\d+\.xml", name)
+            ]
+
+        self.assertEqual(len(footer_parts), 2)
+        for footer_xml in footer_parts:
+            self.assertIn("Christian Angermeier", footer_xml)
+
+    def test_no_footer_parts_without_a_sender(self):
+        data = render_docx(build_content(_draft()))
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            footer_parts = [name for name in archive.namelist() if "footer" in name]
+
+        self.assertEqual(footer_parts, [])
 
 
 class LetterPdfTests(TestCase):

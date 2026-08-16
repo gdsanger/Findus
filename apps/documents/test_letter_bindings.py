@@ -108,6 +108,7 @@ class ResolveSourceTests(TestCase):
             is_self=True,
             vat_id="DE123456789",
             iban="DE02120300000000202051",
+            phone="0871 123456",
         )
         self.kontakt = Correspondent.objects.create(
             name="Finanzamt Musterstadt",
@@ -128,6 +129,7 @@ class ResolveSourceTests(TestCase):
 
         self.assertEqual(resolve_source("self.name", context), "Perculasoft e.K.")
         self.assertEqual(resolve_source("self.vat_id", context), "DE123456789")
+        self.assertEqual(resolve_source("self.phone", context), "0871 123456")
         self.assertEqual(resolve_source("kontakt.name", context), "Finanzamt Musterstadt")
         self.assertEqual(
             resolve_source("kontakt.address", context), "Amtsgasse 2\n12345 Musterstadt"

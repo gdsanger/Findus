@@ -36,6 +36,7 @@ class CorrespondentForm(forms.ModelForm):
         fields = [
             "name",
             "email",
+            "phone",
             "address",
             "is_self",
             "is_own_business",
@@ -45,6 +46,7 @@ class CorrespondentForm(forms.ModelForm):
         ]
         labels = {
             "email": "E-Mail",
+            "phone": "Telefon",
             "address": "Adresse",
             "is_self": "Das bin ich",
             "is_own_business": "Das ist meine Firma",
@@ -61,6 +63,7 @@ class CorrespondentForm(forms.ModelForm):
         widgets = {
             "name": _TEXT_WIDGET,
             "email": forms.EmailInput(attrs={"class": "form-control form-control-sm"}),
+            "phone": _TEXT_WIDGET,
             "address": forms.Textarea(attrs={"class": "form-control form-control-sm", "rows": 3}),
             "is_self": forms.CheckboxInput(attrs={"class": "form-check-input"}),
             "is_own_business": forms.CheckboxInput(attrs={"class": "form-check-input"}),

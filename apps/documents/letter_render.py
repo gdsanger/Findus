@@ -24,6 +24,21 @@ Absender-Kurzzeile darüber, Datumszeile rechts, Betreff fett, danach der
 Text. Die Werte sind Millimeter-Konstanten statt einer Layout-Engine --
 mehr braucht ein einseitiger Geschäftsbrief nicht, und alles, was eine
 Vorlage daran ändern darf, kommt aus ihrem `layout`-JSON.
+
+**Word folgt DIN 5008 Form B über Textrahmen, nicht über Fließtext**
+(#1151): Anschriftfeld, Informationsblock und Falz-/Lochmarken sind
+`w:framePr`-Absätze, an der Seite statt am Textfluss verankert. Eine
+Anschrift mit einer Zeile mehr oder weniger (Zusatzvermerk, zweizeiliger
+Firmenname) verschiebt dadurch weder sich selbst noch die Betreffzeile --
+der einzige Fließtext-Absatz, der Vorschub braucht (`SUBJECT_LINE_TOP_MM`
+als `space_before`), ist unabhängig von allem, was in Rahmen davor steht.
+Die eigene Identität erscheint zusätzlich als Fußzeile
+(`section.footer`/`first_page_footer`, weil `titlePg` Kopf und Fuß der
+ersten Seite getrennt schaltet); die Kaufmanns-Zeile darin nur, wenn der
+Absender-Kontakt `is_own_business` ist. Der PDF-Renderer bleibt bewusst
+beim einfacheren Fließtext-Ansatz mit absoluter Y-Position (siehe unten) --
+das Ticket, das die Word-Ausgabe auf Form B gebracht hat, schließt einen
+PDF-Export ausdrücklich aus.
 """
 
 from __future__ import annotations
@@ -37,18 +52,43 @@ from django.utils.formats import date_format
 
 logger = logging.getLogger(__name__)
 
-# Seitenmaße/Ränder in Millimetern (A4, DIN-5008-nah).
+# Seitenmaße/Ränder in Millimetern (A4, DIN-5008-Form-B-nah).
+PAGE_WIDTH_MM = 210
+PAGE_HEIGHT_MM = 297
 PAGE_MARGIN_LEFT_MM = 25
 PAGE_MARGIN_RIGHT_MM = 20
 PAGE_MARGIN_TOP_MM = 20
 PAGE_MARGIN_BOTTOM_MM = 20
-# Oberkante Anschriftfeld: DIN 5008 Form A. Der Block landet damit im
-# Fenster eines C5/C6-Umschlags.
+
+# Anschriftfeld: Zusatz-/Vermerkzone (Rücksendeangabe) oben, Anschriftzone
+# darunter, zusammen 40 mm hoch -- der Block landet damit im Sichtfenster
+# eines Fensterumschlags DIN lang, wenn der Brief normgerecht gefaltet wird.
 ADDRESS_FIELD_TOP_MM = 45
+ADDRESS_FIELD_WIDTH_MM = 85
+ADDRESS_FIELD_HEIGHT_MM = 40
+
+# Informationsblock rechts (Datum): auf Höhe der Anschriftzone, in der
+# rechten Spalte neben dem Anschriftfeld -- Standard-Referenzlinie nach
+# DIN 5008 Form B.
+INFO_BLOCK_TOP_MM = 50.8
+INFO_BLOCK_WIDTH_MM = 65
+
+# Betreffzeile: fester Abstand unter dem Anschriftfeld (DIN-5008-Referenz),
+# nicht aus der Höhe des Briefkopfs abgeleitet -- ein Textrahmen bleibt an
+# Ort und Stelle, egal wie hoch der Kopf ausfällt.
+SUBJECT_LINE_TOP_MM = 100.6
+
+# Falz- und Lochmarken am linken Rand, als feine Linie.
+FOLD_MARK_1_MM = 87
+FOLD_MARK_2_MM = 192
+PUNCH_MARK_MM = 148.5
+_REGISTRATION_MARK_WIDTH_MM = 5
+
 LOGO_WIDTH_MM = 40
 
 _BODY_FONT_SIZE = 11
 _SMALL_FONT_SIZE = 8
+_FOOTER_FONT_SIZE = 7
 
 
 @dataclass(frozen=True)
@@ -72,6 +112,7 @@ class LetterContent:
     signature: str = ""
     logo: bytes | None = None
     logo_name: str = ""
+    sender_footer_lines: tuple[str, ...] = ()
 
 
 def _lines(text: str) -> list[str]:
@@ -86,6 +127,84 @@ def _sender_line(sender_block: str) -> str:
     im Sichtfenster, nicht der Absenderblock selbst.
     """
     return " · ".join(_lines(sender_block))
+
+
+def _address_line(name: str, address: str) -> str:
+    parts = [name.strip()] if (name or "").strip() else []
+    parts.extend(_lines(address))
+    return " · ".join(parts)
+
+
+def _sender_footer_lines(sender) -> list[str]:
+    """Fußzeilentext der eigenen Identität (#1151): Name/Adresse/Kontakt in
+    einer Zeile, kaufmännische Angaben in einer zweiten -- unabhängig vom
+    Anschriftfeld-Umschalter `show_sender_block`, weil die Fußzeile ein
+    eigenständiges, immer sichtbares Element ist, nicht Teil der
+    Rücksendeangabe im Anschriftfeld.
+
+    Nur ausgeben, was hinterlegt ist: ein fehlender Wert entfällt samt
+    Trennzeichen, nie eine Zeile wie „Telefon: -". Die kaufmännischen
+    Angaben (USt-IdNr., Steuernummer, IBAN) erscheinen nur, wenn der
+    Absender als eigenes Gewerbe markiert ist (`is_own_business`) -- ein
+    privater Brief bekommt keine Steuerdaten in die Fußzeile.
+    """
+    if sender is None:
+        return []
+    contact = [
+        part
+        for part in (
+            _address_line(sender.name, sender.address),
+            (sender.email or "").strip(),
+            (sender.phone or "").strip(),
+        )
+        if part
+    ]
+    lines = [" · ".join(contact)] if contact else []
+    if sender.is_own_business:
+        business = [
+            part
+            for part in (
+                f"USt-IdNr. {sender.vat_id.strip()}" if (sender.vat_id or "").strip() else "",
+                f"St-Nr. {sender.tax_number.strip()}" if (sender.tax_number or "").strip() else "",
+                f"IBAN {sender.iban.strip()}" if (sender.iban or "").strip() else "",
+            )
+            if part
+        ]
+        if business:
+            lines.append(" · ".join(business))
+    return lines
+
+
+# Grußformeln, wie sie am Anfang einer Signatur stehen könnten, wenn eine
+# Vorlage sie versehentlich zusätzlich zum Layout-Feld `closing` einträgt
+# (#1151) -- dieselbe Formelliste wie `letter_generation._CLOSING_ECHO_RE`,
+# hier aber gegen den *Anfang* der Signatur statt gegen das *Ende* eines
+# KI-Texts geprüft, deshalb eine eigene, kleinere Regel statt geteiltem Code.
+_CLOSING_PHRASES_RE = re.compile(
+    r"(mit freundlichen gr(ü|ue)(ß|ss)en|"
+    r"freundliche gr(ü|ue)(ß|ss)e|hochachtungsvoll|beste gr(ü|ue)(ß|ss)e|"
+    r"viele gr(ü|ue)(ß|ss)e)"
+)
+
+
+def _strip_duplicate_closing(signature: str) -> str:
+    """Die Grußformel darf nur einmal erscheinen (Layout-Feld `closing`).
+
+    Trägt eine Vorlage sie zusätzlich am Anfang ihrer Signatur ein -- der
+    real beobachtete Fehler --, entfernt das hier die führende Zeile samt
+    einer eventuell folgenden Leerzeile, statt sie ein zweites Mal neben
+    `closing` zu drucken.
+    """
+    text = (signature or "").strip("\n")
+    if not text:
+        return ""
+    lines = text.split("\n")
+    first = lines[0].strip().rstrip(",").lower()
+    if _CLOSING_PHRASES_RE.fullmatch(first):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    return "\n".join(lines).strip()
 
 
 def build_content(draft) -> LetterContent:
@@ -121,9 +240,10 @@ def build_content(draft) -> LetterContent:
         recipient_block=recipient_block,
         date_line=date_line,
         closing=(draft.layout_value("closing") or "").strip(),
-        signature=draft.signature or "",
+        signature=_strip_duplicate_closing(draft.signature or ""),
         logo=logo_bytes,
         logo_name=logo_name,
+        sender_footer_lines=tuple(_sender_footer_lines(draft.sender)),
     )
 
 
@@ -185,22 +305,191 @@ def plain_text(content: LetterContent) -> str:
 
 
 # -- Word ------------------------------------------------------------------
+#
+# Anschriftfeld, Informationsblock und Falz-/Lochmarken sitzen als
+# klassische Word-Textrahmen (`w:framePr`, verankert an der Seite) an einer
+# festen Position -- unabhängig davon, wie viele Zeilen der Text davor oder
+# danach hat. Nur der Fließtext (ab der Betreffzeile) ist normaler,
+# mehrseitentauglicher Textfluss; ein Rahmen nimmt daran nicht teil, wird
+# also von Word bei der Positionierung des Fließtexts ignoriert.
+
+
+def _twips(mm_value) -> str:
+    from docx.shared import Mm
+
+    return str(Mm(mm_value).twips)
+
+
+def _pin_to_page(paragraph, *, x_mm, y_mm, width_mm=None, height_mm=None, height_rule="atLeast"):
+    """Verankert einen Absatz als Textrahmen an einer festen Seitenposition.
+
+    `atLeast` statt `exact` für Inhalte mit Text: eine ungewöhnlich lange
+    Anschrift oder ein langer Vorlagenname darf den Rahmen nach unten
+    sprengen, statt abgeschnitten zu werden.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    pPr = paragraph._p.get_or_add_pPr()
+    frame = OxmlElement("w:framePr")
+    if width_mm is not None:
+        frame.set(qn("w:w"), _twips(width_mm))
+    if height_mm is not None:
+        frame.set(qn("w:h"), _twips(height_mm))
+        frame.set(qn("w:hRule"), height_rule)
+    frame.set(qn("w:hAnchor"), "page")
+    frame.set(qn("w:vAnchor"), "page")
+    frame.set(qn("w:x"), _twips(x_mm))
+    frame.set(qn("w:y"), _twips(y_mm))
+    frame.set(qn("w:wrap"), "none")
+    pPr.insert(0, frame)
+
+
+def _add_border(paragraph, *, side, size_pt=0.5, color="999999", space_pt=1):
+    """Feine Linie an einer Absatzkante -- für Falz-/Lochmarken und die
+    Trennlinie über der Fußzeile.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    pPr = paragraph._p.get_or_add_pPr()
+    borders = OxmlElement("w:pBdr")
+    border = OxmlElement(f"w:{side}")
+    border.set(qn("w:val"), "single")
+    border.set(qn("w:sz"), str(int(size_pt * 8)))
+    border.set(qn("w:space"), str(space_pt))
+    border.set(qn("w:color"), color)
+    borders.append(border)
+    pPr.append(borders)
+
+
+def _add_page_number_field(paragraph, *, size_pt=None):
+    """Ein `PAGE`-Feld -- die Seitenzahl im Kopfbereich ab Seite 2 muss sich
+    mit der tatsächlichen Seite mitzählen, ein fester Text käme nicht in
+    Frage.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    run = paragraph.add_run()
+    if size_pt is not None:
+        run.font.size = Pt(size_pt)
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = "PAGE"
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    run._r.append(begin)
+    run._r.append(instr)
+    run._r.append(end)
+
+
+def _set_document_language(document, lang="de-DE"):
+    """Dokumentsprache Deutsch statt des python-docx-Standards (US-Englisch)
+    -- sonst verwirren Rechtschreibprüfung und Silbentrennung beim
+    Weiterbearbeiten.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    document.core_properties.language = lang
+    normal_rpr = document.styles["Normal"].element.get_or_add_rPr()
+    lang_element = normal_rpr.find(qn("w:lang"))
+    if lang_element is None:
+        lang_element = OxmlElement("w:lang")
+        normal_rpr.append(lang_element)
+    lang_element.set(qn("w:val"), lang)
+    lang_element.set(qn("w:eastAsia"), lang)
+
+
+def _write_lines(paragraph, text, *, size=None, bold=False):
+    """Mehrzeiliger Text als Zeilenumbrüche (`<w:br/>`) innerhalb *eines*
+    Absatzes -- ein Absatz je Zeile würde eine Adresse/Fußzeile in mehrere,
+    unabhängig umbrechende Absätze zerlegen.
+    """
+    from docx.shared import Pt
+
+    lines = (text or "").split("\n")
+    for index, line in enumerate(lines):
+        run = paragraph.add_run(line)
+        run.bold = bold
+        if size is not None:
+            run.font.size = Pt(size)
+        if index < len(lines) - 1:
+            run.add_break()
+
+
+def _write_footer(document, content: LetterContent):
+    """Dezente Fußzeile mit der eigenen Identität (#1151): dünne Trennlinie
+    darüber, kleiner Schriftgrad, auf jeder Seite -- deshalb sowohl in
+    `section.footer` als auch in `section.first_page_footer` geschrieben.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    if not content.sender_footer_lines:
+        return
+
+    section = document.sections[0]
+    section.different_first_page_header_footer = True
+
+    for footer in (section.footer, section.first_page_footer):
+        footer.is_linked_to_previous = False
+        for index, line in enumerate(content.sender_footer_lines):
+            item = footer.paragraphs[0] if index == 0 else footer.add_paragraph()
+            item.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if index == 0:
+                _add_border(item, side="top", size_pt=0.5, color="999999", space_pt=4)
+            _write_lines(item, line, size=_FOOTER_FONT_SIZE)
+
+
+def _write_continuation_header(document, content: LetterContent, printable_width_mm):
+    """Verkleinerter Kopfbereich ab Seite 2: Betreff links, Seitenzahl
+    rechts -- Seite 1 zeigt keinen Kopf, dort steht die Anschrift bereits
+    im Rahmen.
+    """
+    from docx.enum.text import WD_TAB_ALIGNMENT
+    from docx.shared import Mm, Pt
+
+    section = document.sections[0]
+    section.different_first_page_header_footer = True
+    header = section.header
+    header.is_linked_to_previous = False
+
+    label = content.subject.strip() or content.sender_line
+    item = header.paragraphs[0]
+    item.paragraph_format.tab_stops.add_tab_stop(Mm(printable_width_mm), WD_TAB_ALIGNMENT.RIGHT)
+    _write_lines(item, label, size=_SMALL_FONT_SIZE)
+    tab_run = item.add_run("\t")
+    tab_run.font.size = Pt(_SMALL_FONT_SIZE)
+    prefix_run = item.add_run("Seite ")
+    prefix_run.font.size = Pt(_SMALL_FONT_SIZE)
+    _add_page_number_field(item, size_pt=_SMALL_FONT_SIZE)
+    _add_border(item, side="bottom", size_pt=0.5, color="999999", space_pt=4)
 
 
 def render_docx(content: LetterContent) -> bytes:
-    """Word-Master (.docx) über python-docx.
+    """Word-Master (.docx) über python-docx, DIN 5008 Form B.
 
     Word ist das *editierbare* Artefakt: was hier entsteht, soll jemand
-    ohne Findus weiterschreiben können. Deshalb echte Absätze statt eines
-    Textrahmen-Layouts -- ein pixelgenauer Nachbau des PDFs wäre in Word
-    unbearbeitbar.
+    ohne Findus weiterschreiben können. Anschriftfeld, Informationsblock und
+    Falz-/Lochmarken sind deshalb Textrahmen an fester Position statt
+    gestapelter Leerzeilen (siehe Modul-Docstring oben) -- nur so bleibt die
+    Anschrift exakt im Sichtfenster eines Fensterumschlags DIN lang, egal
+    wie hoch Briefkopf oder Anschrift ausfallen.
     """
     from docx import Document as DocxDocument
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Mm, Pt
 
     document = DocxDocument()
+    _set_document_language(document)
+
     section = document.sections[0]
+    section.page_width = Mm(PAGE_WIDTH_MM)
+    section.page_height = Mm(PAGE_HEIGHT_MM)
     section.left_margin = Mm(PAGE_MARGIN_LEFT_MM)
     section.right_margin = Mm(PAGE_MARGIN_RIGHT_MM)
     section.top_margin = Mm(PAGE_MARGIN_TOP_MM)
@@ -210,54 +499,122 @@ def render_docx(content: LetterContent) -> bytes:
     normal.font.name = "Calibri"
     normal.font.size = Pt(_BODY_FONT_SIZE)
 
-    def paragraph(text="", *, size=None, bold=False, align=None, space_after=6):
-        item = document.add_paragraph()
-        item.paragraph_format.space_after = Pt(space_after)
-        if align is not None:
-            item.alignment = align
-        for index, line in enumerate((text or "").split("\n")):
-            run = item.add_run(line)
-            run.bold = bold
-            if size is not None:
-                run.font.size = Pt(size)
-            if index < len((text or "").split("\n")) - 1:
-                run.add_break()
-        return item
+    printable_width_mm = PAGE_WIDTH_MM - PAGE_MARGIN_LEFT_MM - PAGE_MARGIN_RIGHT_MM
 
+    # -- Kopfzone (0-45 mm): Logo rechts, Briefkopftext links, beide als
+    # Rahmen -- sie sollen nicht mitzählen, wie weit der Fließtext später
+    # nach unten geschoben wird.
     if content.logo:
         logo_paragraph = document.add_paragraph()
-        logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        _pin_to_page(
+            logo_paragraph,
+            x_mm=PAGE_WIDTH_MM - PAGE_MARGIN_RIGHT_MM - LOGO_WIDTH_MM,
+            y_mm=10,
+            width_mm=LOGO_WIDTH_MM,
+        )
         try:
             logo_paragraph.add_run().add_picture(BytesIO(content.logo), width=Mm(LOGO_WIDTH_MM))
         except Exception:
             # Ein Bildformat, das python-docx nicht kennt, darf den Brief
-            # nicht kosten -- der Absatz bleibt dann eben leer.
+            # nicht kosten -- der Rahmen bleibt dann eben leer.
             logger.warning("Brief-Rendering: Logo konnte nicht eingebettet werden", exc_info=True)
 
     if content.letterhead.strip():
-        paragraph(content.letterhead.strip(), bold=True, space_after=12)
+        letterhead_paragraph = document.add_paragraph()
+        letterhead_width = printable_width_mm - (LOGO_WIDTH_MM + 5 if content.logo else 0)
+        _pin_to_page(
+            letterhead_paragraph, x_mm=PAGE_MARGIN_LEFT_MM, y_mm=10, width_mm=letterhead_width
+        )
+        _write_lines(letterhead_paragraph, content.letterhead.strip(), bold=True)
 
-    if content.sender_line:
-        paragraph(content.sender_line, size=_SMALL_FONT_SIZE, space_after=2)
+    # -- Anschriftfeld: Rücksendeangabe (Zusatz-/Vermerkzone) und Anschrift
+    # (Anschriftzone) im selben Rahmen -- ein Rahmen mit zwei Absätzen
+    # bleibt trotzdem *ein* Textrahmen, solange beide Absätze dieselbe
+    # Position tragen.
+    if content.sender_line or content.recipient_block.strip():
+        if content.sender_line:
+            sender_paragraph = document.add_paragraph()
+            _write_lines(sender_paragraph, content.sender_line, size=_SMALL_FONT_SIZE)
+            _pin_to_page(
+                sender_paragraph,
+                x_mm=PAGE_MARGIN_LEFT_MM,
+                y_mm=ADDRESS_FIELD_TOP_MM,
+                width_mm=ADDRESS_FIELD_WIDTH_MM,
+                height_mm=ADDRESS_FIELD_HEIGHT_MM,
+            )
+        if content.recipient_block.strip():
+            recipient_paragraph = document.add_paragraph()
+            if content.sender_line:
+                recipient_paragraph.paragraph_format.space_before = Pt(6)
+            _write_lines(recipient_paragraph, content.recipient_block.strip())
+            _pin_to_page(
+                recipient_paragraph,
+                x_mm=PAGE_MARGIN_LEFT_MM,
+                y_mm=ADDRESS_FIELD_TOP_MM,
+                width_mm=ADDRESS_FIELD_WIDTH_MM,
+                height_mm=ADDRESS_FIELD_HEIGHT_MM,
+            )
 
-    if content.recipient_block.strip():
-        paragraph(content.recipient_block.strip(), space_after=18)
-
+    # -- Informationsblock rechts: Datum auf Höhe der Anschriftzone.
     if content.date_line:
-        paragraph(content.date_line, align=WD_ALIGN_PARAGRAPH.RIGHT, space_after=18)
+        date_paragraph = document.add_paragraph()
+        date_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        _write_lines(date_paragraph, content.date_line)
+        _pin_to_page(
+            date_paragraph,
+            x_mm=PAGE_WIDTH_MM - PAGE_MARGIN_RIGHT_MM - INFO_BLOCK_WIDTH_MM,
+            y_mm=INFO_BLOCK_TOP_MM,
+            width_mm=INFO_BLOCK_WIDTH_MM,
+        )
+
+    # -- Falz- und Lochmarken.
+    for y_mm in (FOLD_MARK_1_MM, PUNCH_MARK_MM, FOLD_MARK_2_MM):
+        mark_paragraph = document.add_paragraph()
+        _pin_to_page(
+            mark_paragraph,
+            x_mm=0,
+            y_mm=y_mm,
+            width_mm=_REGISTRATION_MARK_WIDTH_MM,
+            height_mm=1,
+            height_rule="exact",
+        )
+        _add_border(mark_paragraph, side="bottom", size_pt=0.75, color="000000", space_pt=0)
+
+    # -- Fließtext ab der Betreffzeile: der einzige Teil, der normal
+    # fließt und sich über mehrere Seiten fortsetzen darf. Die erste
+    # fließende Zeile bekommt den kompletten Vorschub bis zur Betreffzeile
+    # als `space_before` -- die Rahmen oben zählen dafür nicht mit.
+    first_flow = True
+
+    def flow_paragraph(text="", *, size=None, bold=False, space_after=6):
+        nonlocal first_flow
+        item = document.add_paragraph()
+        item.paragraph_format.space_after = Pt(space_after)
+        if first_flow:
+            item.paragraph_format.space_before = Mm(SUBJECT_LINE_TOP_MM - PAGE_MARGIN_TOP_MM)
+            first_flow = False
+        _write_lines(item, text, size=size, bold=bold)
+        return item
 
     if content.subject.strip():
-        paragraph(content.subject.strip(), bold=True, space_after=12)
+        flow_paragraph(content.subject.strip(), bold=True, space_after=12)
 
     for block in re.split(r"\n\s*\n", (content.body or "").strip()):
         if block.strip():
-            paragraph(block.strip(), space_after=10)
+            flow_paragraph(block.strip(), space_after=10)
 
     if content.closing:
-        paragraph(content.closing, space_after=18)
+        flow_paragraph(content.closing, space_after=6)
 
     if content.signature.strip():
-        paragraph(content.signature.strip(), space_after=0)
+        # Unterschriftszone: drei Leerzeilen für die handschriftliche
+        # Unterschrift, danach der Name in Klartext.
+        for _ in range(3):
+            flow_paragraph("", space_after=0)
+        flow_paragraph(content.signature.strip(), space_after=0)
+
+    _write_footer(document, content)
+    _write_continuation_header(document, content, printable_width_mm)
 
     buffer = BytesIO()
     document.save(buffer)

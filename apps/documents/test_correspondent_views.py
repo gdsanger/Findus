@@ -293,6 +293,7 @@ class CorrespondentCreateViewTests(TestCase):
             {
                 "name": "Eigene Firma GmbH",
                 "email": "info@example.com",
+                "phone": "0871 123456",
                 "address": "Musterstraße 1, 12345 Berlin",
                 "is_self": "on",
                 "vat_id": "DE123456789",
@@ -304,6 +305,7 @@ class CorrespondentCreateViewTests(TestCase):
         correspondent = Correspondent.objects.get(name="Eigene Firma GmbH")
         self.assertTrue(correspondent.is_self)
         self.assertEqual(correspondent.address, "Musterstraße 1, 12345 Berlin")
+        self.assertEqual(correspondent.phone, "0871 123456")
         self.assertEqual(correspondent.vat_id, "DE123456789")
         self.assertEqual(correspondent.tax_number, "12/345/67890")
         self.assertEqual(correspondent.iban, "DE02100100109307118603")
