@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from django.conf import settings
+from django.utils import timezone
 
 from apps.ai.providers import ImageInput, VisionProvider, get_vision_provider
 
@@ -346,6 +347,11 @@ def extract_document(
             "mime_type": mime_type,
             "language": _detect_language(text_content),
             "page_count": page_count,
+            # Extraktions-Provenienz fuer den "Inhalt"-Tab (#1142): wann
+            # `text_content` zuletzt aus dem Original erzeugt wurde --
+            # anders als `updated_at` bleibt das stabil, auch wenn eine
+            # spaetere Analyse/Einbettung das Dokument erneut speichert.
+            "extracted_at": timezone.now().isoformat(),
         }
         document.save(
             update_fields=[

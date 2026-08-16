@@ -1,0 +1,33 @@
+{% comment %}
+Inhalt-Tab (#1142): der extrahierte Rohtext, mit Herkunft und
+Zeichenanzahl darüber -- die schnellste Diagnose für eine verstümmelte
+Text-Layer-/OCR-Extraktion (schlecht gescanntes oder ungewöhnlich gesetztes
+PDF). Direkt mitgerendert wie "Details"/"Kommentare"/"Verknüpfungen": nur
+die kNN-Query im Ähnlichkeits-Tab ist Beiwerk genug, um lazy zu laden --
+hier ist der Rohtext bereits Teil des geladenen Dokuments, nur die
+vollständige (ungekürzte) Fassung lädt bei Bedarf nach.
+{% endcomment %}
+{% if document.text_content %}
+<div class="findus-detail-content-header text-muted small">
+    <span>Extraktionsmethode: {{ document.get_extraction_method_display|default:"—" }}</span>
+    <span>Extrahiert am: {% if content_extracted_at %}{{ content_extracted_at|date:"d.m.Y H:i" }}{% else %}unbekannt{% endif %}</span>
+    <span>Zeichen: {{ content_char_count }}</span>
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        id="document-content-copy"
+        data-content-url="{% url 'documents:content_full' document.pk %}"
+    >Text kopieren</button>
+</div>
+{% include "documents/partials/_detail_content_body.html" %}
+{% else %}
+<p class="text-muted">
+    {% if document.processing_status == "pending" or document.processing_status == "extracting" %}
+    Die Textextraktion läuft noch.
+    {% elif document.processing_status == "failed" %}
+    Die Textextraktion ist fehlgeschlagen{% if document.processing_error %}: {{ document.processing_error }}{% endif %}.
+    {% else %}
+    Für dieses Dokument liegt kein extrahierter Text vor.
+    {% endif %}
+</p>
+{% endif %}

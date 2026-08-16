@@ -27,6 +27,7 @@ import logging
 
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.utils import timezone
 
 from .letter_render import build_content, plain_text, render_draft_files
 from .models import Document, LetterDraft, link_documents
@@ -114,6 +115,10 @@ def finalize_letter_draft(draft: LetterDraft, user) -> Document:
             "letter_draft_id": draft.pk,
             "letter_template_id": draft.template_id,
             "letter_template_name": draft.template_name,
+            # Extraktions-Provenienz (#1142), wie beim Kaskaden-Pfad in
+            # `extraction.py` -- hier bekannt statt gemessen, weil der Text
+            # aus dem gerade erzeugten PDF stammt statt aus der Kaskade.
+            "extracted_at": timezone.now().isoformat(),
         },
     )
     document.original_file.save(filename, ContentFile(pdf_bytes), save=False)

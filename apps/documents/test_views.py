@@ -994,16 +994,18 @@ class DocumentDetailViewTests(TestCase):
         self.assertNotContains(response, "<script>alert(1)</script>")
         self.assertContains(response, "&lt;script&gt;")
 
-    def test_detail_shows_five_tabs_with_details_as_default(self):
-        """Neue Struktur (#1126): Zusammenfassung ungetabbt, darunter die
-        fünf Tabs in fester Reihenfolge; "Details" ist per `active` der
-        Default nach jedem Reload.
+    def test_detail_shows_six_tabs_with_details_as_default(self):
+        """Neue Struktur (#1126, #1142): Zusammenfassung ungetabbt, darunter
+        die sechs Tabs in fester Reihenfolge -- "Inhalt" zwischen "Details"
+        und "Kommentare" (#1142); "Details" ist per `active` der Default
+        nach jedem Reload.
         """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
         for label in [
             "Details",
+            "Inhalt",
             "Kommentare",
             "Verknüpfungen",
             "Ähnliche Dokumente",
@@ -1024,6 +1026,79 @@ class DocumentDetailViewTests(TestCase):
 
         self.assertContains(response, reverse("documents:related", args=[self.doc.id]))
         self.assertContains(response, "Wird geladen …")
+
+    def test_content_tab_shows_text_method_and_char_count(self):
+        """Inhalt-Tab (#1142): Rohtext plus Kopfzeile mit Extraktions-
+        methode und Zeichenanzahl -- die schnellste Diagnose für eine
+        verstümmelte Extraktion.
+        """
+        self.doc.extraction_method = Document.ExtractionMethod.OCR
+        self.doc.save(update_fields=["extraction_method"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, 'id="tab-content"')
+        self.assertContains(response, "OCR")
+        self.assertContains(response, "Zeichen: 15")
+        self.assertContains(response, "Betrag: 123 EUR")
+
+    def test_content_tab_shows_extraction_timestamp_from_metadata(self):
+        self.doc.metadata = {"extracted_at": "2026-01-02T10:30:00+00:00"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "Extrahiert am: 02.01.2026")
+
+    def test_content_tab_shows_hint_while_extraction_is_pending(self):
+        empty = Document.objects.create(
+            title="Neu",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.EXTRACTING,
+        )
+        empty.departments.add(self.dept_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[empty.id]))
+
+        self.assertContains(response, "Die Textextraktion läuft noch.")
+
+    def test_content_tab_shows_hint_when_extraction_failed(self):
+        empty = Document.objects.create(
+            title="Kaputt",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.FAILED,
+            processing_error="Kein Text erkannt",
+        )
+        empty.departments.add(self.dept_a)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[empty.id]))
+
+        self.assertContains(response, "Die Textextraktion ist fehlgeschlagen")
+        self.assertContains(response, "Kein Text erkannt")
+
+    def test_content_tab_truncates_long_text_and_offers_full_load(self):
+        self.doc.text_content = "x" * 200
+        self.doc.save(update_fields=["text_content"])
+
+        with override_settings(FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS=50):
+            self.client.force_login(self.user_a)
+            response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "x" * 50)
+        self.assertNotContains(response, "x" * 51)
+        self.assertContains(response, "Zeichen: 200")
+        self.assertContains(response, "Vollständig anzeigen (200 Zeichen)")
+        self.assertContains(response, reverse("documents:content_full", args=[self.doc.id]))
+
+    def test_content_tab_has_no_truncation_button_for_short_text(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertNotContains(response, "Vollständig anzeigen")
 
     def test_tab_titles_show_counts_as_badges(self):
         DocumentComment.objects.create(
@@ -1094,10 +1169,16 @@ class DocumentDetailViewTests(TestCase):
 
         self.assertEqual(len(many.captured_queries), len(few.captured_queries))
 
-    def test_falls_back_to_text_content_when_markdown_cache_is_empty(self):
+    def test_summary_card_points_to_content_tab_when_markdown_cache_is_empty(self):
+        """Ohne KI-Zusammenfassung und ohne Markdown-Cache verweist die
+        Zusammenfassungskarte auf den "Inhalt"-Tab (#1142), statt den
+        Rohtext ein zweites Mal (ungekürzt) selbst zu zeigen.
+        """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
 
+        self.assertContains(response, "Der extrahierte Rohtext steht im Tab „Inhalt“.")
+        # Trotzdem einmal auf der Seite vorhanden -- im Inhalt-Tab.
         self.assertContains(response, "Betrag: 123 EUR")
 
     def test_extraction_method_and_language_are_shown(self):
@@ -3396,6 +3477,64 @@ class DocumentSuggestionActionTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.tag_suggestion.refresh_from_db()
         self.assertEqual(self.tag_suggestion.status, SuggestionStatus.PENDING)
+
+
+class DocumentContentFullViewTests(TestCase):
+    """Covers das Nachladen der vollständigen Rohtext-Fassung (#1142) --
+    derselbe `visible_to`-Vertrag wie jeder andere Dokument-Endpunkt, plus
+    das eigentliche Verhalten: die komplette Länge statt der gekürzten
+    Fassung, und ohne "Vollständig anzeigen"-Button (der wäre nach dem
+    Nachladen ein toter Button).
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Langes Dokument",
+            visibility=Document.Visibility.DEPARTMENT,
+            text_content="x" * 200,
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_full_view_returns_untruncated_text_without_load_button(self):
+        with override_settings(FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS=50):
+            self.client.force_login(self.user_a)
+            response = self.client.get(
+                reverse("documents:content_full", args=[self.doc.id])
+            )
+
+        self.assertContains(response, "x" * 200)
+        self.assertNotContains(response, "Vollständig anzeigen")
+        self.assertContains(response, 'data-truncated="false"')
+
+    def test_document_outside_visibility_returns_404(self):
+        foreign = Document.objects.create(
+            title="Fremd", visibility=Document.Visibility.DEPARTMENT
+        )
+        foreign.departments.add(self.dept_b)
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:content_full", args=[foreign.id])
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.get(
+            reverse("documents:content_full", args=[self.doc.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)

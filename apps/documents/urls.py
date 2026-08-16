@@ -136,6 +136,7 @@ urlpatterns = [
     path("documents/<int:pk>/original/preview/", views.document_original_preview, name="original_preview"),
     path("documents/<int:pk>/thumbnail/", views.document_thumbnail, name="thumbnail"),
     path("documents/<int:pk>/related/", views.document_related, name="related"),
+    path("documents/<int:pk>/content/full/", views.document_content_full, name="content_full"),
     path("documents/<int:pk>/links/", views.document_links, name="links"),
     path("documents/<int:pk>/links/create/", views.document_link_create, name="link_create"),
     path(
