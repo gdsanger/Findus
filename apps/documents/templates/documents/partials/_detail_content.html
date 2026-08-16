@@ -13,8 +13,15 @@ vollständige (ungekürzte) Fassung lädt bei Bedarf nach.
     <span>Extrahiert am: {% if content_extracted_at %}{{ content_extracted_at|date:"d.m.Y H:i" }}{% else %}unbekannt{% endif %}</span>
     <span>Zeichen: {{ content_char_count }}</span>
     {% if document.vision_reextraction_completed_at %}
+    {% comment %}
+    "Extraktion", nicht mehr "Neuextraktion" (#1148): denselben Lauf loest
+    seit #1148 auch die Automatik nach dem Ingest aus -- dann ist es der
+    erste, nicht der zweite Anlauf. Verarbeitete vs. gesamte Seitenzahl
+    zeigt zugleich, ob einzelne Seiten ausgefallen sind; welche, steht als
+    Platzhalter im Text selbst.
+    {% endcomment %}
     <span>
-        KI-Vision-Neuextraktion am {{ document.vision_reextraction_completed_at|date:"d.m.Y H:i" }}
+        KI-Vision-Extraktion (Markdown) am {{ document.vision_reextraction_completed_at|date:"d.m.Y H:i" }}
         ({{ document.vision_reextraction_pages_processed }}{% if document.vision_reextraction_pages_total %} von {{ document.vision_reextraction_pages_total }}{% endif %} Seite(n){% if document.vision_reextraction_truncated %}, Seitengrenze erreicht{% endif %})
     </span>
     {% endif %}

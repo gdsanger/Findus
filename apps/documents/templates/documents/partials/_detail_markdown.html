@@ -1,0 +1,22 @@
+{% load documents_extras %}
+{% comment %}
+Markdown-Tab (#1148): die lesbare Fassung des abgeleiteten Markdowns --
+Tabellen als Tabellen, nicht als Pipe-Wüste. Bewusst getrennt vom
+"Inhalt"-Tab, der weiterhin den *Rohtext* zeigt: der ist die schnellste
+Diagnose für eine verstümmelte Extraktion (#1142) und wäre gerendert
+gerade nicht mehr diagnostisch.
+
+Der Rahmen (Card/Section) steht in der einbindenden Seite, nicht hier --
+siehe CLAUDE.md, "Ein Swap-Partial rahmt sich nicht selbst ein".
+{% endcomment %}
+{% if document.markdown %}
+<div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
+{% else %}
+<p class="text-muted">
+    {% if document.processing_status == "pending" or document.processing_status == "extracting" %}
+    Die Extraktion läuft noch.
+    {% else %}
+    Für dieses Dokument liegt keine Markdown-Fassung vor.
+    {% endif %}
+</p>
+{% endif %}

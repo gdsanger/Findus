@@ -985,6 +985,36 @@ class DocumentDetailViewTests(TestCase):
         self.assertContains(response, "<h1>Rechnung Acme</h1>", html=False)
         self.assertContains(response, "<strong>123 EUR</strong>", html=False)
 
+    def test_markdown_tab_renders_a_table_as_a_real_table(self):
+        """#1148: Der Zweck der strukturerhaltenden Extraktion geht verloren,
+        wenn die Vorschau die Tabelle als Pipe-Wueste zeigt -- Wert,
+        Referenzbereich und Einheit muessen auch in der Anzeige in einer
+        Zeile stehen.
+        """
+        self.doc.markdown = (
+            "# Befund\n\n"
+            "| Bezeichnung | Ergebnis | Referenz | Einheit |\n"
+            "| --- | --- | --- | --- |\n"
+            "| Haemoglobin | 13,4 | 12,0-16,0 | g/dl |\n"
+        )
+        self.doc.save(update_fields=["markdown"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "<table>", html=False)
+        self.assertContains(response, "<td>12,0-16,0</td>", html=False)
+
+    def test_markdown_tab_says_so_when_there_is_no_markdown(self):
+        self.doc.markdown = ""
+        self.doc.processing_status = Document.ProcessingStatus.READY
+        self.doc.save(update_fields=["markdown", "processing_status"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "keine Markdown-Fassung")
+
     def test_markdown_cache_escapes_embedded_html(self):
         self.doc.markdown = "# Titel\n\n<script>alert(1)</script>"
         self.doc.save(update_fields=["markdown"])
@@ -995,11 +1025,11 @@ class DocumentDetailViewTests(TestCase):
         self.assertNotContains(response, "<script>alert(1)</script>")
         self.assertContains(response, "&lt;script&gt;")
 
-    def test_detail_shows_six_tabs_with_details_as_default(self):
-        """Neue Struktur (#1126, #1142): Zusammenfassung ungetabbt, darunter
-        die sechs Tabs in fester Reihenfolge -- "Inhalt" zwischen "Details"
-        und "Kommentare" (#1142); "Details" ist per `active` der Default
-        nach jedem Reload.
+    def test_detail_shows_seven_tabs_with_details_as_default(self):
+        """Neue Struktur (#1126, #1142, #1148): Zusammenfassung ungetabbt,
+        darunter die sieben Tabs in fester Reihenfolge -- "Inhalt" (Rohtext)
+        zwischen "Details" und "Markdown" (gerenderte Fassung, #1148);
+        "Details" ist per `active` der Default nach jedem Reload.
         """
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
@@ -1007,6 +1037,7 @@ class DocumentDetailViewTests(TestCase):
         for label in [
             "Details",
             "Inhalt",
+            "Markdown",
             "Kommentare",
             "Verknüpfungen",
             "Ähnliche Dokumente",
@@ -1933,7 +1964,7 @@ class DocumentVisionReextractActionViewTests(TestCase):
             timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
             hook=reextract_document_with_vision_hook,
         )
-        self.assertContains(response, "KI-Vision-Neuextraktion läuft")
+        self.assertContains(response, "KI-Vision-Extraktion läuft")
 
     def test_vision_reextract_get_is_not_allowed(self):
         self.client.force_login(self.user_a)

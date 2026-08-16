@@ -176,6 +176,18 @@ werden muss.
             <li class="nav-item" role="presentation">
                 <button
                     class="nav-link"
+                    id="tab-markdown"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-markdown"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-markdown"
+                    aria-selected="false"
+                >Markdown</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link"
                     id="tab-comments"
                     data-bs-toggle="tab"
                     data-bs-target="#pane-comments"
@@ -244,6 +256,12 @@ werden muss.
             <div class="tab-pane fade" id="pane-content" role="tabpanel" aria-labelledby="tab-content">
                 <section class="findus-section">
                     {% include "documents/partials/_detail_content.html" %}
+                </section>
+            </div>
+
+            <div class="tab-pane fade" id="pane-markdown" role="tabpanel" aria-labelledby="tab-markdown">
+                <section class="findus-section">
+                    {% include "documents/partials/_detail_markdown.html" with document=document only %}
                 </section>
             </div>
 

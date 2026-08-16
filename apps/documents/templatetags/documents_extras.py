@@ -70,10 +70,17 @@ def render_markdown(value):
     Markdown -- escaping it before conversion strips any embedded HTML
     (e.g. a phishing mail's `<script>`) while leaving the `#`/blank-line
     syntax `apps.documents.extraction.build_markdown()` emits intact.
+    Escaping touches `<>&"'` only, so the Pipe-Syntax of a table survives
+    it unveraendert.
+
+    `tables` gehoert seit #1148 dazu: die KI-Vision-Extraktion liefert
+    tabellarische Bereiche als echte Markdown-Tabellen, und eine Tabelle,
+    die als Pipe-Wueste gerendert wird, hilft dem Leser genau so wenig wie
+    der zeilenweise OCR-Text, den sie ersetzt.
     """
     if not value:
         return ""
-    html = markdown_lib.markdown(escape(value), extensions=["nl2br"])
+    html = markdown_lib.markdown(escape(value), extensions=["nl2br", "tables"])
     return mark_safe(html)
 
 
