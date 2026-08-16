@@ -1,5 +1,7 @@
 from django.test import SimpleTestCase
 
+from config.test_requirements import requires_system_mime_type
+
 from .mime import GENERIC_MIME_TYPE, mime_from_filename, resolve_mime_type
 
 _PDF_HEADER = b"%PDF-1.7\n1 0 obj\n"
@@ -71,3 +73,12 @@ class MimeFromFilenameTests(SimpleTestCase):
 
     def test_unknown_extension_is_empty(self):
         self.assertEqual(mime_from_filename("daten.bin"), "")
+
+    @requires_system_mime_type("archive.zip", "application/zip")
+    def test_extension_outside_the_explicit_table_falls_back_to_the_system_database(self):
+        """`.zip` steht bewusst nicht in `_EXTENSION_MIME` -- die Extraktion
+        unterstuetzt den Typ nicht, also gibt es keinen Grund, ihn dort zu
+        fuehren. Genau darum haengt dieser Fall als einziger an der
+        System-MIME-Datenbank und wird ohne den Eintrag uebersprungen (#1145).
+        """
+        self.assertEqual(mime_from_filename("archive.zip"), "application/zip")

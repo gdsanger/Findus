@@ -282,6 +282,14 @@ Damit es niemand „nachrüstet":
 - **Bestehende Fehlschläge**, die nicht von der aktuellen Änderung stammen,
   werden benannt (Testname plus kurze Einordnung), nicht mitkorrigiert — sie
   gehören in ein eigenes Ticket.
+- **Übersprungene Tests wegen fehlender Systemwerkzeuge sind normal** und kein
+  Anlass, den Befund per zweitem Suite-Lauf zu überprüfen. Tests, die
+  `tesseract` oder poppler (`pdftoppm`/`pdfinfo`) brauchen — beides kommt aus
+  Systempaketen, nicht aus pip —, überspringen sich selbst mit einem Grund,
+  der das fehlende Werkzeug nennt; die Zusammenfassung des Laufs zählt sie als
+  `skipped`. Die Prüfungen dafür stehen in `config/test_requirements.py` und
+  gehören **eng** an den einzelnen Test, nie pauschal an eine ganze Datei —
+  sonst verschwindet Prüfumfang unbemerkt.
 - Neue Tests gehören zu jeder Änderung dazu. Vertragstests zu
   Architekturregeln, Sichtbarkeitsprüfungen und Regressionstests zu behobenen
   Fehlern werden **nie** entfernt — auch nicht, um Laufzeit zu sparen.
