@@ -1184,6 +1184,28 @@ body {
     font-family: inherit;
 }
 
+/* Inhalt-Tab (#1142): Kopfzeile mit Extraktionsmethode/-zeitpunkt/
+   Zeichenanzahl, darunter der Rohtext -- in echtem Monospace (anders als
+   `.findus-detail-text`, das die Absatzschrift erbt) und mit eigenem
+   Scrollbereich, damit ein mehrseitiges Dokument nicht die ganze Seite in
+   die Länge zieht. */
+.findus-detail-content-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--findus-space-3);
+    margin-bottom: var(--findus-space-2);
+}
+
+.findus-detail-content-text {
+    max-height: 32rem;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--bs-font-monospace);
+    font-size: .875rem;
+}
+
 .findus-detail-actions {
     margin-bottom: var(--findus-space-4);
 }

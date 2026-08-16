@@ -115,17 +115,24 @@ werden muss.
                           
                 {% else %}
                 <p class="text-muted">
-                    Noch keine KI-Zusammenfassung vorhanden. Es wird der Rohtext aus der Extraktion angezeigt.
-                </p>
-                <div class="findus-card findus-detail-content">
+                    Noch keine KI-Zusammenfassung vorhanden.
                     {% if document.markdown %}
-                    <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
-                    {% elif document.text_content %}
-                    <pre class="findus-detail-text">{{ document.text_content }}</pre>
+                    Es wird der zwischengespeicherte Text aus der Extraktion angezeigt.
                     {% else %}
-                    <p class="text-muted">Kein Text vorhanden.</p>
+                    {% comment %}
+                    Der Rohtext selbst dupliziert sich nicht mehr hierher (#1142):
+                    er hat mit dem "Inhalt"-Tab einen eigenen, gekürzt ladenden
+                    Platz -- ein zweiter, ungekürzter Dump hier würde genau das
+                    unterlaufen, was die Kürzung dort verhindern soll.
+                    {% endcomment %}
+                    Der extrahierte Rohtext steht im Tab „Inhalt“.
                     {% endif %}
+                </p>
+                {% if document.markdown %}
+                <div class="findus-card findus-detail-content">
+                    <div class="findus-markdown">{{ document.markdown|render_markdown }}</div>
                 </div>
+                {% endif %}
                 {% endif %}
             </div>
             <div class="mt-2">
@@ -153,6 +160,18 @@ werden muss.
                     aria-controls="pane-details"
                     aria-selected="true"
                 >Details</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button
+                    class="nav-link"
+                    id="tab-content"
+                    data-bs-toggle="tab"
+                    data-bs-target="#pane-content"
+                    type="button"
+                    role="tab"
+                    aria-controls="pane-content"
+                    aria-selected="false"
+                >Inhalt</button>
             </li>
             <li class="nav-item" role="presentation">
                 <button
@@ -219,6 +238,12 @@ werden muss.
                     <div id="document-meta">
                         {% include "documents/partials/_detail_meta.html" %}
                     </div>
+                </section>
+            </div>
+
+            <div class="tab-pane fade" id="pane-content" role="tabpanel" aria-labelledby="tab-content">
+                <section class="findus-section">
+                    {% include "documents/partials/_detail_content.html" %}
                 </section>
             </div>
 
@@ -323,6 +348,43 @@ werden muss.
             if (target && !target.dataset.loaded) {
                 target.dataset.loaded = "true";
                 htmx.trigger(target, "findus:show-similar");
+            }
+        });
+    });
+
+    // "Text kopieren" im Inhalt-Tab (#1142): kopiert immer den vollständigen
+    // Text, auch wenn die Anzeige gekürzt ist. Fehlt die volle Fassung noch
+    // (`data-truncated="true"`), lädt derselbe Endpunkt wie der
+    // "vollständig anzeigen"-Button sie erst nach -- kein zweiter
+    // Nachlade-Mechanismus für denselben Rohtext.
+    document.addEventListener("DOMContentLoaded", function () {
+        var copyButton = document.getElementById("document-content-copy");
+        if (!copyButton) {
+            return;
+        }
+        copyButton.addEventListener("click", function () {
+            var copyBodyText = function () {
+                var body = document.getElementById("document-content-body");
+                var pre = body ? body.querySelector("pre") : null;
+                if (!pre) {
+                    return;
+                }
+                navigator.clipboard.writeText(pre.textContent).then(function () {
+                    var original = copyButton.textContent;
+                    copyButton.textContent = "Kopiert!";
+                    setTimeout(function () {
+                        copyButton.textContent = original;
+                    }, 2000);
+                });
+            };
+            var body = document.getElementById("document-content-body");
+            if (body && body.dataset.truncated === "true") {
+                htmx.ajax("GET", copyButton.dataset.contentUrl, {
+                    target: "#document-content-body",
+                    swap: "outerHTML",
+                }).then(copyBodyText);
+            } else {
+                copyBodyText();
             }
         });
     });

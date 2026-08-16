@@ -314,6 +314,14 @@ FINDUS_SIMILAR_DOCUMENTS_CANDIDATE_CHUNKS = int(
 # "Verknüpfen"-Button an einem Ähnlichkeits-Treffer verlinkt.
 FINDUS_DOCUMENT_LINK_PICKER_LIMIT = int(env("FINDUS_DOCUMENT_LINK_PICKER_LIMIT", "200"))
 
+# Rohtext-Tab im Dokument-Detail (#1142): Zeichenanzahl, ab der der
+# extrahierte Text zunaechst gekuerzt gezeigt wird ("vollstaendig
+# anzeigen" laedt den Rest nach) -- ein 200-Seiten-Dokument soll die
+# Detailseite nicht ins DOM-Blaehen treiben.
+FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS = int(
+    env("FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS", "5000")
+)
+
 # Verwandte Dokumente über gemeinsame Kennungen (#1099,
 # apps.documents.references): Cap je Kennung im Dokument-Detail. Anders
 # als bei der Ähnlichkeit ist das *kein* Relevanz-Schwellwert -- ein

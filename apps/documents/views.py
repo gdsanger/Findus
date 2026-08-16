@@ -558,6 +558,60 @@ def _related_context(user, document):
     }
 
 
+def _content_context(document, *, truncated=True):
+    """Der "Inhalt"-Tab des Details (#1142): der extrahierte Rohtext plus
+    Herkunft (Extraktionsmethode/-zeitpunkt) und Zeichenanzahl -- die
+    schnellste Diagnose fuer eine verstuemmelte OCR/Text-Layer-Extraktion,
+    siehe CLAUDE.md "Dokumentdatum" fuer ein Beispiel derselben
+    Fehlerklasse (nur dass hier die Ursache direkt sichtbar wird statt nur
+    ihre Folgen).
+
+    Die Zeichenanzahl bleibt immer die volle Laenge, auch wenn `content_text`
+    fuer die Erstanzeige gekuerzt ist (`truncated=True`, Default) -- ein
+    paar hundert Zeichen bei einem mehrseitigen Dokument sind bereits der
+    Befund. `document_content_full` ruft mit `truncated=False`, um denselben
+    Endpunkt fuer "vollstaendig anzeigen" und "Text kopieren" zu bedienen.
+    """
+    text = document.text_content
+    char_count = len(text)
+    preview_limit = settings.FINDUS_DOCUMENT_CONTENT_PREVIEW_CHARS
+    is_truncated = truncated and char_count > preview_limit
+
+    extracted_at_raw = document.metadata.get("extracted_at")
+    extracted_at = None
+    if extracted_at_raw:
+        try:
+            extracted_at = datetime.datetime.fromisoformat(extracted_at_raw)
+        except (TypeError, ValueError):
+            extracted_at = None
+
+    return {
+        "document": document,
+        "content_text": text[:preview_limit] if is_truncated else text,
+        "content_char_count": char_count,
+        "content_truncated": is_truncated,
+        "content_extracted_at": extracted_at,
+    }
+
+
+@login_required
+def document_content_full(request, pk):
+    """Laedt den vollstaendigen Rohtext nach (#1142), dasselbe Muster wie
+    `document_related`: die Erstanzeige im Detail bringt nur die gekuerzte
+    Fassung, dieser Endpunkt liefert den Rest. Bedient sowohl den
+    "vollstaendig anzeigen"-Button (deklaratives `hx-get`) als auch den
+    "Text kopieren"-Button bei gekuerzter Anzeige (per JS ueber denselben
+    Endpunkt nachgeladen, siehe `detail.html`) -- kein zweiter Mechanismus
+    fuers Nachladen.
+    """
+    document = _visible_document(request.user, pk)
+    return render(
+        request,
+        "documents/partials/_detail_content_body.html",
+        _content_context(document, truncated=False),
+    )
+
+
 @login_required
 def document_links(request, pk):
     """Render the manual-links block on its own (#1126).
@@ -840,6 +894,7 @@ def document_detail(request, pk):
     context = {
         "document": document,
         **document_comments_context(request.user, document),
+        **_content_context(document),
         **_analysis_status_context(document),
         **_long_summary_context(document),
         **_children_context(request.user, document),

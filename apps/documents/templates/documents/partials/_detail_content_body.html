@@ -1,0 +1,21 @@
+{% comment %}
+Swap-Ziel fürs Nachladen der vollständigen Fassung (#1142): dieses
+Element trägt die `id`, auf die `hx-target` zeigt, gehört also -- anders als
+ein rahmender Card-/Section-Container -- bewusst mit ins Partial (siehe
+CLAUDE.md, "Ein Swap-Partial rahmt sich nicht selbst ein"). Der
+"vollständig anzeigen"-Button steckt mit im Element, damit er nach dem
+Nachladen (kein `content_truncated` mehr) automatisch mitverschwindet statt
+als toter Button stehen zu bleiben.
+{% endcomment %}
+<div id="document-content-body" data-truncated="{{ content_truncated|yesno:"true,false" }}">
+    <pre class="findus-detail-content-text">{{ content_text }}</pre>
+    {% if content_truncated %}
+    <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary mt-2"
+        hx-get="{% url 'documents:content_full' document.pk %}"
+        hx-target="#document-content-body"
+        hx-swap="outerHTML"
+    >Vollständig anzeigen ({{ content_char_count }} Zeichen)</button>
+    {% endif %}
+</div>

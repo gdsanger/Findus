@@ -277,6 +277,10 @@ def _create_mail_leitdokument(
                 # Kennzeichnung "aus Body erzeugt" (Anforderung #4) -- neben
                 # dem Badge, das `kind=mail_body` im Detail rendert.
                 "body_source": "generated_from_mail",
+                # Extraktions-Provenienz (#1142), wie beim Kaskaden-Pfad in
+                # `apps.documents.extraction` -- hier bekannt statt gemessen,
+                # weil der Text direkt aus der Mail gebaut wird.
+                "extracted_at": timezone.now().isoformat(),
             }
         )
         document.text_content = index_text
