@@ -95,8 +95,7 @@ nutzt diese Kachel nicht -- siehe `_search_results.html`.
     <div class="findus-doc-card-footer">
         <div class="findus-doc-card-meta">
             <span class="findus-doc-card-date">
-                {{ document.display_date|date:"d.m.Y" }}
-                {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
+                {% include "documents/partials/_document_date_inline.html" with document=document only %}
             </span>
             {% for vorgang in document.vorgaenge.all %}
             <a class="badge text-bg-secondary findus-doc-card-vorgang" href="{% url 'documents:vorgang_detail' vorgang.pk %}">

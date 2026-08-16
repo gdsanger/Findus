@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Dokumente – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title="Dokumente" %}
@@ -39,6 +40,7 @@ Swap -- und gilt gleichermaßen für alle drei möglichen `result_partial`
 
 {% block scripts %}
 {% include "documents/partials/_upload_dropzone_script.html" %}
+<script src="{% static 'js/document-date-inline.js' %}" defer></script>
 <script>
 // Persist the document-list filters across navigation.
 // URL query is the source of truth; localStorage is the fallback so the

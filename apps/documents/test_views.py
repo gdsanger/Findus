@@ -1,5 +1,6 @@
 import datetime
 import io
+import json
 import re
 import shutil
 import tempfile
@@ -1630,6 +1631,151 @@ class DocumentActionStatusToggleViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.action_status, Document.ActionStatus.NONE)
+
+
+class DocumentDateInlineViewTests(TestCase):
+    """Covers the #1140 inline Dokumentdatum-Korrektur in Timeline/Liste/
+
+    Kachel -- a POST-only endpoint distinct from `document_meta`, which stays
+    reserved for the detail view's Zuordnungs-Block.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.user_b = User.objects.create_user(username="bob", password="x")
+        self.user_b.departments.add(self.dept_b)
+
+        self.doc = Document.objects.create(
+            title="Kontoauszug", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept_a)
+
+    def test_post_accepts_iso_format(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": "2026-01-15"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.document_date, date(2026, 1, 15))
+
+    def test_post_accepts_german_format(self):
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": "15.01.2026"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.document_date, date(2026, 1, 15))
+        self.assertContains(response, "15.01.2026")
+
+    def test_post_marks_the_date_as_manually_set(self):
+        self.doc.metadata = {"document_date_source": "erstellt"}
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": "15.01.2026"},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.metadata["document_date_source"], "manuell")
+
+    def test_manually_set_date_survives_reanalysis(self):
+        """#1141's protection also covers this endpoint: a re-run of the
+
+        KI-Analyse only overwrites `document_date` when its source marker
+        names a KI candidate kind -- "manuell" isn't one of them.
+        """
+        from apps.ai.providers.fake import FakeGenerationProvider
+
+        from .analysis import analyze_document
+
+        self.doc.text_content = "Kontoauszug Inhalt"
+        self.doc.save(update_fields=["text_content"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": "15.01.2026"},
+        )
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.metadata["document_date_source"], "manuell")
+
+        reply = json.dumps(
+            {
+                "summary": "",
+                "key_facts": {"document_date": "2026-08-16"},
+            }
+        )
+        result = analyze_document(
+            self.doc.id,
+            generation_provider=FakeGenerationProvider(
+                model="fake-generate", version="1", reply=reply
+            ),
+        )
+
+        self.assertEqual(result.document_date, date(2026, 1, 15))
+
+    def test_post_with_invalid_date_keeps_previous_value(self):
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.metadata = {"document_date_source": "manuell"}
+        self.doc.save(update_fields=["document_date", "metadata"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": "not-a-date"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.document_date, date(2026, 1, 15))
+        self.assertContains(response, "Ungültiges Datum")
+        self.assertContains(response, "is-editing")
+
+    def test_post_with_empty_date_keeps_previous_value(self):
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.save(update_fields=["document_date"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": ""},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.document_date, date(2026, 1, 15))
+        self.assertContains(response, "Ungültiges Datum")
+
+    def test_get_is_not_allowed(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("documents:document_date_inline", args=[self.doc.id])
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_outside_visibility_returns_404(self):
+        self.client.force_login(self.user_b)
+        response = self.client.post(
+            reverse("documents:document_date_inline", args=[self.doc.id]),
+            {"document_date": "15.01.2026"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.doc.refresh_from_db()
+        self.assertIsNone(self.doc.document_date)
 
 
 class DocumentAnalysisActionsViewTests(TestCase):

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ tag.name }} – Tag – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title=tag.name %}
@@ -99,6 +100,7 @@ Mindestbreite von 10rem zusammenfallen; ab `lg` gilt das gewohnte 3/9.
 {% endblock %}
 
 {% block scripts %}
+<script src="{% static 'js/document-date-inline.js' %}" defer></script>
 <script>
 // Lightweight reset for this page's Kontakt/Status/Richtung/Vorgang filters -- der
 // Tag-Scope selbst ändert sich nie, ein gespeicherter Filter-State wie

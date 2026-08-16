@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ correspondent.name }} – Kontakt – Findus{% endblock %}
 {% block content %}
 {% include "partials/_content_header.html" with page_title=correspondent.name %}
@@ -128,6 +129,7 @@ Mindestbreite von 10rem zusammenfallen; ab `lg` gilt das gewohnte 3/9.
 
 {% block scripts %}
 {% include "documents/partials/_upload_dropzone_script.html" %}
+<script src="{% static 'js/document-date-inline.js' %}" defer></script>
 <script>
 // Lightweight reset for this page's Tag/Status/Richtung/Vorgang filters -- der
 // Kontakt-Scope selbst ändert sich nie, ein gespeicherter Filter-State wie

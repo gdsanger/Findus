@@ -19,6 +19,7 @@ from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
 from .document_dates import MANUAL_SOURCE as MANUAL_DATE_SOURCE
 from .extraction import expire_vision_reextraction_if_stalled, start_vision_reextraction
+from .forms import DocumentDateInlineForm
 from .long_summary import (
     document_long_summary_is_stale,
     expire_document_long_summary_if_stalled,
@@ -1670,6 +1671,40 @@ def document_meta(request, pk):
         if fields & {"correspondent", "vorgaenge"}:
             learn_references_from_document(document)
     return _render_meta(request, document)
+
+
+@login_required
+@require_POST
+def document_date_inline(request, pk):
+    """Inline-Korrektur von `Document.document_date` direkt in Timeline,
+
+    Liste und Kachel (#1140) -- Klick aufs Datum statt Umweg über das
+    Detail. Teilt die Schutzlogik mit `document_meta` (#1141): ein hier
+    gesetztes Datum wird als "manuell" vermerkt (`_set_metadata_source`)
+    und übersteht damit jede erneute KI-Analyse. Anders als `document_meta`
+    verwirft dies eine unparsbare Eingabe nicht still -- ohne Detailseite
+    drumherum bräuchte der Nutzer sonst einen zweiten Blick, um zu merken,
+    dass nichts gespeichert wurde. Das Formular bleibt deshalb im
+    Bearbeitungszustand stehen und zeigt den Fehler direkt am Feld.
+    """
+    document = _visible_document(request.user, pk)
+    form = DocumentDateInlineForm(request.POST)
+    if form.is_valid():
+        document.document_date = form.cleaned_data["document_date"]
+        changed = ["document_date"]
+        changed.extend(
+            _set_metadata_source(document, "document_date_source", MANUAL_DATE_SOURCE)
+        )
+        changed.extend(_drop_metadata_source(document, "document_date_upload_conflict"))
+        document.save(update_fields=[*dict.fromkeys(changed), "updated_at"])
+        context = {"document": document}
+    else:
+        context = {
+            "document": document,
+            "error": "Ungültiges Datum. Format: TT.MM.JJJJ oder JJJJ-MM-TT.",
+            "input_value": request.POST.get("document_date", ""),
+        }
+    return render(request, "documents/partials/_document_date_inline.html", context)
 
 
 _QUICK_CREATE_KINDS = {"correspondent", "vorgang", "tag"}
