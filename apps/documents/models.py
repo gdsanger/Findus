@@ -574,6 +574,13 @@ class Document(TimeStampedModel, LongSummaryMixin):
     vision_reextraction_pages_processed = models.PositiveIntegerField(null=True, blank=True)
     vision_reextraction_pages_total = models.PositiveIntegerField(null=True, blank=True)
     vision_reextraction_truncated = models.BooleanField(default=False)
+    # Idempotenz-Merker (#1148): "diese Datei, mit dieser Prompt-Fassung
+    # transkribiert" (`vision_markdown.source_fingerprint`). Stimmt er
+    # ueberein, waere ein erneuter Lauf ein Modellaufruf mit garantiert
+    # demselben Ergebnis -- Kosten ohne Gegenwert. Bewusst ein Feld und
+    # kein Vergleich ueber `vision_reextraction_completed_at`: der Zeitpunkt
+    # sagt nichts darueber, *worueber* der Lauf lief.
+    vision_reextraction_fingerprint = models.CharField(max_length=100, blank=True, default="")
 
     # KI-Analyse (#1020, apps.documents.analysis): lesbare Kurz-Zusammenfassung
     # plus strukturierte Key-Facts (Absender/Datum/Typ/Betrag/Frist, jeweils

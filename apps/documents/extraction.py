@@ -33,6 +33,7 @@ from django_q.exceptions import TimeoutException
 
 from apps.ai.providers import ImageInput, Usage, VisionProvider, capture_usage, get_vision_provider
 
+from . import vision_markdown
 from .mime import resolve_mime_type
 from .models import Document
 from .text_sanitize import clean_text
@@ -138,9 +139,21 @@ def _is_ocr_sufficient(ocr: _OcrOutput) -> bool:
     )
 
 
-def _describe_with_vision(vision_provider: VisionProvider, image_bytes: bytes) -> str:
+def _describe_with_vision(
+    vision_provider: VisionProvider, image_bytes: bytes, prompt: str = _VISION_PROMPT
+) -> str:
+    """Ein `describe_image()`-Aufruf fuer ein gerendertes Seitenbild.
+
+    `prompt` ist ueberschreibbar, weil die beiden Aufrufer verschiedene
+    Dinge wollen: die Kaskade unten will eine *Notbeschreibung* fuer eine
+    Seite, die Text-Layer und OCR nicht lesen konnten (oft ein Foto oder
+    Diagramm, gar kein Fliesstext); der erzwungene Lauf (#1143/#1148) will
+    eine strukturerhaltende Markdown-Transkription
+    (`vision_markdown.PAGE_PROMPT`). Ein gemeinsamer Prompt fuer beide
+    waere fuer den einen zu eng und fuer den anderen zu vage.
+    """
     result = vision_provider.describe_image(
-        ImageInput(data=image_bytes, mime_type="image/png"), _VISION_PROMPT
+        ImageInput(data=image_bytes, mime_type="image/png"), prompt
     )
     return result.text
 
@@ -371,6 +384,13 @@ def extract_document(
         document.vision_reextraction_pages_processed = None
         document.vision_reextraction_pages_total = None
         document.vision_reextraction_truncated = False
+        # Der Fingerabdruck (#1148) gehoert zu dem Text, der gerade in
+        # `text_content` steht -- ihn stehen zu lassen, waehrend die Kaskade
+        # den Text ersetzt, hiesse: "fuer diese Datei liegt die
+        # Markdown-Fassung schon vor", obwohl sie soeben ueberschrieben
+        # wurde. Ein anschliessender Automatik-Lauf soll sie neu erzeugen
+        # duerfen.
+        document.vision_reextraction_fingerprint = ""
         document.save(
             update_fields=[
                 "text_content",
@@ -383,6 +403,7 @@ def extract_document(
                 "vision_reextraction_pages_processed",
                 "vision_reextraction_pages_total",
                 "vision_reextraction_truncated",
+                "vision_reextraction_fingerprint",
                 "updated_at",
             ]
         )
@@ -396,14 +417,18 @@ def extract_document(
     return document
 
 
-# -- Manuelle KI-Vision-Neuextraktion (#1143) --------------------------------
+# -- Erzwungene KI-Vision-Extraktion nach Markdown (#1143/#1148) -------------
 #
 # Anders als die automatische Kaskade oben eskaliert dieser Weg NICHT je
 # Seite (Text-Layer -> OCR -> Vision) -- er erzwingt Vision fuer jede Seite,
-# unabhaengig davon, ob eine billigere Stufe ausgereicht haette. Gedacht als
-# bewusst ausgeloester zweiter Anlauf fuer Dokumente, bei denen Text-Layer/
-# OCR bereits verstuemmelten oder unvollstaendigen Text geliefert haben --
-# teurer und langsamer, deshalb nie automatisch (siehe CLAUDE.md).
+# unabhaengig davon, ob eine billigere Stufe ausgereicht haette, und laesst
+# sich das Ergebnis als strukturerhaltendes Markdown geben
+# (`vision_markdown.PAGE_PROMPT`: Tabellen bleiben Tabellen).
+#
+# Zwei Ausloeser, ein Lauf: der Knopf am Dokument (#1143, immer erlaubt) und
+# die Automatik nach dem Ingest (#1148, `FINDUS_VISION_MARKDOWN_AUTO_SCOPE`,
+# Default aus). Bewusst dieselbe Funktion -- zwei Kopien wuerden bei der
+# ersten Prompt-Aenderung auseinanderlaufen.
 
 
 def _page_count_for_vision(data: bytes, mime_type: str) -> int:
@@ -422,6 +447,57 @@ def _render_page_for_vision(data: bytes, mime_type: str, page_number: int):
     from PIL import Image
 
     return Image.open(io.BytesIO(data))
+
+
+def _vision_markdown_for_page(
+    vision_provider: VisionProvider,
+    *,
+    data: bytes,
+    mime_type: str,
+    page_number: int,
+    document_id: int,
+) -> tuple[str, str]:
+    """Eine Seite rendern und als Markdown transkribieren.
+
+    Rueckgabe: `(markdown, fehlergrund)` -- der Fehlergrund ist leer, wenn
+    die Seite durchgekommen ist. Ein Fehlschlag -- Rendering, Provider,
+    leere Antwort -- wird zu einem benannten Platzhalter an der Stelle
+    dieser Seite und laesst die uebrigen Seiten unberuehrt (#1148).
+    Eine fehlgeschlagene Seite lautlos wegzulassen wuerde die Seitenzaehlung
+    verschieben, und ein Abbruch des ganzen Laufs wuerde ein 30-seitiges
+    Dokument an einer einzigen ueberbelichteten Seite scheitern lassen.
+
+    `except Exception` faengt bewusst *nicht* die Django-Q-
+    `TimeoutException` (erbt von `SystemExit`, siehe CLAUDE.md): laeuft das
+    Zeitbudget des Tasks ab, soll der Lauf enden und nicht Seite fuer Seite
+    weiter Platzhalter sammeln.
+    """
+    try:
+        image = _render_page_for_vision(data, mime_type, page_number)
+        raw = _describe_with_vision(
+            vision_provider, _image_to_png_bytes(image), vision_markdown.PAGE_PROMPT
+        )
+        markdown = vision_markdown.normalize_page_markdown(raw)
+        if not markdown:
+            raise ValueError("leere Antwort")
+    except Exception as exc:
+        logger.exception(
+            "KI-Vision-Extraktion fuer Document %s: Seite %s fehlgeschlagen",
+            document_id,
+            page_number,
+        )
+        return (
+            vision_markdown.failed_page_markdown(type(exc).__name__),
+            f"Seite {page_number}: {exc}",
+        )
+
+    if vision_markdown.page_is_unreadable(markdown):
+        logger.info(
+            "KI-Vision-Extraktion fuer Document %s: Seite %s als leer/unlesbar gemeldet",
+            document_id,
+            page_number,
+        )
+    return markdown, ""
 
 
 def start_vision_reextraction(document: Document) -> None:
@@ -472,8 +548,18 @@ def reextract_document_with_vision(
 ) -> Document:
     """Erzwingt die Vision-Stufe fuer jede Seite von `document.original_file`
     (#1143) und ersetzt `text_content`/`markdown`/`extraction_method` bei
-    Erfolg -- ein bewusst ausgeloester, kostenpflichtiger zweiter Anlauf,
-    keine automatische Eskalation.
+    Erfolg -- ein kostenpflichtiger Zusatzlauf, keine Eskalation der Kaskade.
+
+    Das Ergebnis ist strukturerhaltendes Markdown (#1148,
+    `vision_markdown.PAGE_PROMPT`): tabellarische Bereiche bleiben Tabellen,
+    handschriftliche Vermerke stehen in einem eigenen Abschnitt. Es landet
+    in `markdown` (Ansicht) *und* `text_content` (Index) -- die Struktur ist
+    genau dann etwas wert, wenn sie auch in den Chunks steht, aus denen das
+    Retrieval antwortet.
+
+    Fehlschlaege einzelner Seiten sind vorgesehen und entwerten die uebrigen
+    nicht (`_vision_markdown_for_page`); erst wenn *keine* Seite durchkommt,
+    gilt der Lauf als fehlgeschlagen.
 
     Anders als `extract_document()` legt ein Fehlschlag hier NICHT
     `processing_status` auf `failed` und ruehrt `text_content` nicht an:
@@ -528,24 +614,37 @@ def reextract_document_with_vision(
         )
 
         page_texts: list[str] = []
+        page_errors: list[str] = []
         with capture_usage() as usages:
             active_provider = provider_factory()
             for page_number in range(1, pages_to_process + 1):
-                image = _render_page_for_vision(data, mime_type, page_number)
-                text = _describe_with_vision(active_provider, _image_to_png_bytes(image))
-                page_texts.append(text.strip())
-                pages_processed += 1
+                markdown, error = _vision_markdown_for_page(
+                    active_provider,
+                    data=data,
+                    mime_type=mime_type,
+                    page_number=page_number,
+                    document_id=document_id,
+                )
+                page_texts.append(markdown)
+                if error:
+                    page_errors.append(error)
+                else:
+                    pages_processed += 1
 
-        if len(page_texts) > 1:
-            # Seitengrenzen bleiben im Fliesstext kenntlich (#1143), damit
-            # Absaetze nicht ueber Seiten hinweg verkleben -- anders als
-            # `build_markdown()`s "## Seite N"-Ueberschriften, die nur fuer
-            # die Markdown-Ansicht gedacht sind, nicht fuer `text_content`.
-            text_content = "\n\n".join(
-                f"--- Seite {index} ---\n\n{text}" for index, text in enumerate(page_texts, start=1)
+        if pages_processed == 0:
+            # Keine einzige Seite ist durchgekommen -- das ist ein
+            # fehlgeschlagener Lauf, kein Ergebnis aus lauter Platzhaltern.
+            # `text_content` bleibt damit unangetastet (siehe Docstring):
+            # der bisherige Text ist weiterhin die beste verfuegbare Auskunft.
+            # Der erste Seitenfehler wandert in die Meldung, sonst stuende in
+            # `vision_reextraction_error` nur, *dass* nichts ging.
+            raise ValueError(
+                "KI-Vision-Extraktion: keine einzige Seite konnte verarbeitet werden"
+                + (f" ({page_errors[0]})" if page_errors else "")
+                + "."
             )
-        else:
-            text_content = page_texts[0] if page_texts else ""
+
+        text_content = vision_markdown.join_pages_as_text(page_texts)
 
         document.text_content = clean_text(text_content.strip())
         document.markdown = clean_text(build_markdown(document.title, page_texts))
@@ -563,6 +662,16 @@ def reextract_document_with_vision(
         document.vision_reextraction_pages_processed = pages_processed
         document.vision_reextraction_pages_total = pages_total
         document.vision_reextraction_truncated = truncated
+        # Erst *nach* dem erfolgreichen Lauf gesetzt (#1148): ein
+        # abgebrochener oder fehlgeschlagener Lauf darf sich nicht als
+        # "liegt schon vor" merken, sonst ueberspringt ihn die Automatik
+        # beim naechsten Mal genau dort, wo sie gebraucht wuerde. Bei einem
+        # abgeschnittenen Lauf bleibt er bewusst leer -- die fehlenden
+        # Seiten sollen nachgeholt werden koennen, sobald die Seitengrenze
+        # angehoben wird.
+        document.vision_reextraction_fingerprint = (
+            "" if truncated else vision_markdown.source_fingerprint(document)
+        )
         document.save(
             update_fields=[
                 "text_content",
@@ -575,12 +684,13 @@ def reextract_document_with_vision(
                 "vision_reextraction_pages_processed",
                 "vision_reextraction_pages_total",
                 "vision_reextraction_truncated",
+                "vision_reextraction_fingerprint",
                 "updated_at",
             ]
         )
     except TimeoutException:
         logger.exception(
-            "KI-Vision-Neuextraktion fuer Document %s: Task-Zeitbudget "
+            "KI-Vision-Extraktion fuer Document %s: Task-Zeitbudget "
             "aufgebraucht, waehrend noch auf die KI-Antwort gewartet wurde",
             document_id,
         )
@@ -594,7 +704,7 @@ def reextract_document_with_vision(
         )
         raise
     except Exception as exc:
-        logger.exception("KI-Vision-Neuextraktion fehlgeschlagen fuer Document %s", document_id)
+        logger.exception("KI-Vision-Extraktion fehlgeschlagen fuer Document %s", document_id)
         document.vision_reextraction_status = Document.VisionReextractionStatus.FAILED
         document.vision_reextraction_error = str(exc)
         document.save(
@@ -606,7 +716,7 @@ def reextract_document_with_vision(
         completion_tokens = sum(usage.completion_tokens for usage in usages)
         image_tokens = sum(usage.image_tokens for usage in usages)
         logger.info(
-            "KI-Vision-Neuextraktion fuer Document %s: %.1fs Laufzeit, %s/%s "
+            "KI-Vision-Extraktion fuer Document %s: %.1fs Laufzeit, %s/%s "
             "Seiten verarbeitet, %s Prompt-/%s Completion-/%s Bild-Tokens",
             document_id,
             duration_seconds,
@@ -618,3 +728,38 @@ def reextract_document_with_vision(
         )
 
     return document
+
+
+def extract_vision_markdown(
+    document_id: int, *, force: bool = False, vision_provider: Optional[VisionProvider] = None
+) -> Optional[Document]:
+    """Der wiederholbare Einstieg in denselben Lauf (#1148).
+
+    Ohne `force` wird uebersprungen, was fuer genau diese Datei und diese
+    Prompt-Fassung schon vorliegt (`vision_markdown.is_up_to_date`) -- der
+    Test ist ein DB-Blick, kein Modellaufruf, und genau der Grund, warum ein
+    zweiter Backfill-Lauf ueber denselben Bestand nichts kostet. `force`
+    (`--force` im Command) laeuft immer, denn genau dafuer ist er da: neues
+    Modell, neuer Prompt, oder schlicht ein zweiter Versuch. Der Knopf am
+    Dokument geht an diesem Einstieg vorbei und ruft den Lauf direkt auf --
+    ein ausdruecklicher Klick ist nie "schon erledigt".
+
+    Rueckgabe ist `None`, wenn nichts zu tun war -- ein uebersprungener Lauf
+    ist kein Fehler und ruehrt das Dokument nicht an.
+
+    Format-Fremdes (docx, zip, …) faengt der Lauf selbst ab und schreibt es
+    als `vision_reextraction_error` ans Dokument; hier wird es nicht
+    vorsortiert, damit ein direkt angefragtes Dokument eine sichtbare
+    Antwort bekommt statt eines stillen No-ops.
+    """
+    document = Document.objects.get(pk=document_id)
+    if not force and vision_markdown.is_up_to_date(document):
+        logger.info(
+            "KI-Vision-Extraktion fuer Document %s uebersprungen: unveraenderte "
+            "Datei, Markdown-Fassung liegt bereits vor",
+            document_id,
+        )
+        return None
+
+    start_vision_reextraction(document)
+    return reextract_document_with_vision(document_id, vision_provider=vision_provider)

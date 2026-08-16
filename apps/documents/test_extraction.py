@@ -4,16 +4,19 @@ import shutil
 import tempfile
 from unittest.mock import patch
 
+from django.conf import settings
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.ai.providers.fake import FakeVisionProvider
 from config.test_requirements import requires_ocr, requires_pdf_rasterizer
 
+from . import vision_markdown
 from .extraction import (
     _OcrOutput,
     _ocr_image,
     build_markdown,
     extract_document,
+    extract_vision_markdown,
     reextract_document_with_vision,
 )
 from .models import Document
@@ -482,9 +485,9 @@ class BuildMarkdownTests(TestCase):
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
 class ReextractDocumentWithVisionTests(TestCase):
-    """Manuelle KI-Vision-Neuextraktion (#1143): erzwingt Vision fuer jede
-    Seite, unabhaengig davon, ob Text-Layer/OCR ausgereicht haetten --
-    siehe CLAUDE.md "Manuelle KI-Vision-Neuextraktion".
+    """Erzwungene KI-Vision-Extraktion (#1143): Vision fuer jede Seite,
+    unabhaengig davon, ob Text-Layer/OCR ausgereicht haetten -- siehe
+    CLAUDE.md "KI-Vision-Extraktion nach Markdown".
     """
 
     @classmethod
@@ -519,7 +522,7 @@ class ReextractDocumentWithVisionTests(TestCase):
         self.assertEqual(result.processing_status, Document.ProcessingStatus.READY)
         self.assertEqual(len(vision_provider.calls), 1)
 
-    @requires_pdf_rasterizer("mehrseitige KI-Vision-Neuextraktion")
+    @requires_pdf_rasterizer("mehrseitige KI-Vision-Extraktion")
     def test_multi_page_pdf_joins_pages_with_visible_page_markers(self):
         pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
         document = _make_document(filename="mixed.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -538,7 +541,7 @@ class ReextractDocumentWithVisionTests(TestCase):
         self.assertEqual(image.mime_type, "image/png")
         self.assertTrue(prompt)
 
-    @requires_pdf_rasterizer("Seitenobergrenze der KI-Vision-Neuextraktion")
+    @requires_pdf_rasterizer("Seitenobergrenze der KI-Vision-Extraktion")
     @override_settings(FINDUS_VISION_REEXTRACT_MAX_PAGES=1)
     def test_page_limit_truncates_and_is_reported(self):
         pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
@@ -589,3 +592,333 @@ class ReextractDocumentWithVisionTests(TestCase):
 
         self.assertEqual(result.document_date, manual_date)
         self.assertEqual(result.metadata["document_date_source"], "manuell")
+
+
+class _ScriptedVisionProvider:
+    """Vision-Provider mit Drehbuch: je Aufruf entweder eine Antwort oder
+    eine Exception.
+
+    `FakeVisionProvider` liefert fuer jeden Aufruf dieselbe Antwort und kann
+    deshalb nicht ausdruecken, worum es bei der Seiten-Toleranz (#1148) geht:
+    Seite 2 faellt aus, Seite 1 und 3 nicht.
+    """
+
+    name = "scripted"
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+
+    def describe_image(self, image, prompt):
+        from apps.ai.providers.base import VisionResult
+
+        self.calls.append((image, prompt))
+        step = self.script[min(len(self.calls) - 1, len(self.script) - 1)]
+        if isinstance(step, Exception):
+            raise step
+        return VisionResult(text=step, model="scripted-vision", version="1")
+
+
+_LAB_TABLE = (
+    "### Laborbefund\n"
+    "\n"
+    "| Bezeichnung | Ergebnis | Referenzbereich | Einheit |\n"
+    "| --- | --- | --- | --- |\n"
+    "| Haemoglobin | 13,4 | 12,0-16,0 | g/dl |\n"
+    "| Leukozyten | 9,1 | 4,0-10,0 | /nl |\n"
+    "\n"
+    "### Handschriftliche Vermerke\n"
+    "\n"
+    "- Neben 'Leukozyten' eingekreist, dazu handschriftlich: 'Kontrolle in 4 Wochen'\n"
+)
+
+
+def _png_document(filename="scan.png"):
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+    return _make_document(filename=filename, data=buffer.getvalue(), mime_type="image/png")
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class VisionMarkdownExtractionTests(TestCase):
+    """KI-Vision-Extraktion nach Markdown (#1148): der erzwungene Lauf gibt
+    strukturerhaltendes Markdown zurueck -- Tabellen bleiben Tabellen -- und
+    legt es sowohl in `markdown` (Ansicht) als auch in `text_content` (Index)
+    ab.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def test_table_rows_stay_intact_in_text_and_markdown(self):
+        document = _png_document()
+        provider = _ScriptedVisionProvider([_LAB_TABLE])
+
+        result = reextract_document_with_vision(document.id, vision_provider=provider)
+
+        # Der eigentliche Zweck des Features: Wert, Referenzbereich und
+        # Einheit stehen in *einer* Zeile, nicht in vier getrennten Listen.
+        self.assertIn("| Haemoglobin | 13,4 | 12,0-16,0 | g/dl |", result.text_content)
+        self.assertIn("| Haemoglobin | 13,4 | 12,0-16,0 | g/dl |", result.markdown)
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+
+    def test_handwriting_stays_in_its_own_section(self):
+        document = _png_document()
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=_ScriptedVisionProvider([_LAB_TABLE])
+        )
+
+        heading_at = result.text_content.index("### Handschriftliche Vermerke")
+        table_at = result.text_content.index("| Haemoglobin")
+        self.assertLess(table_at, heading_at)
+        self.assertIn("Kontrolle in 4 Wochen", result.text_content[heading_at:])
+
+    def test_the_markdown_contract_prompt_is_used(self):
+        document = _png_document()
+        provider = _ScriptedVisionProvider([_LAB_TABLE])
+
+        reextract_document_with_vision(document.id, vision_provider=provider)
+
+        _image, prompt = provider.calls[0]
+        self.assertEqual(prompt, vision_markdown.PAGE_PROMPT)
+
+    def test_a_fenced_answer_is_unwrapped_before_saving(self):
+        document = _png_document()
+        provider = _ScriptedVisionProvider(["```markdown\n| A | B |\n| --- | --- |\n```"])
+
+        result = reextract_document_with_vision(document.id, vision_provider=provider)
+
+        self.assertTrue(result.text_content.startswith("| A | B |"))
+        self.assertNotIn("```", result.text_content)
+
+    def test_an_unreadable_page_is_reported_instead_of_invented(self):
+        document = _png_document()
+        marker = f"{vision_markdown.UNREADABLE_PAGE_MARKER} (ueberbelichtet)"
+        provider = _ScriptedVisionProvider([marker])
+
+        result = reextract_document_with_vision(document.id, vision_provider=provider)
+
+        self.assertEqual(result.text_content, marker)
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+
+    def test_an_empty_answer_fails_the_run_and_keeps_the_previous_text(self):
+        document = _png_document()
+        document.text_content = "Alter OCR-Text."
+        document.processing_status = Document.ProcessingStatus.READY
+        document.save()
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=_ScriptedVisionProvider(["   "])
+        )
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.FAILED
+        )
+        self.assertEqual(result.text_content, "Alter OCR-Text.")
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.READY)
+
+    def test_provider_failure_keeps_the_document_usable(self):
+        from apps.ai.providers.base import ProviderError
+
+        document = _png_document()
+        document.text_content = "Alter OCR-Text."
+        document.processing_status = Document.ProcessingStatus.READY
+        document.save()
+
+        result = reextract_document_with_vision(
+            document.id,
+            vision_provider=_ScriptedVisionProvider([ProviderError("provider down")]),
+        )
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.FAILED
+        )
+        self.assertNotEqual(result.vision_reextraction_error, "")
+        self.assertEqual(result.text_content, "Alter OCR-Text.")
+
+    @requires_pdf_rasterizer("seitenweise KI-Vision-Extraktion nach Markdown")
+    def test_one_failing_page_does_not_devalue_the_others(self):
+        from apps.ai.providers.base import ProviderError
+
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
+        document = _make_document(
+            filename="befund.pdf", data=pdf_bytes, mime_type="application/pdf"
+        )
+        provider = _ScriptedVisionProvider(
+            ["### Seite eins", ProviderError("timeout"), "### Seite drei"]
+        )
+
+        result = reextract_document_with_vision(document.id, vision_provider=provider)
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+        self.assertIn("### Seite eins", result.text_content)
+        self.assertIn("### Seite drei", result.text_content)
+        # Die ausgefallene Seite bleibt als benannte Luecke an ihrer Stelle
+        # stehen -- sonst verschoebe sich die Seitenzaehlung.
+        self.assertIn("--- Seite 2 ---", result.text_content)
+        self.assertIn("nicht verarbeitet werden", result.text_content)
+        self.assertLess(
+            result.text_content.index("--- Seite 2 ---"),
+            result.text_content.index("--- Seite 3 ---"),
+        )
+        self.assertEqual(result.vision_reextraction_pages_processed, 2)
+        self.assertEqual(result.vision_reextraction_pages_total, 3)
+
+    def test_the_original_file_is_left_untouched(self):
+        """Die Markdown-Fassung ist ein abgeleitetes Artefakt (#1148) -- das
+        Original bleibt fuehrend und unveraendert herunterladbar.
+        """
+        document = _png_document()
+        document.original_file.open("rb")
+        try:
+            before = document.original_file.read()
+        finally:
+            document.original_file.close()
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=_ScriptedVisionProvider([_LAB_TABLE])
+        )
+
+        result.original_file.open("rb")
+        try:
+            after = result.original_file.read()
+        finally:
+            result.original_file.close()
+        self.assertEqual(before, after)
+        self.assertEqual(result.sha256, document.sha256)
+
+    def test_the_markdown_reaches_the_index(self):
+        """Die erhaltene Struktur ist genau dann etwas wert, wenn sie auch
+        in den Chunks steht, aus denen das Retrieval antwortet -- deshalb
+        landet das Markdown in `text_content` und nicht nur im
+        Markdown-Cache.
+        """
+        from apps.ai.providers.fake import FakeEmbeddingProvider
+
+        from .processing import process_document
+
+        document = _png_document()
+        reextract_document_with_vision(
+            document.id, vision_provider=_ScriptedVisionProvider([_LAB_TABLE])
+        )
+
+        process_document(
+            document.id,
+            embedding_provider=FakeEmbeddingProvider(dimensions=settings.FINDUS_EMBEDDING_DIMENSIONS),
+        )
+
+        chunk_contents = [chunk.content for chunk in document.chunks.all()]
+        self.assertTrue(
+            any("| Haemoglobin | 13,4 | 12,0-16,0 | g/dl |" in content for content in chunk_contents),
+            f"Tabellenzeile in keinem Chunk gefunden: {chunk_contents}",
+        )
+
+    @requires_pdf_rasterizer("KI-Vision-Extraktion mit durchgehend fehlerhaften Seiten")
+    def test_every_page_failing_marks_the_run_failed(self):
+        from apps.ai.providers.base import ProviderError
+
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
+        document = _make_document(filename="kaputt.pdf", data=pdf_bytes, mime_type="application/pdf")
+        document.text_content = "Alter OCR-Text."
+        document.save()
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=_ScriptedVisionProvider([ProviderError("down")])
+        )
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.FAILED
+        )
+        self.assertEqual(result.text_content, "Alter OCR-Text.")
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class VisionMarkdownIdempotencyTests(TestCase):
+    """Kosten- und Wiederholungsvertrag (#1148): dieselbe unveraenderte
+    Datei loest keinen zweiten Modellaufruf aus, ein erzwungener Re-Run
+    schon.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def test_second_run_over_an_unchanged_file_calls_no_model(self):
+        document = _png_document()
+        provider = _ScriptedVisionProvider([_LAB_TABLE])
+
+        first = extract_vision_markdown(document.id, vision_provider=provider)
+        second = extract_vision_markdown(document.id, vision_provider=provider)
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_forced_rerun_calls_the_model_again(self):
+        document = _png_document()
+        provider = _ScriptedVisionProvider([_LAB_TABLE])
+
+        extract_vision_markdown(document.id, vision_provider=provider)
+        extract_vision_markdown(document.id, force=True, vision_provider=provider)
+
+        self.assertEqual(len(provider.calls), 2)
+
+    def test_a_failed_run_is_retried_rather_than_skipped(self):
+        from apps.ai.providers.base import ProviderError
+
+        document = _png_document()
+        provider = _ScriptedVisionProvider([ProviderError("down"), _LAB_TABLE])
+
+        extract_vision_markdown(document.id, vision_provider=provider)
+        result = extract_vision_markdown(document.id, vision_provider=provider)
+
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+
+    def test_a_regular_reextraction_makes_the_document_eligible_again(self):
+        """Ein regulaerer Reprocess ersetzt `text_content` durch den
+        Kaskadentext -- der Fingerabdruck gehoert zu dem Text, der gerade
+        da steht, und muss deshalb mit zurueckgesetzt werden.
+        """
+        document = _png_document()
+        extract_vision_markdown(
+            document.id, vision_provider=_ScriptedVisionProvider([_LAB_TABLE])
+        )
+
+        with patch(
+            "apps.documents.extraction._ocr_image",
+            return_value=_OcrOutput(text=_GERMAN_PARAGRAPH, confidence=95.0),
+        ):
+            extract_document(document.id)
+
+        document.refresh_from_db()
+        self.assertEqual(document.vision_reextraction_fingerprint, "")
+        self.assertFalse(vision_markdown.is_up_to_date(document))
+
+    @requires_pdf_rasterizer("Fingerabdruck bei abgeschnittenem Lauf")
+    @override_settings(FINDUS_VISION_REEXTRACT_MAX_PAGES=1)
+    def test_a_truncated_run_stays_eligible_for_the_remaining_pages(self):
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
+        document = _make_document(filename="lang.pdf", data=pdf_bytes, mime_type="application/pdf")
+
+        result = extract_vision_markdown(
+            document.id, vision_provider=_ScriptedVisionProvider([_LAB_TABLE])
+        )
+
+        self.assertTrue(result.vision_reextraction_truncated)
+        self.assertEqual(result.vision_reextraction_fingerprint, "")
+        self.assertFalse(vision_markdown.is_up_to_date(result))
