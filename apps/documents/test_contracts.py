@@ -337,6 +337,41 @@ class FailedVisionReextractionDoesNotFailDocumentTests(TestCase):
         self.assertEqual(result.text_content, "Alter, bereits erfasster Text.")
 
 
+class AutomaticVisionEgressIsOptInTests(TestCase):
+    """Kein Anhang geht ohne ausdrueckliche Konfiguration automatisch an
+    einen KI-Provider (CLAUDE.md, "KI-Vision-Extraktion nach Markdown").
+
+    Anhaenge tragen personenbezogene und besonders sensible Inhalte; ein
+    Upload allein ist keine Freigabe zum Egress. Der Schalter
+    `FINDUS_VISION_MARKDOWN_AUTO_SCOPE` muss deshalb in jedem Zweifelsfall
+    -- fehlend, leer, vertippt -- restriktiv wirken, nie grosszuegig.
+    """
+
+    def _document(self):
+        return Document.objects.create(
+            title="Scan",
+            sha256="abc123",
+            metadata={"mime_type": "application/pdf"},
+            extraction_method=Document.ExtractionMethod.OCR,
+        )
+
+    def test_missing_setting_means_no_automatic_egress(self):
+        from types import SimpleNamespace
+
+        from . import vision_markdown
+
+        with patch.object(vision_markdown, "settings", SimpleNamespace()):
+            self.assertFalse(vision_markdown.auto_scope_includes(self._document()))
+
+    def test_an_unrecognised_scope_value_means_no_automatic_egress(self):
+        from . import vision_markdown
+
+        for value in ("", "alles", "on", "true"):
+            with self.subTest(value=value):
+                with override_settings(FINDUS_VISION_MARKDOWN_AUTO_SCOPE=value):
+                    self.assertFalse(vision_markdown.auto_scope_includes(self._document()))
+
+
 class NoSecondDoneStateOnCommentsTests(TestCase):
     """`Document.action_status` ist die einzige Zustandsquelle fuer "hier
 

@@ -1,12 +1,15 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.conf import settings
+from django.test import TestCase, override_settings
 
 from .models import Document, Vorgang, VorgangRecommendationRun
 from .tasks import (
     analyze_document_task,
     extract_document_task,
+    extract_vision_markdown_hook,
+    extract_vision_markdown_task,
     generate_vorgang_recommendations_hook,
     process_document_task,
 )
@@ -112,3 +115,120 @@ class GenerateVorgangRecommendationsHookTests(TestCase):
         task = SimpleNamespace(success=False, args=())
 
         generate_vorgang_recommendations_hook(task)  # must not raise
+
+
+@override_settings(FINDUS_VISION_MARKDOWN_AUTO_SCOPE="scans")
+class AutomaticVisionMarkdownHandoffTests(TestCase):
+    """Automatische KI-Vision-Extraktion nach Markdown (#1148): nach der
+    Extraktion entscheidet die Konfiguration, ob das Dokument zusaetzlich
+    strukturerhaltend transkribiert wird -- und wer die Pipeline weiterreicht.
+    """
+
+    def _scan(self, method=Document.ExtractionMethod.OCR):
+        return Document.objects.create(
+            title="Scan",
+            sha256="abc123",
+            metadata={"mime_type": "application/pdf"},
+            extraction_method=method,
+            text_content="OCR-Text",
+        )
+
+    @override_settings(FINDUS_VISION_MARKDOWN_AUTO_SCOPE="off")
+    def test_scope_off_hands_straight_to_the_analysis(self):
+        """Der Default: kein Anhang verlaesst die Instanz automatisch, die
+        Pipeline laeuft unveraendert weiter.
+        """
+        document = self._scan()
+
+        with patch("apps.documents.tasks.extract_document"), patch(
+            "apps.documents.tasks.generate_thumbnail_for_document"
+        ), patch("django_q.tasks.async_task") as mock_async_task:
+            extract_document_task(document.id)
+
+        mock_async_task.assert_called_once_with(analyze_document_task, document.id)
+
+    def test_a_scan_is_handed_to_the_vision_markdown_task_instead(self):
+        document = self._scan()
+
+        with patch("apps.documents.tasks.extract_document"), patch(
+            "apps.documents.tasks.generate_thumbnail_for_document"
+        ), patch("django_q.tasks.async_task") as mock_async_task:
+            extract_document_task(document.id)
+
+        mock_async_task.assert_called_once()
+        args, kwargs = mock_async_task.call_args
+        self.assertEqual(args, (extract_vision_markdown_task, document.id))
+        # Eigener, grosszuegiger Task-Timeout plus Hook -- der Lauf macht
+        # mehrere Modellaufrufe (CLAUDE.md, "Hintergrundjobs mit LLM-Aufruf").
+        self.assertEqual(
+            kwargs["timeout"], settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS
+        )
+        self.assertEqual(kwargs["hook"], extract_vision_markdown_hook)
+
+    def test_a_born_digital_pdf_is_left_to_the_normal_pipeline(self):
+        document = self._scan(method=Document.ExtractionMethod.TEXT_LAYER)
+
+        with patch("apps.documents.tasks.extract_document"), patch(
+            "apps.documents.tasks.generate_thumbnail_for_document"
+        ), patch("django_q.tasks.async_task") as mock_async_task:
+            extract_document_task(document.id)
+
+        mock_async_task.assert_called_once_with(analyze_document_task, document.id)
+
+    def test_the_vision_task_always_continues_the_pipeline(self):
+        """Auch ein uebersprungener oder fehlgeschlagener Zusatzlauf darf das
+        Dokument nicht unindiziert liegen lassen -- der Kaskadentext ist ja
+        noch da.
+        """
+        document = self._scan()
+
+        with patch(
+            "apps.documents.tasks.extract_vision_markdown", return_value=None
+        ) as mock_extract, patch("django_q.tasks.async_task") as mock_async_task:
+            extract_vision_markdown_task(document.id)
+
+        mock_extract.assert_called_once_with(document.id)
+        mock_async_task.assert_called_once_with(analyze_document_task, document.id)
+
+
+class ExtractVisionMarkdownHookTests(TestCase):
+    """Sicherheitsnetz fuer einen Worker, der stirbt, bevor der Task selbst
+    noch etwas aufzeichnen oder weiterreichen konnte (#1148).
+    """
+
+    def _running_document(self):
+        return Document.objects.create(
+            title="Scan",
+            vision_reextraction_status=Document.VisionReextractionStatus.RUNNING,
+        )
+
+    def test_successful_task_is_left_alone(self):
+        document = self._running_document()
+
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            extract_vision_markdown_hook(SimpleNamespace(success=True, args=[document.id]))
+
+        mock_async_task.assert_not_called()
+        document.refresh_from_db()
+        self.assertEqual(
+            document.vision_reextraction_status, Document.VisionReextractionStatus.RUNNING
+        )
+
+    def test_dead_task_is_marked_failed_and_the_pipeline_continues(self):
+        document = self._running_document()
+
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            extract_vision_markdown_hook(SimpleNamespace(success=False, args=[document.id]))
+
+        document.refresh_from_db()
+        self.assertEqual(
+            document.vision_reextraction_status, Document.VisionReextractionStatus.FAILED
+        )
+        self.assertNotEqual(document.vision_reextraction_error, "")
+        mock_async_task.assert_called_once_with(analyze_document_task, document.id)
+
+    def test_no_args_is_a_no_op(self):
+        with patch("django_q.tasks.async_task") as mock_async_task:
+            extract_vision_markdown_hook(SimpleNamespace(success=False, args=[]))
+
+        mock_async_task.assert_not_called()

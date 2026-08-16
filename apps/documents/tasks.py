@@ -1,7 +1,12 @@
+from django.conf import settings
 from django.utils import timezone
 
 from .analysis import analyze_document
-from .extraction import extract_document, reextract_document_with_vision
+from .extraction import (
+    extract_document,
+    extract_vision_markdown,
+    reextract_document_with_vision,
+)
 from .letter_generation import generate_letter_draft
 from .long_summary import generate_document_long_summary, generate_vorgang_long_summary
 from .processing import process_document
@@ -27,9 +32,99 @@ def extract_document_task(document_id):
     render failure leaves the document without a thumbnail (UI shows a
     placeholder) instead of breaking the pipeline, exactly like the
     KI-Analyse.
+
+    Danach entscheidet `vision_markdown.should_extract_automatically`
+    (#1148), ob dieses Dokument zusaetzlich strukturerhaltend per KI-Vision
+    nach Markdown transkribiert wird -- ein reiner DB-Blick (Format,
+    `FINDUS_VISION_MARKDOWN_AUTO_SCOPE`, Idempotenz-Fingerabdruck), kein
+    Modellaufruf. Faellt er positiv aus, uebernimmt
+    `extract_vision_markdown_task` das Weiterreichen an die Analyse.
+
+    Der Vision-Lauf laeuft bewusst als *eigener* Task und nicht hier
+    inline: er macht bis zu `FINDUS_VISION_REEXTRACT_MAX_PAGES`
+    Modellaufrufe und braucht dafuer den grosszuegigen Task-Timeout, waehrend
+    dieser Task hier beim knappen Cluster-Default bleiben soll, damit ein
+    haengender Ingest weiterhin schnell auffaellt (CLAUDE.md,
+    "Hintergrundjobs mit LLM-Aufruf"). Er laeuft ebenso bewusst *vor* der
+    Analyse und nicht nach der fertigen Pipeline: sonst liefen Analyse und
+    Embedding zweimal -- einmal auf dem Kaskadentext und danach noch einmal
+    auf dem Markdown, das ihn ersetzt.
     """
     extract_document(document_id)
     generate_thumbnail_for_document(document_id)
+
+    from django_q.tasks import async_task
+
+    from .models import Document
+    from .vision_markdown import should_extract_automatically
+
+    document = Document.objects.get(pk=document_id)
+    if should_extract_automatically(document):
+        async_task(
+            extract_vision_markdown_task,
+            document_id,
+            timeout=settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
+            hook=extract_vision_markdown_hook,
+        )
+        return
+
+    async_task(analyze_document_task, document_id)
+
+
+def extract_vision_markdown_task(document_id):
+    """Django-Q2 worker entry point fuer die automatische KI-Vision-
+    Extraktion nach Markdown (#1148) -- eingereiht von
+    `extract_document_task`, sofern `FINDUS_VISION_MARKDOWN_AUTO_SCOPE` das
+    Dokument einschliesst, und von `manage.py extract_vision_markdown
+    --queue` fuer den Bestand.
+
+    Die Analyse wird **immer** angestossen, auch wenn der Lauf
+    uebersprungen wurde oder fehlgeschlagen ist: dieser Task steht mitten in
+    der Ingest-Pipeline, und ein misslungener Zusatzlauf darf ein Dokument
+    nicht unindiziert liegen lassen. Bei Fehlschlag ist der bisherige
+    Kaskadentext noch da (`reextract_document_with_vision` ruehrt
+    `text_content` nur bei Erfolg an) -- die Analyse arbeitet dann eben
+    darauf weiter.
+
+    `extract_vision_markdown()` zeichnet einen gewoehnlichen Provider-/
+    Parsing-Fehler selbst am Dokument auf und wirft dafuer nicht -- reicht
+    aber eine Django-Q-`TimeoutException` weiter, damit Django-Q den
+    Worker-Prozess neu startet. Dann greift der Hook unten.
+    """
+    extract_vision_markdown(document_id)
+
+    from django_q.tasks import async_task
+
+    async_task(analyze_document_task, document_id)
+
+
+def extract_vision_markdown_hook(task):
+    """Sicherheitsnetz fuer `extract_vision_markdown_task` (#1148).
+
+    Zwei Dinge, die der Task selbst nicht mehr schafft, wenn sein Prozess
+    vorher stirbt (Timeout, OOM-Kill): den Lauf als fehlgeschlagen
+    kennzeichnen -- analog `reextract_document_with_vision_hook` -- und die
+    Pipeline weiterlaufen lassen, damit das Dokument nicht dauerhaft auf
+    `extracting` stehen bleibt und nie in den Index kommt.
+
+    Bei Erfolg passiert hier nichts: der Task hat die Analyse dann schon
+    selbst eingereiht, ein zweiter Aufruf waere eine doppelte Analyse.
+    """
+    if task.success:
+        return
+
+    document_id = task.args[0] if task.args else None
+    if document_id is None:
+        return
+
+    from .models import Document
+
+    Document.objects.filter(
+        pk=document_id, vision_reextraction_status=Document.VisionReextractionStatus.RUNNING
+    ).update(
+        vision_reextraction_status=Document.VisionReextractionStatus.FAILED,
+        vision_reextraction_error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
+    )
 
     from django_q.tasks import async_task
 

@@ -584,11 +584,12 @@ FINDUS_EXTRACTION_OCR_LANGUAGES = env("FINDUS_EXTRACTION_OCR_LANGUAGES", "deu+en
 FINDUS_EXTRACTION_PDF_RENDER_DPI = int(env("FINDUS_EXTRACTION_PDF_RENDER_DPI", "200"))
 
 # --------------------------------------------------------------------------
-# Manuelle KI-Vision-Neuextraktion (apps.documents.extraction.
-# reextract_document_with_vision, #1143): bewusst ausgeloester, teurerer
-# zweiter Anlauf fuer Dokumente, bei denen Text-Layer/OCR bereits
-# verstuemmelten oder unvollstaendigen Text geliefert haben -- erzwingt
-# Vision fuer jede Seite statt der obigen Kaskade nur eskalieren zu lassen.
+# Erzwungene KI-Vision-Extraktion (apps.documents.extraction.
+# reextract_document_with_vision, #1143/#1148): teurerer Zusatzlauf fuer
+# Dokumente, bei denen Text-Layer/OCR verstuemmelten oder unvollstaendigen
+# Text geliefert haben -- erzwingt Vision fuer jede Seite statt der obigen
+# Kaskade nur eskalieren zu lassen, und laesst sich das Ergebnis als
+# strukturerhaltendes Markdown geben (Tabellen bleiben Tabellen, #1148).
 # MAX_PAGES begrenzt Laufzeit/Kosten je Lauf (ueberzaehlige Seiten werden
 # sichtbar als "abgeschnitten" markiert, nicht stillschweigend ignoriert).
 # PDF_RENDER_DPI ist eigens hoeher als FINDUS_EXTRACTION_PDF_RENDER_DPI --
@@ -608,6 +609,18 @@ FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS = int(
 FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS = int(
     env("FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS", "2400")
 )
+
+# Datenschutz-Schalter fuer den *automatischen* Lauf nach dem Ingest (#1148,
+# apps.documents.vision_markdown.auto_scope_includes). Anhaenge tragen
+# personenbezogene und besonders sensible Inhalte -- ob sie an den
+# konfigurierten Vision-Provider gehen, ist eine bewusste Entscheidung, kein
+# Nebeneffekt eines Uploads. Deshalb `off` als Default: ohne Zutun verlaesst
+# kein Anhang die Instanz automatisch.
+#   off   -- keine Automatik (nur Knopf am Dokument / Management-Command)
+#   scans -- nur Dokumente ohne brauchbaren Text-Layer (extraction_method
+#            ocr/vision), also genau die Scans und Fotos, um die es geht
+#   all   -- jedes seitenweise renderbare Dokument (PDF/Bild)
+FINDUS_VISION_MARKDOWN_AUTO_SCOPE = env("FINDUS_VISION_MARKDOWN_AUTO_SCOPE", "off")
 
 # --------------------------------------------------------------------------
 # Thumbnails (apps.documents.thumbnails, #1123): beim Ingest gerendertes
