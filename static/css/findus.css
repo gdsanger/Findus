@@ -1249,6 +1249,19 @@ body {
     justify-content: flex-end;
 }
 
+/* Aufklappbare Detailliste eines Prüfhinweises (#1152) -- welche Werte
+   betroffen sind, nicht nur ihre Anzahl. Eingerückt und ohne die volle
+   Zeilenbreite des Fließtexts, damit sie sich sichtbar dem Hinweis
+   darüber unterordnet. */
+.findus-detail-content-check-details {
+    width: 100%;
+}
+
+.findus-detail-content-check-details ul {
+    margin: var(--findus-space-1) 0 0;
+    padding-left: var(--findus-space-4);
+}
+
 .findus-detail-content-text {
     max-height: 32rem;
     overflow-y: auto;

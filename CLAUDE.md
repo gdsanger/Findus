@@ -150,9 +150,16 @@ der eigentliche Grund, warum sich der Zusatzlauf trotz Mehrkosten lohnt.
   Provider-Schicht kennt keinen Mehrbild-Call). Der Ausgabe-Kontrakt steht
   im Prompt (`extraction._VISION_MARKDOWN_PROMPT`) **und** im Docstring
   daneben: reine Transkription ohne Zusammenfassen/Interpretieren,
-  Tabellen als Markdown-Tabelle mit Bezeichnung/Wert/Referenz/Einheit in
-  einer Zeile, Handschrift/Stempel in einem eigenen Abschnitt, unsichere
-  Lesungen ausdrücklich markiert, leere/unlesbare Seiten benannt statt
+  Tabellen als Markdown-Tabelle mit Bezeichnung/Ergebnis/Referenz/
+  Einheit/Material **derselben Zeile gemeinsam gelesen**, nicht
+  spaltenweise gesammelt und hinterher zusammengeführt (#1152 — genau
+  dabei verrutschen Zeilen gegeneinander); eine leere/unleserliche Zelle
+  bleibt leer statt den nächsten Wert nachrücken zu lassen; eine
+  Kopfzeile legt die Spaltenzahl für alle Zeilen ihrer Tabelle fest; eine
+  Fortsetzungszeile vom Ende der Vorseite gehört nicht als Zeile in die
+  neue Tabelle der Folgeseite. Handschrift/Stempel in einem eigenen
+  Abschnitt, unsichere Lesungen — auch einzelne Ziffernfolgen, nicht nur
+  Wörter — ausdrücklich markiert, leere/unlesbare Seiten benannt statt
   erfunden. `build_markdown()` fügt die Seiten zusammen (`## Seite N` je
   Seite ab der zweiten) — dieselbe Funktion wie beim `markdown`-Feld der
   Kaskade, hier aber der Inhalt von `text_content` selbst, nicht nur ein
@@ -174,6 +181,27 @@ der eigentliche Grund, warum sich der Zusatzlauf trotz Mehrkosten lohnt.
   Prüfung entfällt", nicht "keine Abweichung"; die beiden Fälle sehen in
   der UI sonst gleich aus. Kein zusätzlicher Modellaufruf, reiner
   Nachlauf in Code.
+- **Zwei weitere, rein rechnerische Plausibilitätsprüfungen** in
+  `apps.documents.table_plausibility` (#1152), beide ebenfalls Code statt
+  Prompt — ein Modell, das seine eigene Ausgabe validieren soll, übersieht
+  denselben Fehler ein zweites Mal. Ein reiner Vorkommens-Abgleich (oben)
+  übersieht einen Zeilenversatz, weil dabei alle Zahlen vorhanden sind,
+  nur an der falschen Stelle:
+  - **Einheiten-Plausibilität** (`check_unit_plausibility`): eine
+    Tabellenzeile, deren Einheit von der Mehrheit ihrer Tabelle abweicht,
+    landet in `unit_flags` — unabhängig von `performed`, sie braucht
+    keinen Text-Layer.
+  - **Zeilenweiser Text-Layer-Abgleich** (`find_row_shifts`): verlangt
+    zusätzlich zur Vorkommens-Prüfung räumliche Nähe — stehen die
+    signifikanten Zahlen derselben Zeile im Text-Layer innerhalb eines
+    kleinen Zeichenfensters beieinander? Ergebnis in `row_shifts`, nur
+    wenn `performed` (Text-Layer vorhanden). Eine Zahl, die im Text-Layer
+    gar nicht vorkommt, ist weiterhin ein Fall von `unmatched`, kein
+    Zeilenversatz.
+  Der "Inhalt"-Tab listet zu jedem Befund die betroffenen Werte einzeln
+  auf (aufklappbar), nicht nur ihre Anzahl — eine bloße Zahl lässt nicht
+  erkennen, ob es sich um harmlose Schreibweisen oder um einen
+  Datenfehler handelt.
 - **Idempotent über einen Fingerabdruck** (`Document.
   vision_reextraction_fingerprint` = `sha256` der Originaldatei + Prompt-
   Version), gesetzt **nur nach einem vollständigen Erfolg** (keine

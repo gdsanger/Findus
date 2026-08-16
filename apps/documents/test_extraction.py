@@ -491,7 +491,7 @@ class VisionMarkdownPromptTests(SimpleTestCase):
 
     def test_prompt_demands_markdown_tables_with_one_row_per_line(self):
         self.assertIn("Markdown-Tabelle", _VISION_MARKDOWN_PROMPT)
-        self.assertIn("Referenzbereich und Einheit", _VISION_MARKDOWN_PROMPT)
+        self.assertIn("Referenzbereich, Einheit und Material", _VISION_MARKDOWN_PROMPT)
 
     def test_prompt_demands_a_separate_section_for_handwriting(self):
         self.assertIn("Handschriftliche Vermerke", _VISION_MARKDOWN_PROMPT)
@@ -501,6 +501,24 @@ class VisionMarkdownPromptTests(SimpleTestCase):
 
     def test_prompt_demands_flagging_blank_or_unreadable_pages(self):
         self.assertIn("leer oder nicht lesbar", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_reading_rows_as_a_unit_not_column_by_column(self):
+        # #1152: der eigentliche Fehler entstand durch spaltenweises
+        # Sammeln -- der Prompt muss das ausdruecklich verbieten.
+        self.assertIn("zusammenhaengende Einheit", _VISION_MARKDOWN_PROMPT)
+        self.assertIn("NICHT spaltenweise", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_leaving_missing_cells_empty(self):
+        self.assertIn("Kein Nachruecken des naechsten Werts", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_forbids_pulling_a_previous_pages_continuation_into_a_new_table(self):
+        self.assertIn("Fortsetzung eines Tabellenblocks vom Ende der Vorseite", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_a_constant_column_count_per_table(self):
+        self.assertIn("Kopfzeile einer Tabelle legt die Spaltenzahl fest", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_marking_uncertain_digit_sequences_too(self):
+        self.assertIn("schwer lesbare Ziffern oder Zahlenfolgen", _VISION_MARKDOWN_PROMPT)
 
 
 class StripCodeFenceTests(SimpleTestCase):
@@ -848,3 +866,56 @@ class VisionMarkdownNumberCrosscheckTests(TestCase):
 
         self.assertFalse(result.vision_reextraction_number_check["performed"])
         self.assertEqual(result.vision_reextraction_number_check["unmatched"], [])
+
+    @requires_pdf_rasterizer("Einheiten-Plausibilisierung der KI-Vision-Neuextraktion")
+    def test_a_row_with_a_deviating_unit_is_flagged(self):
+        # #1152: eine eingeschobene Fremdzeile faellt oft zuerst durch eine
+        # abweichende Einheit auf -- braucht keinen Text-Layer, laeuft rein
+        # gegen die Vision-Tabelle selbst.
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH])
+        document = _make_document(filename="labor.pdf", data=pdf_bytes, mime_type="application/pdf")
+        markdown_reply = (
+            "| Bezeichnung | Ergebnis | Referenzbereich | Einheit |\n"
+            "| --- | --- | --- | --- |\n"
+            "| GOT (ASAT) | 50 | 200 | mg/dl |\n"
+            "| GPT (ALAT) | 50 | 50 | U/l |\n"
+            "| gamma-GT | 50 | 60 | U/l |\n"
+        )
+        vision_provider = FakeVisionProvider(reply=markdown_reply)
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        unit_flags = result.vision_reextraction_number_check["unit_flags"]
+        self.assertEqual(len(unit_flags), 1)
+        self.assertEqual(unit_flags[0]["row"], "GOT (ASAT)")
+        self.assertEqual(unit_flags[0]["unit"], "mg/dl")
+        self.assertEqual(unit_flags[0]["expected_unit"], "U/l")
+
+    @requires_pdf_rasterizer("Zeilenversatz-Abgleich der KI-Vision-Neuextraktion")
+    def test_a_row_shift_is_reported_even_though_every_number_is_present(self):
+        # Kuenstlich nachgestelltes #1152: "50" und "200" stehen beide im
+        # Text-Layer, aber weit auseinander (unterschiedliche Messwerte,
+        # keine gemeinsame Zeile) -- der reine Vorkommens-Abgleich
+        # (`unmatched`) sieht darin keinen Fehler, der Zeilen-Abgleich schon.
+        reference_line = (
+            "GOT ASAT Ergebnis 50 U/l Normalbereich "
+            + ("Fuellwort " * 40)
+            + "Triglyceride erhoeht ueber 200 mg/dl Seitenende"
+        )
+        pdf_bytes = _make_pdf([reference_line])
+        document = _make_document(filename="labor.pdf", data=pdf_bytes, mime_type="application/pdf")
+        markdown_reply = (
+            "| Bezeichnung | Ergebnis | Referenzbereich |\n"
+            "| --- | --- | --- |\n"
+            "| GOT (ASAT) | 50 | 200 |\n"
+        )
+        vision_provider = FakeVisionProvider(reply=markdown_reply)
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        number_check = result.vision_reextraction_number_check
+        self.assertTrue(number_check["performed"])
+        self.assertEqual(number_check["unmatched"], [])
+        self.assertEqual(len(number_check["row_shifts"]), 1)
+        self.assertEqual(number_check["row_shifts"][0]["row"], "GOT (ASAT)")
+        self.assertEqual(set(number_check["row_shifts"][0]["numbers"]), {"50", "200"})
