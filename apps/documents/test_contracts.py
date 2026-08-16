@@ -337,6 +337,40 @@ class FailedVisionReextractionDoesNotFailDocumentTests(TestCase):
         self.assertEqual(result.text_content, "Alter, bereits erfasster Text.")
 
 
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=_TEST_MEDIA_ROOT)
+class RegularReprocessResetsVisionMarkdownProvenanceTests(TestCase):
+    """Ein regulaerer (Re-)Extract (#1149) faellt auf `content_format =
+    "text"` zurueck und leert `vision_reextraction_fingerprint`, sobald er
+    `text_content` neu schreibt -- sonst behauptet der "Inhalt"-Tab einen
+    Markdown-Lauf fuer Text, der laengst wieder ueberschrieben ist, und ein
+    spaeterer Klick auf "Mit KI-Vision neu extrahieren" wuerde faelschlich
+    als Idempotenz-Treffer uebersprungen (CLAUDE.md, "Manuelle KI-Vision-
+    Neuextraktion").
+    """
+
+    def test_regular_extract_resets_content_format_and_fingerprint(self):
+        from .extraction import extract_document
+
+        document = Document.objects.create(
+            title="Text.txt",
+            metadata={"mime_type": "text/plain", "original_filename": "Text.txt"},
+            content_format=Document.ContentFormat.MARKDOWN,
+            vision_reextraction_fingerprint="deadbeef:1",
+            vision_reextraction_model="fake-vision",
+            vision_reextraction_model_version="1",
+            vision_reextraction_number_check={"performed": True, "unmatched": ["123"]},
+        )
+        document.original_file.save("Text.txt", _dummy_file(b"Neuer Text ohne Markdown."))
+
+        result = extract_document(document.id)
+
+        self.assertEqual(result.content_format, Document.ContentFormat.TEXT)
+        self.assertEqual(result.vision_reextraction_fingerprint, "")
+        self.assertEqual(result.vision_reextraction_model, "")
+        self.assertEqual(result.vision_reextraction_model_version, "")
+        self.assertEqual(result.vision_reextraction_number_check, {})
+
+
 class NoSecondDoneStateOnCommentsTests(TestCase):
     """`Document.action_status` ist die einzige Zustandsquelle fuer "hier
 
