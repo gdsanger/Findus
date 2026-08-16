@@ -8,18 +8,30 @@ Zustand wird serverseitig aus dem gespeicherten Wert abgeleitet
 (`document_action_status_toggle`), nie aus einem mitgeschickten
 Wunschzustand -- deshalb genügt ein einfacher POST ohne Payload.
 
+Erwartet `document` explizit im Kontext (immer per `with ... only`
+eingebunden, #1139) -- kein Rückgriff auf eine zufällig gleichnamige
+Variable der einbindenden Schleife. `swap_key` ist optional und
+unterscheidet mehrere Vorkommen desselben Dokuments (Wiedervorlagen: ein
+Dokument mit zwei Terminen erscheint zweimal, `document.pk` allein wäre
+keine eindeutige Kennung); ohne `swap_key` fällt die Kennung auf
+`document.pk` zurück. `hx-sync="this:abort"` bezieht sich bewusst auf den
+Button selbst, nicht auf einen Vorfahren -- ein Selektor, der ins Leere
+läuft (z. B. `closest [hx-trigger]`, wenn kein Pending-Poller im DOM steht),
+lässt HTMX schon vor dem Request mit einem `TypeError` abstürzen (#1139).
+
 Der Endpunkt liefert bei einem Fehler keinen 2xx-Status, HTMX tauscht dann
 nichts -- der alte Zustand bleibt stehen, die Fehlermeldung daneben wird nur
 eingeblendet.
 {% endcomment %}
-<span id="document-status-{{ document.pk }}" class="findus-action-status-toggle-wrap">
+{% with key=swap_key|default:document.pk %}
+<span id="document-status-{{ key }}" class="findus-action-status-toggle-wrap">
     <button
         type="button"
         class="badge findus-action-status-toggle {{ document.action_status|action_status_badge_class|default:"border text-body-secondary" }}"
-        hx-post="{% url 'documents:action_status_toggle' document.pk %}"
-        hx-target="closest .findus-action-status-toggle-wrap"
+        hx-post="{% url 'documents:action_status_toggle' document.pk %}?swap_key={{ key }}"
+        hx-target="#document-status-{{ key }}"
         hx-swap="outerHTML"
-        hx-sync="closest [hx-trigger]:abort"
+        hx-sync="this:abort"
         hx-disabled-elt="this"
         aria-pressed="{% if document.action_status == 'erledigt' %}true{% else %}false{% endif %}"
         title="{% if document.action_status == 'erledigt' %}Erledigung aufheben{% else %}Als erledigt markieren{% endif %}"
@@ -32,3 +44,4 @@ eingeblendet.
         Konnte nicht gespeichert werden.
     </span>
 </span>
+{% endwith %}

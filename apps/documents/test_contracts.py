@@ -22,6 +22,7 @@ from django.core.files.base import ContentFile
 from django.template.loader import get_template
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import Department
 from apps.ai.providers.fake import FakeEmbeddingProvider, FakeGenerationProvider
@@ -518,6 +519,97 @@ class QClusterRetryOutlivesTimeoutTests(SimpleTestCase):
         self.assertGreater(
             settings.FINDUS_VORGANG_LONG_SUMMARY_POLL_TIMEOUT_SECONDS,
             settings.FINDUS_VORGANG_LONG_SUMMARY_TASK_TIMEOUT_SECONDS,
+        )
+
+
+class ActionStatusToggleTargetsExistTests(TestCase):
+    """Der Erledigt-Schalter (#1137) crashte in den Übersichten, weil sein
+
+    `hx-target`/`hx-sync` auf Elemente zeigte, die im gerenderten Markup gar
+    nicht existierten -- HTMX bricht dann schon vor dem Request mit einem
+    `TypeError` ab, nicht erst am Server (#1139). Geprueft wird das
+    gerenderte Markup aller vier Ansichten: zu jedem Schalter mit
+    `hx-target="#…"` muss im selben Markup ein Element mit genau dieser
+    `id` existieren, und keine dieser IDs darf auf einen leeren Wert enden
+    -- das waere das Symptom einer falsch benannten Kontextvariable im
+    gemeinsamen Partial (`_action_status_toggle.html`).
+    """
+
+    # Nur die Ziele des Erledigt-Schalters (`document-status-…`) -- die
+    # Seite hat weitere `hx-target`-Attribute (Filterformular, Upload,
+    # Pagination), die mit diesem Ticket nichts zu tun haben.
+    _TARGET_RE = re.compile(r'hx-target="#(document-status-[^"]*)"')
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme", visibility=Document.Visibility.DEPARTMENT
+        )
+        self.doc.departments.add(self.dept)
+
+        # Ein Dokument mit zwei Wiedervorlagen erscheint in dieser Ansicht
+        # zweimal (#1129) -- `document.pk` allein waere dort keine
+        # eindeutige Kennung fuer den Schalter.
+        today = timezone.localdate()
+        DocumentComment.objects.create(
+            document=self.doc, body="Erster Termin", follow_up_date=today
+        )
+        DocumentComment.objects.create(
+            document=self.doc, body="Zweiter Termin", follow_up_date=today
+        )
+
+        self.client.force_login(self.user)
+
+    def _assert_targets_resolve(self, html):
+        targets = self._TARGET_RE.findall(html)
+        self.assertTrue(targets, "Kein hx-target auf dem Erledigt-Schalter gefunden.")
+        for target_id in targets:
+            with self.subTest(target=target_id):
+                self.assertTrue(
+                    target_id and not target_id.endswith("-"),
+                    f'hx-target="#{target_id}" ist leer oder endet ohne Kennung -- '
+                    "der Erledigt-Schalter zeigt vermutlich auf eine nicht "
+                    "gesetzte Kontextvariable.",
+                )
+                self.assertIn(
+                    f'id="{target_id}"',
+                    html,
+                    f'Kein Element mit id="{target_id}" im Markup -- der '
+                    "hx-target des Erledigt-Schalters laeuft ins Leere.",
+                )
+
+    def test_grid_view_targets_exist(self):
+        response = self.client.get(reverse("documents:home"), {"view": "grid"})
+        self._assert_targets_resolve(response.content.decode())
+
+    def test_table_view_targets_exist(self):
+        response = self.client.get(reverse("documents:home"), {"view": ""})
+        self._assert_targets_resolve(response.content.decode())
+
+    def test_timeline_view_targets_exist(self):
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+        self._assert_targets_resolve(response.content.decode())
+
+    def test_wiedervorlagen_view_targets_are_unique_per_entry(self):
+        response = self.client.get(reverse("documents:home"), {"view": "wiedervorlagen"})
+        html = response.content.decode()
+        self._assert_targets_resolve(html)
+
+        targets = self._TARGET_RE.findall(html)
+        self.assertEqual(
+            len(targets),
+            2,
+            "Erwartet: zwei Erledigt-Schalter fuer die zwei Wiedervorlagen "
+            "desselben Dokuments.",
+        )
+        self.assertEqual(
+            len(set(targets)),
+            2,
+            "Zwei Wiedervorlagen desselben Dokuments teilen sich denselben "
+            "hx-target -- ein Klick traefe damit den falschen Eintrag.",
         )
 
 
