@@ -187,6 +187,11 @@ urlpatterns = [
         name="action_status_toggle",
     ),
     path(
+        "documents/<int:pk>/document-date/",
+        views.document_date_inline,
+        name="document_date_inline",
+    ),
+    path(
         "documents/<int:pk>/analysis/status/",
         views.document_analysis_status,
         name="analysis_status",

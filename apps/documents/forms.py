@@ -17,6 +17,19 @@ _TEXT_WIDGET = forms.TextInput(attrs={"class": "form-control form-control-sm"})
 _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
 
 
+class DocumentDateInlineForm(forms.Form):
+    """Parst das Dokumentdatum für die Inline-Korrektur in den Übersichten
+
+    (#1140) -- ISO (`document_meta`/AI-Antworten) und deutsche Schreibweise
+    (Feldeingabe), beide gleichrangig, statt der lokalisierten Default-Formate
+    (die für `de-de` nur `TT.MM.JJJJ` kennen). Ein leeres Feld gilt bewusst als
+    ungültig: Löschen des Dokumentdatums ist hier kein Anwendungsfall, das
+    bleibt dem Detail (`document_meta`) vorbehalten.
+    """
+
+    document_date = forms.DateField(input_formats=["%Y-%m-%d", "%d.%m.%Y"])
+
+
 class CorrespondentForm(forms.ModelForm):
     class Meta:
         model = Correspondent

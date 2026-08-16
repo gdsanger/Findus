@@ -37,8 +37,7 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                             {% include "documents/partials/_document_title_link.html" %}
                         </span>
                         <span class="findus-timeline-item-date">
-                            {{ document.display_date|date:"d.m.Y" }}
-                            {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
+                            {% include "documents/partials/_document_date_inline.html" with document=document only %}
                         </span>
                     </div>
                     <div class="findus-timeline-item-meta">
@@ -92,8 +91,7 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                     {% include "documents/partials/_action_status_toggle.html" with document=document only %}
                 </td>
                 <td>
-                    {{ document.display_date|date:"d.m.Y" }}
-                    {% if document.display_date_is_upload_fallback %}<span class="text-muted small">(Upload)</span>{% endif %}
+                    {% include "documents/partials/_document_date_inline.html" with document=document only %}
                 </td>
                 <td class="text-end">
                     {% include "documents/partials/_document_delete_button.html" %}

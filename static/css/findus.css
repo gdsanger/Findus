@@ -1165,6 +1165,43 @@ body {
     white-space: nowrap;
 }
 
+/* Inline-Korrektur des Dokumentdatums in den Übersichten (#1140) -- Anzeige
+   und Eingabefeld liegen beide im DOM, `is-editing` schaltet zwischen ihnen
+   um (siehe static/js/document-date-inline.js). */
+.findus-doc-date-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--findus-space-2);
+    white-space: nowrap;
+}
+
+.findus-doc-date-display {
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+}
+
+.findus-doc-date-display:hover,
+.findus-doc-date-display:focus-visible {
+    border-bottom-color: currentColor;
+}
+
+.findus-doc-date-edit-input {
+    display: none;
+    width: 8.5rem;
+}
+
+.findus-doc-date-inline.is-editing .findus-doc-date-display {
+    display: none;
+}
+
+.findus-doc-date-inline.is-editing .findus-doc-date-edit-input {
+    display: inline-block;
+}
+
+.findus-doc-date-error {
+    white-space: normal;
+}
+
 /* Globaler Hinweis auf ein fehlendes HTMX-Swap-Ziel (#1139) -- selten, aber
    ein Klick ohne jede Rückmeldung ist die unangenehmste Fehlerart, siehe
    CLAUDE.md ("toter Button"). */

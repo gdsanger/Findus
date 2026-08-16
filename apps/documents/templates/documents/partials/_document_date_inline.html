@@ -1,0 +1,46 @@
+{% comment %}
+Inline-Bearbeitung von `Document.document_date` in den Übersichten (#1140) --
+Timeline, Liste und Kachel binden dasselbe Partial ein (analog
+`_action_status_toggle.html`, #1137/#1139), statt drei Varianten
+nachzubauen. Anzeige und Eingabefeld liegen im selben Markup, umgeschaltet
+per `is-editing`-Klasse durch `static/js/document-date-inline.js` (delegiert
+auf `document`-Ebene, übersteht jeden HTMX-Swap der Übersicht). Das
+Eingabefeld löst seinen Save-Request über ein eigenes `findus-date-save`-
+Event aus statt über `blur`/`keyup[Enter]` direkt -- so kann Escape den Blur
+auslösen, ohne den Save mitzureißen; das Skript unterscheidet beide Fälle.
+
+Erwartet `document` explizit im Kontext (immer `with document=… only`
+eingebunden). Kein `swap_key`: anders als bei der Wiedervorlagen-Toggle
+kommt ein Dokument in Timeline/Liste/Kachel je Ansicht nur einmal vor.
+`error`/`input_value` kommen nur vom Save-Endpunkt bei ungültiger Eingabe --
+ihr Fehlen (normales Rendern der Übersicht) hält das Feld im Anzeigezustand.
+{% endcomment %}
+<span id="document-date-{{ document.pk }}" class="findus-doc-date-inline{% if error %} is-editing{% endif %}">
+    <span
+        class="findus-doc-date-display"
+        data-doc-date-display
+        role="button"
+        tabindex="0"
+        title="Dokumentdatum ändern"
+    >{{ document.display_date|date:"d.m.Y" }}{% if document.display_date_is_upload_fallback %} <span class="text-muted small">(Upload)</span>{% endif %}</span>
+    <input
+        type="text"
+        class="form-control form-control-sm findus-doc-date-edit-input{% if error %} is-invalid{% endif %}"
+        data-doc-date-input
+        name="document_date"
+        value="{% if error %}{{ input_value }}{% else %}{{ document.document_date|date:'d.m.Y' }}{% endif %}"
+        data-original-value="{{ document.document_date|date:'d.m.Y' }}"
+        placeholder="TT.MM.JJJJ"
+        autocomplete="off"
+        inputmode="numeric"
+        aria-label="Dokumentdatum"
+        hx-post="{% url 'documents:document_date_inline' document.pk %}"
+        hx-trigger="findus-date-save"
+        hx-target="#document-date-{{ document.pk }}"
+        hx-swap="outerHTML"
+        hx-sync="this:abort"
+    >
+    {% if error %}
+    <span class="findus-doc-date-error text-danger small" role="alert">{{ error }}</span>
+    {% endif %}
+</span>
