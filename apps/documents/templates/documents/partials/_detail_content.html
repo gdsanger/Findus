@@ -29,12 +29,61 @@ vollständige (ungekürzte) Fassung lädt bei Bedarf nach.
         </span>
     </div>
     {% if document.vision_reextraction_number_check.performed %}
-    {% with unmatched=document.vision_reextraction_number_check.unmatched %}
+    {% with unmatched=document.vision_reextraction_number_check.unmatched row_shifts=document.vision_reextraction_number_check.row_shifts %}
     <div class="findus-detail-content-header-row">
         <span class="{% if unmatched %}text-warning{% endif %}">
             {% if unmatched %}Prüfhinweis: {{ unmatched|length }} Zahl{{ unmatched|length|pluralize:"en" }} ohne Entsprechung im Text-Layer{% else %}Zahlen-Prüfung gegen Text-Layer: keine Abweichung{% endif %}
         </span>
     </div>
+    {% if unmatched %}
+    <details class="findus-detail-content-check-details">
+        <summary>Betroffene Zahlen anzeigen</summary>
+        <ul>
+            {% for value in unmatched %}
+            <li>{{ value }} — keine Entsprechung im Text-Layer gefunden</li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+    {% if row_shifts %}
+    <div class="findus-detail-content-header-row">
+        <span class="text-warning">
+            Prüfhinweis: {{ row_shifts|length }} Tabellenzeile{{ row_shifts|length|pluralize:"n" }} mit möglichem Zeilenversatz (Zahlen vorhanden, aber nicht in räumlicher Nähe im Text-Layer)
+        </span>
+    </div>
+    <details class="findus-detail-content-check-details">
+        <summary>Betroffene Zeilen anzeigen</summary>
+        <ul>
+            {% for shift in row_shifts %}
+            <li>
+                Zeile „{{ shift.row }}“: {{ shift.numbers|join:", " }}
+                <ul>
+                    {% for number, snippet in shift.reference_snippets.items %}
+                    <li>{{ number }} im Text-Layer bei: „…{{ snippet }}…“</li>
+                    {% endfor %}
+                </ul>
+            </li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+    {% endwith %}
+    {% endif %}
+    {% if document.vision_reextraction_number_check.unit_flags %}
+    {% with unit_flags=document.vision_reextraction_number_check.unit_flags %}
+    <div class="findus-detail-content-header-row">
+        <span class="text-warning">
+            Prüfhinweis: {{ unit_flags|length }} Tabellenzeile{{ unit_flags|length|pluralize:"n" }} mit abweichender Einheit
+        </span>
+    </div>
+    <details class="findus-detail-content-check-details">
+        <summary>Betroffene Zeilen anzeigen</summary>
+        <ul>
+            {% for flag in unit_flags %}
+            <li>Zeile „{{ flag.row }}“: Einheit „{{ flag.unit }}“ weicht von der übrigen Tabelle ab (dort überwiegend „{{ flag.expected_unit }}“)</li>
+            {% endfor %}
+        </ul>
+    </details>
     {% endwith %}
     {% endif %}
     {% endif %}

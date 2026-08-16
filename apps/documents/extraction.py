@@ -37,6 +37,7 @@ from apps.ai.providers import ImageInput, Usage, VisionProvider, capture_usage, 
 from .mime import resolve_mime_type
 from .models import Document
 from .number_crosscheck import find_unmatched_numbers
+from .table_plausibility import check_unit_plausibility, find_row_shifts, parse_markdown_tables
 from .text_sanitize import clean_text
 
 logger = logging.getLogger(__name__)
@@ -437,7 +438,7 @@ def extract_document(
 # unveraendert daneben bestehende Low-Fidelity-Vorschau) UND setzt
 # `content_format = markdown` -- Struktur, die es nicht bis in die Chunks
 # schafft, hilft dem Retrieval nicht (siehe `chunking.chunk_markdown`).
-_VISION_MARKDOWN_PROMPT_VERSION = "1"
+_VISION_MARKDOWN_PROMPT_VERSION = "2"
 
 _VISION_MARKDOWN_PROMPT = (
     "Transkribiere den Inhalt dieser Dokumentseite als Markdown. Reine "
@@ -446,13 +447,31 @@ _VISION_MARKDOWN_PROMPT = (
     "Regeln:\n"
     "- Tabellarische Bereiche (z. B. Kontoauszug, Rechnung, Laborbefund) "
     "als Markdown-Tabelle wiedergeben: eine Zeile je fachlicher Zeile, "
-    "Bezeichnung, Wert, Referenzbereich und Einheit gehoeren in dieselbe "
-    "Tabellenzeile, nicht in getrennte Listen.\n"
+    "Bezeichnung, Wert, Referenzbereich, Einheit und Material gehoeren in "
+    "dieselbe Tabellenzeile, nicht in getrennte Listen.\n"
+    "- Lies jede Tabellenzeile als zusammenhaengende Einheit -- Bezeichnung, "
+    "Ergebnis, Referenzbereich, Einheit und Material derselben Zeile "
+    "gemeinsam erfassen. NICHT spaltenweise vorgehen (erst alle Ergebnisse, "
+    "dann alle Referenzbereiche einsammeln und hinterher zusammenfuehren): "
+    "genau dabei verrutschen Zeilen gegeneinander.\n"
+    "- Ist eine Zelle im Original leer oder unleserlich, lasse sie in der "
+    "Markdown-Tabelle leer. Kein Nachruecken des naechsten Werts in die "
+    "leere Zelle, keine Zelle aus einer Nachbarzeile uebernehmen.\n"
+    "- Die Kopfzeile einer Tabelle legt die Spaltenzahl fest. Jede Zeile "
+    "derselben Tabelle behaelt genau diese Spaltenzahl bei, auch wenn eine "
+    "Spalte (z. B. Material) nur in manchen Zeilen einen Wert traegt.\n"
+    "- Beginnt die Seite mit einer Zeile, die erkennbar zu einer Tabelle "
+    "gehoert, deren Kopfzeile nicht auf dieser Seite steht (Fortsetzung "
+    "eines Tabellenblocks vom Ende der Vorseite), nimm sie NICHT als Zeile "
+    "in eine neue Tabelle dieser Seite auf. Transkribiere sie stattdessen "
+    "fuer sich in einem eigenen Abschnitt 'Fortsetzung von Vorseite', bevor "
+    "die neue Tabelle beginnt.\n"
     "- Handschriftliche Vermerke, Stempel oder Markierungen NICHT in den "
     "Fliesstext oder eine Tabelle mischen, sondern gesammelt in einen "
     "eigenen Abschnitt mit der Ueberschrift 'Handschriftliche Vermerke'.\n"
     "- Unsichere Lesungen woertlich als '[unsicher: ...]' kennzeichnen "
-    "statt zu raten.\n"
+    "statt zu raten -- das gilt fuer Woerter genauso wie fuer einzelne "
+    "schwer lesbare Ziffern oder Zahlenfolgen.\n"
     "- Ist die Seite leer, ueberbelichtet oder unlesbar, schreibe genau "
     "das ('_Seite leer oder nicht lesbar._') statt Inhalt zu erfinden oder "
     "die Seite wortlos zu ueberspringen.\n"
@@ -697,13 +716,28 @@ def reextract_document_with_vision(
 
         content_markdown = clean_text(build_markdown(document.title, page_texts))
 
-        number_check = {"performed": False, "unmatched": []}
+        # Einheiten-Plausibilitaet (#1152) braucht keinen Text-Layer -- sie
+        # vergleicht nur die Tabellen der Vision-Ausgabe untereinander, also
+        # unabhaengig von `performed` unten immer berechnet.
+        tables = parse_markdown_tables(content_markdown)
+        unit_flags = [flag.as_dict() for flag in check_unit_plausibility(tables)]
+
+        number_check = {
+            "performed": False,
+            "unmatched": [],
+            "row_shifts": [],
+            "unit_flags": unit_flags,
+        }
         if mime_type == _PDF_MIME:
             reference_text = _pdf_text_layer(data, pages_to_process)
             if _is_text_sufficient(reference_text):
                 number_check = {
                     "performed": True,
                     "unmatched": find_unmatched_numbers(content_markdown, reference_text),
+                    "row_shifts": [
+                        flag.as_dict() for flag in find_row_shifts(tables, reference_text)
+                    ],
+                    "unit_flags": unit_flags,
                 }
 
         document.text_content = content_markdown

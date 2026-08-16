@@ -1025,6 +1025,36 @@ class DocumentDetailViewTests(TestCase):
         )
         self.assertContains(response, "Betrag: 123 EUR")
 
+    def test_number_check_detail_lists_the_affected_values_not_just_a_count(self):
+        # #1152: der Prüfhinweis muss die betroffenen Werte nennen, nicht
+        # nur ihre Anzahl -- Zahlen ohne Entsprechung, verrutschte Zeilen
+        # und Zeilen mit abweichender Einheit je mit eigener Detailliste.
+        self.doc.vision_reextraction_completed_at = timezone.now()
+        self.doc.vision_reextraction_number_check = {
+            "performed": True,
+            "unmatched": ["9.999,00"],
+            "row_shifts": [
+                {
+                    "row": "GOT (ASAT)",
+                    "numbers": ["50", "200"],
+                    "reference_snippets": {"50": "GOT 50 U/l", "200": "erhoeht 200 mg/dl"},
+                }
+            ],
+            "unit_flags": [{"row": "GOT (ASAT)", "unit": "mg/dl", "expected_unit": "U/l"}],
+        }
+        self.doc.save(
+            update_fields=["vision_reextraction_completed_at", "vision_reextraction_number_check"]
+        )
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:detail", args=[self.doc.id]))
+
+        self.assertContains(response, "9.999,00")
+        self.assertContains(response, "GOT (ASAT)")
+        self.assertContains(response, "mit möglichem Zeilenversatz")
+        self.assertContains(response, "mit abweichender Einheit")
+        self.assertContains(response, "erhoeht 200 mg/dl")
+
     def test_markdown_content_is_never_truncated_in_the_content_tab(self):
         self.doc.text_content = "| A |\n| --- |\n" + "\n".join(f"| {i} |" for i in range(50))
         self.doc.content_format = Document.ContentFormat.MARKDOWN
