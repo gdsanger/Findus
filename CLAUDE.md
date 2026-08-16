@@ -132,7 +132,9 @@ Upload-Tag) als Dokumentdatum trugen und damit die Timeline entwerteten.
 Zweiter Anlauf für Dokumente, bei denen Text-Layer/OCR bereits
 unvollständigen oder verstümmelten Text geliefert haben — bewusst
 ausgelöst, nie automatisch, weil er teurer und langsamer ist als die
-normale Kaskade (`apps.documents.extraction`).
+normale Kaskade (`apps.documents.extraction`). Anders als die Kaskade
+liefert er strukturerhaltendes **Markdown** statt flachen Text (#1149) —
+der eigentliche Grund, warum sich der Zusatzlauf trotz Mehrkosten lohnt.
 
 - **Eigenes Statusfeld** (`Document.vision_reextraction_status`), nicht
   `processing_status`. Das Dokument war vor dem Klick bereits fertig
@@ -145,9 +147,43 @@ normale Kaskade (`apps.documents.extraction`).
 - Erzwingt Vision für **jede** Seite, statt wie die automatische Kaskade
   nur bei Bedarf zu eskalieren — genau dafür wird er ja ausgelöst. Mehrere
   Seiten laufen als getrennte `describe_image()`-Aufrufe (die
-  Provider-Schicht kennt keinen Mehrbild-Call); die Seiten werden im
-  Klartext mit `--- Seite N ---` getrennt, damit Absätze nicht
-  zusammenlaufen.
+  Provider-Schicht kennt keinen Mehrbild-Call). Der Ausgabe-Kontrakt steht
+  im Prompt (`extraction._VISION_MARKDOWN_PROMPT`) **und** im Docstring
+  daneben: reine Transkription ohne Zusammenfassen/Interpretieren,
+  Tabellen als Markdown-Tabelle mit Bezeichnung/Wert/Referenz/Einheit in
+  einer Zeile, Handschrift/Stempel in einem eigenen Abschnitt, unsichere
+  Lesungen ausdrücklich markiert, leere/unlesbare Seiten benannt statt
+  erfunden. `build_markdown()` fügt die Seiten zusammen (`## Seite N` je
+  Seite ab der zweiten) — dieselbe Funktion wie beim `markdown`-Feld der
+  Kaskade, hier aber der Inhalt von `text_content` selbst, nicht nur ein
+  Cache daneben. `Document.content_format` hält fest, ob `text_content`
+  Markdown (dieser Lauf) oder flacher Text (Kaskade) ist — beide Formen
+  bestehen nebeneinander, Chunking und Anzeige müssen mit beiden umgehen.
+- **Seitenweise fehlertolerant:** Schlägt eine einzelne Seite technisch
+  fehl (Provider-Fehler, Rendering), bekommt sie einen Platzhalter, der
+  Lauf läuft mit den übrigen Seiten weiter und `vision_reextraction_
+  pages_failed` zählt mit. Erst wenn *jede* Seite fehlschlägt, gilt der
+  gesamte Lauf als gescheitert — ein Fehler auf einer Seite entwertet die
+  anderen nicht.
+- **Zahlen-Gegenprobe gegen den PDF-Text-Layer**, wo einer vorhanden und
+  brauchbar ist (`apps.documents.number_crosscheck`, großzügig
+  normalisiert: Tausendertrennzeichen, Komma/Punkt, Währungszeichen,
+  Leerzeichen spielen keine Rolle). Ergebnis in
+  `Document.vision_reextraction_number_check` (`performed` +
+  `unmatched`) — `performed=False` heißt "kein brauchbarer Text-Layer,
+  Prüfung entfällt", nicht "keine Abweichung"; die beiden Fälle sehen in
+  der UI sonst gleich aus. Kein zusätzlicher Modellaufruf, reiner
+  Nachlauf in Code.
+- **Idempotent über einen Fingerabdruck** (`Document.
+  vision_reextraction_fingerprint` = `sha256` der Originaldatei + Prompt-
+  Version), gesetzt **nur nach einem vollständigen Erfolg** (keine
+  Seitengrenze erreicht, keine Seite fehlgeschlagen) — ein unvollständiger
+  Lauf bleibt sonst ohne `force` unwiederholbar. Bewusst **ohne** das
+  verwendete Modell im Fingerabdruck: ein Modellwechsel soll nicht
+  automatisch den ganzen Bestand neu durch Vision schicken. Der einzige
+  Weg zu einem erneuten Modellaufruf trotz unveränderter Datei ist der
+  explizite `force`-Weg (Button wird selbst zum "erneut ausführen", sobald
+  er erkennt, dass ein Klick sonst folgenlos bliebe).
 - Bei Erfolg wird automatisch `analyze_document_task` angestoßen (das
   seinerseits `process_document_task` anschließt) — sonst durchsucht
   Findus weiterhin den alten Text. Bleibt der Lauf ohne Ergebnis, läuft
@@ -156,13 +192,20 @@ normale Kaskade (`apps.documents.extraction`).
   überschreiben"-Schutz ohnehin nur in der Analyse greift, die dann gar
   nicht erst läuft.
 - Ein regulärer Reprocess (`extract_document()`) setzt die
-  `vision_reextraction_*`-Provenienzfelder zurück, sobald er
-  `text_content` neu schreibt — sonst würde der „Inhalt"-Tab einen
-  Vision-Lauf behaupten, dessen Text längst überschrieben ist.
+  `vision_reextraction_*`-Provenienzfelder **und** `content_format`
+  zurück, sobald er `text_content` neu schreibt — sonst würde der
+  „Inhalt"-Tab einen Vision-Lauf behaupten, dessen Text längst
+  überschrieben ist, und ein späterer Klick auf den Button würde fälschlich
+  als Idempotenz-Treffer übersprungen.
 - Seitenobergrenze und Rendering-Auflösung sind eigene Einstellungen
   (`FINDUS_VISION_REEXTRACT_MAX_PAGES`/`_PDF_RENDER_DPI`), unabhängig von
   der Kaskade — deren DPI ist bewusst niedrig und reicht für die manuelle
   Neuextraktion nicht.
+- Chunking respektiert die Markdown-Struktur (`chunking.chunk_markdown()`,
+  ausgewählt über `Document.content_format`): eine Tabellenzeile wird nicht
+  mitten durchtrennt, eine Überschrift bleibt bei ihrem Abschnitt.
+  Strukturerhalt, der beim Zerschneiden wieder zerfällt, wäre umsonst
+  gewesen.
 
 ### Schreiben sind immer eine Antwort auf ein Dokument
 

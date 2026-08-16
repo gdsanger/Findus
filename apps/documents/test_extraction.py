@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import io
 import shutil
 import tempfile
@@ -6,15 +7,19 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
 
+from apps.ai.providers.base import VisionResult
 from apps.ai.providers.fake import FakeVisionProvider
 from config.test_requirements import requires_ocr, requires_pdf_rasterizer
 
 from .extraction import (
     _OcrOutput,
     _ocr_image,
+    _strip_code_fence,
+    _VISION_MARKDOWN_PROMPT,
     build_markdown,
     extract_document,
     reextract_document_with_vision,
+    vision_markdown_fingerprint,
 )
 from .models import Document
 
@@ -24,6 +29,20 @@ _LOCAL_STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+
+def tearDownModule():
+    """Raeumt `TEST_MEDIA_ROOT` genau einmal auf, nachdem *alle* Klassen
+    dieser Datei fertig sind -- ein `tearDownClass` je Klasse (die alte
+    Bauart hier) raeumt den geteilten Ordner schon nach der ersten fertigen
+    Klasse weg, waehrend beim parallelen Testlauf (Django forkt Worker, die
+    alle denselben schon ausgewerteten Pfad erben) eine andere Klasse in
+    einem anderen Worker noch mitten in einem Test steckt, der genau diesen
+    Ordner braucht -- daraus folgt ein `FileNotFoundError`, keine
+    inhaltliche Verletzung. `tearDownModule` ist ein von `unittest`
+    vorgesehener Hook, der erst nach der letzten Klasse des Moduls laeuft.
+    """
+    shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
 
 
 def _make_pdf(page_texts: list[str | None]) -> bytes:
@@ -81,18 +100,17 @@ _GERMAN_PARAGRAPH = (
 
 
 def _make_document(*, filename: str, data: bytes, mime_type: str) -> Document:
-    document = Document.objects.create(title="Testdokument", metadata={"mime_type": mime_type})
+    document = Document.objects.create(
+        title="Testdokument",
+        metadata={"mime_type": mime_type},
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
     document.original_file.save(filename, io.BytesIO(data), save=True)
     return document
 
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
 class ExtractDocumentTextLayerTests(TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
-
     def test_pdf_with_text_layer_is_extracted_directly(self):
         pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH])
         document = _make_document(filename="doc.pdf", data=pdf_bytes, mime_type="application/pdf")
@@ -200,11 +218,6 @@ class ExtractDocumentTextLayerTests(TestCase):
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
 @override_settings(FINDUS_EXTRACTION_MIN_CHARS_PER_PAGE=20, FINDUS_EXTRACTION_MIN_OCR_CONFIDENCE=60)
 class ExtractDocumentOcrTests(TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
-
     @requires_pdf_rasterizer("OCR-Eskalation eines gescannten PDF")
     def test_scanned_pdf_escalates_to_ocr_when_text_layer_is_empty(self):
         pdf_bytes = _make_pdf([None])
@@ -279,11 +292,6 @@ class ExtractDocumentOcrTests(TestCase):
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
 class ExtractDocumentVisionTests(TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
-
     def test_image_without_text_gets_a_usable_vision_description(self):
         from PIL import Image
 
@@ -327,11 +335,6 @@ class ExtractDocumentVisionTests(TestCase):
 
 @override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
 class ExtractDocumentFailureTests(TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
-
     def test_unsupported_mime_type_marks_failed(self):
         document = _make_document(
             filename="archive.zip", data=b"PK\x03\x04", mime_type="application/zip"
@@ -406,11 +409,6 @@ class ExtractDocumentNulByteTests(TestCase):
     which Postgres `text` columns reject outright (`psycopg.DataError`).
     """
 
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
-
     def test_text_with_embedded_nul_bytes_is_saved_successfully(self):
         text_with_nul = _GERMAN_PARAGRAPH + "\x00 nach dem Nullbyte\x00."
         document = _make_document(
@@ -480,19 +478,54 @@ class BuildMarkdownTests(TestCase):
         self.assertIn("_Kein Text erkannt._", markdown)
 
 
-@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
-class ReextractDocumentWithVisionTests(TestCase):
-    """Manuelle KI-Vision-Neuextraktion (#1143): erzwingt Vision fuer jede
-    Seite, unabhaengig davon, ob Text-Layer/OCR ausgereicht haetten --
-    siehe CLAUDE.md "Manuelle KI-Vision-Neuextraktion".
+class VisionMarkdownPromptTests(SimpleTestCase):
+    """Der Ausgabe-Kontrakt fuer #1149 steht im Prompt selbst -- diese
+    Tests stellen sicher, dass jede in CLAUDE.md ("KI-Vision-
+    Neuextraktion") zugesagte Strukturregel auch tatsaechlich drinsteht,
+    nicht nur im Docstring daneben.
     """
 
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+    def test_prompt_demands_pure_transcription(self):
+        self.assertIn("Reine Abschrift", _VISION_MARKDOWN_PROMPT)
+        self.assertIn("nichts zusammenfassen", _VISION_MARKDOWN_PROMPT)
 
-    def test_image_is_replaced_by_the_vision_transcript(self):
+    def test_prompt_demands_markdown_tables_with_one_row_per_line(self):
+        self.assertIn("Markdown-Tabelle", _VISION_MARKDOWN_PROMPT)
+        self.assertIn("Referenzbereich und Einheit", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_a_separate_section_for_handwriting(self):
+        self.assertIn("Handschriftliche Vermerke", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_marking_uncertain_readings(self):
+        self.assertIn("unsicher", _VISION_MARKDOWN_PROMPT)
+
+    def test_prompt_demands_flagging_blank_or_unreadable_pages(self):
+        self.assertIn("leer oder nicht lesbar", _VISION_MARKDOWN_PROMPT)
+
+
+class StripCodeFenceTests(SimpleTestCase):
+    def test_removes_a_fence_wrapping_the_whole_response(self):
+        self.assertEqual(_strip_code_fence("```markdown\n# Titel\n\nText\n```"), "# Titel\n\nText")
+
+    def test_removes_a_bare_fence_without_a_language_tag(self):
+        self.assertEqual(_strip_code_fence("```\nText\n```"), "Text")
+
+    def test_leaves_text_without_a_wrapping_fence_untouched(self):
+        self.assertEqual(_strip_code_fence("# Titel\n\nText"), "# Titel\n\nText")
+
+    def test_leaves_a_fence_covering_only_part_of_the_response_untouched(self):
+        text = "Vorspann\n\n```\ncode\n```\n\nNachspann"
+        self.assertEqual(_strip_code_fence(text), text)
+
+
+@override_settings(STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=TEST_MEDIA_ROOT)
+class ReextractDocumentWithVisionTests(TestCase):
+    """Manuelle KI-Vision-Neuextraktion (#1143), Markdown-Ausgabe (#1149):
+    erzwingt Vision fuer jede Seite, unabhaengig davon, ob Text-Layer/OCR
+    ausgereicht haetten -- siehe CLAUDE.md "KI-Funktionen".
+    """
+
+    def test_image_is_replaced_by_the_vision_transcript_as_markdown(self):
         from PIL import Image
 
         buffer = io.BytesIO()
@@ -507,7 +540,9 @@ class ReextractDocumentWithVisionTests(TestCase):
 
         result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
 
-        self.assertEqual(result.text_content, "Sauberes Vision-Transkript.")
+        self.assertIn("Sauberes Vision-Transkript.", result.text_content)
+        self.assertEqual(result.markdown, result.text_content)
+        self.assertEqual(result.content_format, Document.ContentFormat.MARKDOWN)
         self.assertEqual(result.extraction_method, Document.ExtractionMethod.VISION)
         self.assertEqual(
             result.vision_reextraction_status, Document.VisionReextractionStatus.READY
@@ -515,12 +550,58 @@ class ReextractDocumentWithVisionTests(TestCase):
         self.assertIsNotNone(result.vision_reextraction_completed_at)
         self.assertEqual(result.vision_reextraction_pages_processed, 1)
         self.assertEqual(result.vision_reextraction_pages_total, 1)
+        self.assertEqual(result.vision_reextraction_pages_failed, 0)
         self.assertFalse(result.vision_reextraction_truncated)
+        self.assertEqual(result.vision_reextraction_model, "fake-vision")
+        self.assertEqual(result.vision_reextraction_model_version, "1")
+        self.assertEqual(
+            result.vision_reextraction_fingerprint, vision_markdown_fingerprint(result)
+        )
         self.assertEqual(result.processing_status, Document.ProcessingStatus.READY)
         self.assertEqual(len(vision_provider.calls), 1)
+        _, prompt = vision_provider.calls[0]
+        self.assertEqual(prompt, _VISION_MARKDOWN_PROMPT)
+
+    def test_table_rows_keep_their_columns_together(self):
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+        document = _make_document(
+            filename="kontoauszug.png", data=buffer.getvalue(), mime_type="image/png"
+        )
+        table = (
+            "| Bezeichnung | Wert | Referenz | Einheit |\n"
+            "| --- | --- | --- | --- |\n"
+            "| Kalium | 4.5 | 3.5-5.1 | mmol/l |\n"
+        )
+        vision_provider = FakeVisionProvider(reply=table)
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertIn("| Kalium | 4.5 | 3.5-5.1 | mmol/l |", result.text_content)
+
+    def test_handwritten_notes_land_in_their_own_section(self):
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+        document = _make_document(
+            filename="brief.png", data=buffer.getvalue(), mime_type="image/png"
+        )
+        reply = (
+            "Sehr geehrte Damen und Herren, ...\n\n"
+            "## Handschriftliche Vermerke\n\n"
+            "'geprüft, ok - HM'"
+        )
+        vision_provider = FakeVisionProvider(reply=reply)
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertIn("## Handschriftliche Vermerke", result.text_content)
 
     @requires_pdf_rasterizer("mehrseitige KI-Vision-Neuextraktion")
-    def test_multi_page_pdf_joins_pages_with_visible_page_markers(self):
+    def test_multi_page_pdf_joins_pages_with_visible_markdown_page_markers(self):
         pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
         document = _make_document(filename="mixed.pdf", data=pdf_bytes, mime_type="application/pdf")
         vision_provider = FakeVisionProvider(reply="Transkript.")
@@ -529,14 +610,14 @@ class ReextractDocumentWithVisionTests(TestCase):
 
         self.assertEqual(result.vision_reextraction_pages_processed, 2)
         self.assertEqual(result.vision_reextraction_pages_total, 2)
-        self.assertIn("--- Seite 1 ---", result.text_content)
-        self.assertIn("--- Seite 2 ---", result.text_content)
+        self.assertIn("## Seite 1", result.text_content)
+        self.assertIn("## Seite 2", result.text_content)
         self.assertEqual(len(vision_provider.calls), 2)
         # Text-Layer wird bewusst NICHT beruecksichtigt -- jede Seite geht
         # trotz vorhandenem Text-Layer durch Vision.
         image, prompt = vision_provider.calls[0]
         self.assertEqual(image.mime_type, "image/png")
-        self.assertTrue(prompt)
+        self.assertEqual(prompt, _VISION_MARKDOWN_PROMPT)
 
     @requires_pdf_rasterizer("Seitenobergrenze der KI-Vision-Neuextraktion")
     @override_settings(FINDUS_VISION_REEXTRACT_MAX_PAGES=1)
@@ -552,6 +633,42 @@ class ReextractDocumentWithVisionTests(TestCase):
         self.assertEqual(result.vision_reextraction_pages_total, 3)
         self.assertTrue(result.vision_reextraction_truncated)
         self.assertEqual(result.metadata["page_count"], 3)
+        # Ein abgeschnittener Lauf gilt nicht als "aktuell" -- ein
+        # spaeterer Klick (ohne `force`) soll die restlichen Seiten
+        # nachholen koennen, statt gegen den Fingerabdruck zu scheitern.
+        self.assertEqual(result.vision_reextraction_fingerprint, "")
+
+    @requires_pdf_rasterizer("teilweiser Seitenfehler bei der KI-Vision-Neuextraktion")
+    def test_one_failing_page_does_not_devalue_the_others(self):
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH, _GERMAN_PARAGRAPH])
+        document = _make_document(filename="drei.pdf", data=pdf_bytes, mime_type="application/pdf")
+
+        class _FlakyVisionProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def describe_image(self, image, prompt):
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("Seite 2 boom")
+                return VisionResult(text=f"Inhalt Seite {self.calls}", model="m", version="v")
+
+        result = reextract_document_with_vision(
+            document.id, vision_provider=_FlakyVisionProvider()
+        )
+
+        self.assertEqual(
+            result.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+        self.assertEqual(result.vision_reextraction_pages_processed, 3)
+        self.assertEqual(result.vision_reextraction_pages_failed, 1)
+        self.assertIn("Inhalt Seite 1", result.text_content)
+        self.assertIn("Inhalt Seite 3", result.text_content)
+        self.assertIn("## Seite 2", result.text_content)
+        # Kein vollstaendiger Erfolg -> kein Idempotenz-Fingerabdruck, ein
+        # spaeterer Klick ohne `force` darf die fehlgeschlagene Seite 2
+        # erneut versuchen.
+        self.assertEqual(result.vision_reextraction_fingerprint, "")
 
     def test_unsupported_mime_type_fails_without_touching_processing_status(self):
         document = _make_document(
@@ -589,3 +706,145 @@ class ReextractDocumentWithVisionTests(TestCase):
 
         self.assertEqual(result.document_date, manual_date)
         self.assertEqual(result.metadata["document_date_source"], "manuell")
+
+
+class VisionMarkdownIdempotencyTests(TestCase):
+    """#1149: eine unveraenderte Datei loest keinen erneuten Modellaufruf
+    aus, ein erzwungener Re-Run schon.
+
+    Eigener, privater `MEDIA_ROOT` statt des modulweit geteilten
+    `TEST_MEDIA_ROOT`: dessen `tearDownClass` in anderen Klassen dieser
+    Datei raeumt beim parallelen Testlauf (Django forkt Worker, die alle
+    denselben schon ausgewerteten Pfad erben) sonst mitten in einem Test
+    dieser Klasse den Ordner leer -- ein voellig eigener Ordner kann mit
+    keiner anderen Klasse um dieselbe Ressource wettlaufen.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._media_root = tempfile.mkdtemp(prefix="findus-vision-idempotency-media-")
+        cls._media_override = override_settings(
+            STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=cls._media_root
+        )
+        cls._media_override.enable()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._media_override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
+        super().tearDownClass()
+
+    def _make_image_document(self):
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+        return _make_document(filename="scan.png", data=buffer.getvalue(), mime_type="image/png")
+
+    def test_second_run_without_changes_makes_no_model_call(self):
+        document = self._make_image_document()
+        vision_provider = FakeVisionProvider(reply="Transkript.")
+
+        reextract_document_with_vision(document.id, vision_provider=vision_provider)
+        second = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertEqual(len(vision_provider.calls), 1)
+        self.assertEqual(
+            second.vision_reextraction_status, Document.VisionReextractionStatus.READY
+        )
+
+    def test_forced_run_makes_a_new_model_call(self):
+        document = self._make_image_document()
+        vision_provider = FakeVisionProvider(reply="Transkript.")
+
+        reextract_document_with_vision(document.id, vision_provider=vision_provider)
+        reextract_document_with_vision(document.id, vision_provider=vision_provider, force=True)
+
+        self.assertEqual(len(vision_provider.calls), 2)
+
+    def test_a_changed_file_is_not_treated_as_up_to_date(self):
+        document = self._make_image_document()
+        vision_provider = FakeVisionProvider(reply="Transkript.")
+        reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        document.refresh_from_db()
+        document.sha256 = "a-different-sha256"
+        document.save(update_fields=["sha256"])
+
+        reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertEqual(len(vision_provider.calls), 2)
+
+    @requires_pdf_rasterizer("Ruecksetzen des Fingerabdrucks bei regulaerem Reprocess")
+    def test_regular_reprocess_makes_the_document_eligible_again(self):
+        pdf_bytes = _make_pdf([_GERMAN_PARAGRAPH])
+        document = _make_document(filename="a.pdf", data=pdf_bytes, mime_type="application/pdf")
+        vision_provider = FakeVisionProvider(reply="Transkript.")
+        reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        extract_document(document.id)
+        reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertEqual(len(vision_provider.calls), 2)
+
+
+class VisionMarkdownNumberCrosscheckTests(TestCase):
+    """#1149: Zahlen aus dem Vision-Markdown werden gegen den PDF-Text-Layer
+    geprueft, wo einer vorhanden ist.
+
+    Eigener `MEDIA_ROOT` aus demselben Grund wie
+    `VisionMarkdownIdempotencyTests`.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._media_root = tempfile.mkdtemp(prefix="findus-vision-numbercheck-media-")
+        cls._media_override = override_settings(
+            STORAGES=_LOCAL_STORAGES, MEDIA_ROOT=cls._media_root
+        )
+        cls._media_override.enable()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._media_override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
+        super().tearDownClass()
+
+    @requires_pdf_rasterizer("Zahlen-Gegenprobe der KI-Vision-Neuextraktion")
+    def test_matching_numbers_report_no_deviation(self):
+        pdf_bytes = _make_pdf([f"{_GERMAN_PARAGRAPH} Betrag 1.234,56 EUR, Konto 987654321."])
+        document = _make_document(filename="beleg.pdf", data=pdf_bytes, mime_type="application/pdf")
+        vision_provider = FakeVisionProvider(reply="Betrag 1.234,56 EUR, Konto 987654321.")
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertTrue(result.vision_reextraction_number_check["performed"])
+        self.assertEqual(result.vision_reextraction_number_check["unmatched"], [])
+
+    @requires_pdf_rasterizer("Zahlen-Gegenprobe der KI-Vision-Neuextraktion")
+    def test_a_misread_number_is_reported_as_unmatched(self):
+        pdf_bytes = _make_pdf([f"{_GERMAN_PARAGRAPH} Betrag 1.234,56 EUR."])
+        document = _make_document(filename="beleg.pdf", data=pdf_bytes, mime_type="application/pdf")
+        vision_provider = FakeVisionProvider(reply="Betrag 9.999,00 EUR.")
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertTrue(result.vision_reextraction_number_check["performed"])
+        self.assertIn("9.999,00", result.vision_reextraction_number_check["unmatched"])
+
+    def test_no_text_layer_skips_the_check_entirely(self):
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (100, 40), color="white").save(buffer, format="PNG")
+        document = _make_document(
+            filename="scan.png", data=buffer.getvalue(), mime_type="image/png"
+        )
+        vision_provider = FakeVisionProvider(reply="Betrag 1.234,56 EUR.")
+
+        result = reextract_document_with_vision(document.id, vision_provider=vision_provider)
+
+        self.assertFalse(result.vision_reextraction_number_check["performed"])
+        self.assertEqual(result.vision_reextraction_number_check["unmatched"], [])

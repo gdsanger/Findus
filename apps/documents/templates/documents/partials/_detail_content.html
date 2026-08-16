@@ -15,8 +15,15 @@ vollständige (ungekürzte) Fassung lädt bei Bedarf nach.
     {% if document.vision_reextraction_completed_at %}
     <span>
         KI-Vision-Neuextraktion am {{ document.vision_reextraction_completed_at|date:"d.m.Y H:i" }}
-        ({{ document.vision_reextraction_pages_processed }}{% if document.vision_reextraction_pages_total %} von {{ document.vision_reextraction_pages_total }}{% endif %} Seite(n){% if document.vision_reextraction_truncated %}, Seitengrenze erreicht{% endif %})
+        ({{ document.vision_reextraction_pages_processed }}{% if document.vision_reextraction_pages_total %} von {{ document.vision_reextraction_pages_total }}{% endif %} Seite(n){% if document.vision_reextraction_truncated %}, Seitengrenze erreicht{% endif %}{% if document.vision_reextraction_pages_failed %}, {{ document.vision_reextraction_pages_failed }} Seite(n) technisch fehlgeschlagen{% endif %}){% if document.vision_reextraction_model %} – Modell {{ document.vision_reextraction_model }}{% if document.vision_reextraction_model_version %} ({{ document.vision_reextraction_model_version }}){% endif %}{% endif %}
     </span>
+    {% if document.vision_reextraction_number_check.performed %}
+    {% with unmatched=document.vision_reextraction_number_check.unmatched %}
+    <span class="{% if unmatched %}text-warning{% endif %}">
+        {% if unmatched %}Prüfhinweis: {{ unmatched|length }} Zahl{{ unmatched|length|pluralize:"en" }} ohne Entsprechung im Text-Layer{% else %}Zahlen-Prüfung gegen Text-Layer: keine Abweichung{% endif %}
+    </span>
+    {% endwith %}
+    {% endif %}
     {% endif %}
     <button
         type="button"

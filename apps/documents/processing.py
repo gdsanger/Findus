@@ -20,7 +20,7 @@ from django.db import transaction
 
 from apps.ai.providers import EmbeddingProvider, get_embedding_provider
 
-from .chunking import chunk_text
+from .chunking import chunk_markdown, chunk_text
 from .models import Chunk, Document
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,17 @@ def process_document(
     document.save(update_fields=["processing_status", "processing_error", "updated_at"])
 
     try:
-        chunk_contents = chunk_text(
+        # `content_format == "markdown"` (#1149, KI-Vision-Neuextraktion)
+        # picks the structure-aware chunker: `chunk_text()` would cut a
+        # Markdown table row in half or separate a `## Seite N`-heading
+        # from its section, exactly the structure this format exists to
+        # keep intact through to the chunks the retrieval service reads.
+        chunker = (
+            chunk_markdown
+            if document.content_format == Document.ContentFormat.MARKDOWN
+            else chunk_text
+        )
+        chunk_contents = chunker(
             document.text_content,
             chunk_size=settings.FINDUS_CHUNK_SIZE_TOKENS,
             overlap=settings.FINDUS_CHUNK_OVERLAP_TOKENS,

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -35,6 +36,7 @@ from apps.ai.providers import ImageInput, Usage, VisionProvider, capture_usage, 
 
 from .mime import resolve_mime_type
 from .models import Document
+from .number_crosscheck import find_unmatched_numbers
 from .text_sanitize import clean_text
 
 logger = logging.getLogger(__name__)
@@ -364,18 +366,30 @@ def extract_document(
         # von einer frueheren manuellen KI-Vision-Neuextraktion (#1143) --
         # deren Provenienz-Felder muessen mit zurueckgesetzt werden, sonst
         # behauptet der "Inhalt"-Tab weiterhin einen Vision-Lauf fuer Text,
-        # der laengst wieder ueberschrieben wurde.
+        # der laengst wieder ueberschrieben wurde. `content_format` faellt
+        # dabei auf `text` zurueck (#1149): die Kaskade erzeugt kein
+        # strukturerhaltendes Markdown, und `vision_reextraction_fingerprint`
+        # zurueck auf leer macht einen spaeteren Klick auf "Mit KI-Vision neu
+        # extrahieren" wieder zu einem echten Lauf statt eines Idempotenz-
+        # Treffers gegen eine Datei, deren Inhalt inzwischen ueberschrieben ist.
         document.vision_reextraction_status = Document.VisionReextractionStatus.NONE
         document.vision_reextraction_error = ""
         document.vision_reextraction_completed_at = None
         document.vision_reextraction_pages_processed = None
         document.vision_reextraction_pages_total = None
         document.vision_reextraction_truncated = False
+        document.vision_reextraction_pages_failed = None
+        document.vision_reextraction_model = ""
+        document.vision_reextraction_model_version = ""
+        document.vision_reextraction_fingerprint = ""
+        document.vision_reextraction_number_check = {}
+        document.content_format = Document.ContentFormat.TEXT
         document.save(
             update_fields=[
                 "text_content",
                 "markdown",
                 "extraction_method",
+                "content_format",
                 "metadata",
                 "vision_reextraction_status",
                 "vision_reextraction_error",
@@ -383,6 +397,11 @@ def extract_document(
                 "vision_reextraction_pages_processed",
                 "vision_reextraction_pages_total",
                 "vision_reextraction_truncated",
+                "vision_reextraction_pages_failed",
+                "vision_reextraction_model",
+                "vision_reextraction_model_version",
+                "vision_reextraction_fingerprint",
+                "vision_reextraction_number_check",
                 "updated_at",
             ]
         )
@@ -396,7 +415,7 @@ def extract_document(
     return document
 
 
-# -- Manuelle KI-Vision-Neuextraktion (#1143) --------------------------------
+# -- Manuelle KI-Vision-Neuextraktion (#1143, Markdown-Ausgabe #1149) -------
 #
 # Anders als die automatische Kaskade oben eskaliert dieser Weg NICHT je
 # Seite (Text-Layer -> OCR -> Vision) -- er erzwingt Vision fuer jede Seite,
@@ -404,6 +423,68 @@ def extract_document(
 # bewusst ausgeloester zweiter Anlauf fuer Dokumente, bei denen Text-Layer/
 # OCR bereits verstuemmelten oder unvollstaendigen Text geliefert haben --
 # teurer und langsamer, deshalb nie automatisch (siehe CLAUDE.md).
+#
+# Ausgabe-Kontrakt (#1149): das Modell liefert reine Abschrift als Markdown,
+# keine Zusammenfassung/Interpretation. Tabellarische Bereiche werden zu
+# Markdown-Tabellen (eine Zeile je fachlicher Zeile -- Bezeichnung, Wert,
+# Referenz und Einheit bleiben zusammen, statt in vier getrennten Spalten-
+# Listen zu zerfallen, der Grund fuer dieses Ticket ueberhaupt). Handschrift/
+# Stempel/Markierungen stehen gesammelt in einem eigenen Abschnitt, nie im
+# Fliesstext oder einer Tabelle vermischt. Unsichere Lesungen werden
+# ausdruecklich als unsicher markiert statt geraten, leere/unlesbare Seiten
+# als solche ausgewiesen statt erfunden oder wortlos uebersprungen. Das
+# Ergebnis ersetzt `text_content` (nicht nur `document.markdown`, die
+# unveraendert daneben bestehende Low-Fidelity-Vorschau) UND setzt
+# `content_format = markdown` -- Struktur, die es nicht bis in die Chunks
+# schafft, hilft dem Retrieval nicht (siehe `chunking.chunk_markdown`).
+_VISION_MARKDOWN_PROMPT_VERSION = "1"
+
+_VISION_MARKDOWN_PROMPT = (
+    "Transkribiere den Inhalt dieser Dokumentseite als Markdown. Reine "
+    "Abschrift: nichts zusammenfassen, kommentieren, interpretieren oder "
+    "sinnvoll ergaenzen -- gib nur wieder, was auf der Seite steht.\n\n"
+    "Regeln:\n"
+    "- Tabellarische Bereiche (z. B. Kontoauszug, Rechnung, Laborbefund) "
+    "als Markdown-Tabelle wiedergeben: eine Zeile je fachlicher Zeile, "
+    "Bezeichnung, Wert, Referenzbereich und Einheit gehoeren in dieselbe "
+    "Tabellenzeile, nicht in getrennte Listen.\n"
+    "- Handschriftliche Vermerke, Stempel oder Markierungen NICHT in den "
+    "Fliesstext oder eine Tabelle mischen, sondern gesammelt in einen "
+    "eigenen Abschnitt mit der Ueberschrift 'Handschriftliche Vermerke'.\n"
+    "- Unsichere Lesungen woertlich als '[unsicher: ...]' kennzeichnen "
+    "statt zu raten.\n"
+    "- Ist die Seite leer, ueberbelichtet oder unlesbar, schreibe genau "
+    "das ('_Seite leer oder nicht lesbar._') statt Inhalt zu erfinden oder "
+    "die Seite wortlos zu ueberspringen.\n"
+    "- Keinen umschliessenden Codeblock um die Antwort setzen (keine ```)."
+)
+
+_CODE_FENCE_RE = re.compile(r"^```[^\n]*\n(.*)\n```$", re.DOTALL)
+
+_PLACEHOLDER_PAGE_FAILED = "_Seite konnte technisch nicht verarbeitet werden._"
+
+
+def _strip_code_fence(text: str) -> str:
+    """Manche Vision-Modelle umschliessen ihre Markdown-Antwort trotz
+    Anweisung mit einem Codeblock (```markdown ... ```). Unveraendert
+    uebernommen wuerde `render_markdown` die ganze Seite als woertlichen
+    Quelltext darstellen statt ihre Tabellen zu rendern -- also wird ein
+    Codeblock, der die *gesamte* Antwort umschliesst, entfernt. Ein
+    Codeblock, der nur einen Teil der Antwort umfasst, bleibt unangetastet
+    (koennte fachlich gemeint sein, z. B. eine zitierte IBAN-Zeile).
+    """
+    match = _CODE_FENCE_RE.match(text.strip())
+    return match.group(1).strip() if match else text
+
+
+def vision_markdown_fingerprint(document: Document) -> str:
+    """Idempotenz-Schluessel fuer die Markdown-Neuextraktion (#1149):
+    `sha256` der Originaldatei plus Prompt-Version. Bewusst ohne das
+    verwendete Modell (siehe `Document.vision_reextraction_fingerprint`) --
+    ein Modellwechsel soll nicht automatisch den ganzen Bestand neu durch
+    Vision schicken.
+    """
+    return f"{document.sha256}:{_VISION_MARKDOWN_PROMPT_VERSION}"
 
 
 def _page_count_for_vision(data: bytes, mime_type: str) -> int:
@@ -467,13 +548,45 @@ def expire_vision_reextraction_if_stalled(document: Document) -> None:
     document.save(update_fields=["vision_reextraction_status", "vision_reextraction_error"])
 
 
+def _pdf_text_layer(data: bytes, pages_to_process: int) -> str:
+    """Text-Layer der ersten `pages_to_process` Seiten eines PDFs (#1149) --
+    dieselbe Quelle wie Stufe 1 der automatischen Kaskade, hier aber als
+    Pruefer fuer die Vision-Transkription statt als deren Ersatz. Nur die
+    tatsaechlich verarbeiteten Seiten zaehlen, nicht das ganze Dokument
+    (bei einer Seitenobergrenze waeren die ueberzaehligen Seiten sonst
+    faelschlich als "Zahl ohne Entsprechung" auffaellig).
+    """
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join(page.extract_text() or "" for page in reader.pages[:pages_to_process])
+
+
 def reextract_document_with_vision(
-    document_id: int, *, vision_provider: Optional[VisionProvider] = None
+    document_id: int, *, vision_provider: Optional[VisionProvider] = None, force: bool = False
 ) -> Document:
     """Erzwingt die Vision-Stufe fuer jede Seite von `document.original_file`
     (#1143) und ersetzt `text_content`/`markdown`/`extraction_method` bei
-    Erfolg -- ein bewusst ausgeloester, kostenpflichtiger zweiter Anlauf,
-    keine automatische Eskalation.
+    Erfolg mit strukturerhaltendem Markdown (#1149, siehe Kommentar oben an
+    `_VISION_MARKDOWN_PROMPT`) -- ein bewusst ausgeloester, kostenpflichtiger
+    zweiter Anlauf, keine automatische Eskalation.
+
+    Idempotent: ist `force=False` (Default) und deckt sich
+    `vision_markdown_fingerprint(document)` mit dem zuletzt gespeicherten
+    `vision_reextraction_fingerprint`, macht der Lauf keinen Modellaufruf --
+    dieselbe Datei wurde bereits vollstaendig erfolgreich transkribiert.
+    `force=True` (der "erneut ausfuehren"-Weg, siehe
+    `views.document_vision_reextract`) ueberspringt die Pruefung immer.
+
+    Jede Seite ist einzeln fehlertolerant: schlaegt eine einzelne Seite
+    technisch fehl (Provider-Fehler, Rendering), bekommt sie einen
+    Platzhalter und der Lauf laeuft mit den uebrigen Seiten weiter -- ein
+    Fehler auf einer Seite entwertet die anderen nicht. Erst wenn *jede*
+    Seite fehlschlaegt, gilt der gesamte Lauf als gescheitert (derselbe
+    Fehlerpfad wie bisher). Der Idempotenz-Fingerabdruck wird nur bei einem
+    vollstaendigen Erfolg (keine Seitengrenze erreicht, keine Seite
+    fehlgeschlagen) gesetzt, sonst bliebe ein unvollstaendiger Lauf ohne
+    `force` fuer immer "aktuell".
 
     Anders als `extract_document()` legt ein Fehlschlag hier NICHT
     `processing_status` auf `failed` und ruehrt `text_content` nicht an:
@@ -490,11 +603,31 @@ def reextract_document_with_vision(
     `TimeoutException` (Django-Q, erbt von `SystemExit`) wird aufgezeichnet,
     dann aber weitergereicht, damit Django-Q den Worker-Prozess neu
     startet -- exakt wie bei `long_summary.generate_document_long_summary`.
-    Jeder andere Fehler wird aufgezeichnet, aber NICHT weitergereicht: der
-    Nutzer hat auf einen Knopf gedrueckt und erwartet eine sichtbare
-    Antwort, kein stillschweigend fehlgeschlagener Task.
+    Sie entkommt bewusst dem `except Exception` je Seite (SystemExit ist
+    keine Exception) und landet ungefangen hier unten. Jeder andere
+    Fehler auf Lauf-Ebene (nicht unterstuetzter Dateityp, jede Seite
+    gescheitert) wird aufgezeichnet, aber NICHT weitergereicht: der Nutzer
+    hat auf einen Knopf gedrueckt und erwartet eine sichtbare Antwort,
+    kein stillschweigend fehlgeschlagener Task.
     """
     document = Document.objects.get(pk=document_id)
+
+    if not force and document.sha256:
+        current_fingerprint = vision_markdown_fingerprint(document)
+        if document.vision_reextraction_fingerprint == current_fingerprint:
+            logger.info(
+                "KI-Vision-Neuextraktion fuer Document %s uebersprungen: "
+                "Datei und Prompt-Version unveraendert (sha256=%s), kein "
+                "Modellaufruf",
+                document_id,
+                document.sha256,
+            )
+            document.vision_reextraction_status = Document.VisionReextractionStatus.READY
+            document.vision_reextraction_error = ""
+            document.save(
+                update_fields=["vision_reextraction_status", "vision_reextraction_error"]
+            )
+            return document
 
     started = time.monotonic()
     usages: list[Usage] = []
@@ -528,27 +661,54 @@ def reextract_document_with_vision(
         )
 
         page_texts: list[str] = []
+        result_model = ""
+        result_version = ""
+        pages_failed = 0
+        last_page_error: Optional[Exception] = None
         with capture_usage() as usages:
             active_provider = provider_factory()
             for page_number in range(1, pages_to_process + 1):
-                image = _render_page_for_vision(data, mime_type, page_number)
-                text = _describe_with_vision(active_provider, _image_to_png_bytes(image))
-                page_texts.append(text.strip())
+                try:
+                    image = _render_page_for_vision(data, mime_type, page_number)
+                    result = active_provider.describe_image(
+                        ImageInput(data=_image_to_png_bytes(image), mime_type="image/png"),
+                        _VISION_MARKDOWN_PROMPT,
+                    )
+                    page_texts.append(_strip_code_fence(result.text.strip()))
+                    result_model, result_version = result.model, result.version
+                except Exception as exc:
+                    logger.exception(
+                        "KI-Vision-Neuextraktion fuer Document %s: Seite %s "
+                        "fehlgeschlagen, wird als Platzhalter markiert",
+                        document_id,
+                        page_number,
+                    )
+                    page_texts.append(_PLACEHOLDER_PAGE_FAILED)
+                    pages_failed += 1
+                    last_page_error = exc
                 pages_processed += 1
 
-        if len(page_texts) > 1:
-            # Seitengrenzen bleiben im Fliesstext kenntlich (#1143), damit
-            # Absaetze nicht ueber Seiten hinweg verkleben -- anders als
-            # `build_markdown()`s "## Seite N"-Ueberschriften, die nur fuer
-            # die Markdown-Ansicht gedacht sind, nicht fuer `text_content`.
-            text_content = "\n\n".join(
-                f"--- Seite {index} ---\n\n{text}" for index, text in enumerate(page_texts, start=1)
-            )
-        else:
-            text_content = page_texts[0] if page_texts else ""
+        if pages_failed == pages_to_process and last_page_error is not None:
+            # Keine Seite hat ein brauchbares Ergebnis geliefert -- der
+            # gesamte Lauf gilt als gescheitert, mit der zuletzt
+            # aufgetretenen Fehlermeldung (dieselbe, die vor #1149 ohne
+            # Seiten-Fehlertoleranz direkt propagiert waere).
+            raise last_page_error
 
-        document.text_content = clean_text(text_content.strip())
-        document.markdown = clean_text(build_markdown(document.title, page_texts))
+        content_markdown = clean_text(build_markdown(document.title, page_texts))
+
+        number_check = {"performed": False, "unmatched": []}
+        if mime_type == _PDF_MIME:
+            reference_text = _pdf_text_layer(data, pages_to_process)
+            if _is_text_sufficient(reference_text):
+                number_check = {
+                    "performed": True,
+                    "unmatched": find_unmatched_numbers(content_markdown, reference_text),
+                }
+
+        document.text_content = content_markdown
+        document.markdown = content_markdown
+        document.content_format = Document.ContentFormat.MARKDOWN
         document.extraction_method = Document.ExtractionMethod.VISION
         document.metadata = {
             **document.metadata,
@@ -563,10 +723,18 @@ def reextract_document_with_vision(
         document.vision_reextraction_pages_processed = pages_processed
         document.vision_reextraction_pages_total = pages_total
         document.vision_reextraction_truncated = truncated
+        document.vision_reextraction_pages_failed = pages_failed
+        document.vision_reextraction_model = result_model
+        document.vision_reextraction_model_version = result_version
+        document.vision_reextraction_number_check = number_check
+        document.vision_reextraction_fingerprint = (
+            vision_markdown_fingerprint(document) if not truncated and pages_failed == 0 else ""
+        )
         document.save(
             update_fields=[
                 "text_content",
                 "markdown",
+                "content_format",
                 "extraction_method",
                 "metadata",
                 "vision_reextraction_status",
@@ -575,6 +743,11 @@ def reextract_document_with_vision(
                 "vision_reextraction_pages_processed",
                 "vision_reextraction_pages_total",
                 "vision_reextraction_truncated",
+                "vision_reextraction_pages_failed",
+                "vision_reextraction_model",
+                "vision_reextraction_model_version",
+                "vision_reextraction_number_check",
+                "vision_reextraction_fingerprint",
                 "updated_at",
             ]
         )

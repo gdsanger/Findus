@@ -51,14 +51,24 @@
         hx-post="{% url 'documents:vision_reextract' document.pk %}"
         hx-target="#document-analysis-status"
         hx-swap="outerHTML"
-        onsubmit="return confirm('Mit KI-Vision neu extrahieren? Das ersetzt den bisherigen Text und verursacht zusätzliche KI-Kosten.{% if document.metadata.page_count %} Das Dokument hat {{ document.metadata.page_count }} Seite(n){% if document.metadata.page_count > vision_reextract_page_limit %}, verarbeitet werden nur die ersten {{ vision_reextract_page_limit }}{% endif %}.{% endif %}');"
+        onsubmit="return confirm('{% if vision_reextraction_up_to_date %}Erneut mit KI-Vision extrahieren, obwohl sich die Datei seit dem letzten Lauf nicht geändert hat? Das verursacht erneute KI-Kosten ohne garantiert neuen Inhalt.{% else %}Mit KI-Vision neu extrahieren? Das ersetzt den bisherigen Text und verursacht zusätzliche KI-Kosten.{% if document.metadata.page_count %} Das Dokument hat {{ document.metadata.page_count }} Seite(n){% if document.metadata.page_count > vision_reextract_page_limit %}, verarbeitet werden nur die ersten {{ vision_reextract_page_limit }}{% endif %}.{% endif %}{% endif %}');"
     >
         {% csrf_token %}
+        {% comment %}
+        Idempotenz (#1149): ohne Aenderung an der Datei macht ein Klick
+        ohne `force` keinen Modellaufruf (siehe `views.
+        document_vision_reextract`) -- das Formular setzt `force=1` selbst,
+        sobald genau dieser Zustand vorliegt, sonst waere der Button ein
+        Klick ins Leere.
+        {% endcomment %}
+        {% if vision_reextraction_up_to_date %}
+        <input type="hidden" name="force" value="1">
+        {% endif %}
         <button
             type="submit"
             class="btn btn-sm {% if document.vision_reextraction_status == 'failed' %}btn-warning{% else %}btn-outline-secondary{% endif %}"
         >
-            Mit KI-Vision neu extrahieren
+            {% if vision_reextraction_up_to_date %}Erneut mit KI-Vision extrahieren (Datei unverändert){% else %}Mit KI-Vision neu extrahieren{% endif %}
         </button>
     </form>
     {% endif %}
