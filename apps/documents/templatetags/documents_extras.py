@@ -70,10 +70,14 @@ def render_markdown(value):
     Markdown -- escaping it before conversion strips any embedded HTML
     (e.g. a phishing mail's `<script>`) while leaving the `#`/blank-line
     syntax `apps.documents.extraction.build_markdown()` emits intact.
+    `escape()` never touches `|`/`-`/`:`, so it's harmless to the `tables`
+    extension's syntax -- needed since #1149's KI-Vision-Neuextraktion
+    (`Document.content_format == "markdown"`) produces real Markdown
+    tables that would otherwise render as a wall of pipe characters.
     """
     if not value:
         return ""
-    html = markdown_lib.markdown(escape(value), extensions=["nl2br"])
+    html = markdown_lib.markdown(escape(value), extensions=["nl2br", "tables"])
     return mark_safe(html)
 
 
