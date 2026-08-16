@@ -1225,13 +1225,28 @@ body {
    Zeichenanzahl, darunter der Rohtext -- in echtem Monospace (anders als
    `.findus-detail-text`, das die Absatzschrift erbt) und mit eigenem
    Scrollbereich, damit ein mehrseitiges Dokument nicht die ganze Seite in
-   die Länge zieht. */
+   die Länge zieht.
+
+   `flex-direction: column` (#1150): jede Info-/Prüfhinweis-Zeile ist eine
+   eigene `.findus-detail-content-header-row` -- eine gemeinsame
+   `flex-wrap`-Reihe für Text und Knopf drängte den Knopf bei langem
+   Prüfhinweis-Text in dieselbe Zeile wie den Hinweistext, statt darunter. */
 .findus-detail-content-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--findus-space-2);
+    margin-bottom: var(--findus-space-3);
+}
+
+.findus-detail-content-header-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--findus-space-3);
-    margin-bottom: var(--findus-space-2);
+}
+
+.findus-detail-content-header-actions {
+    justify-content: flex-end;
 }
 
 .findus-detail-content-text {
