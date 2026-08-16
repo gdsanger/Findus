@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
+TEST_RUNNER = "config.test_runner.FindusTestRunner"
 
 def env(name, default=None):
     return os.environ.get(name, default)
