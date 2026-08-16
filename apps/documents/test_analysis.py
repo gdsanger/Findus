@@ -2,6 +2,7 @@ import datetime
 import json
 
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 from apps.ai.providers import GenerationResult
 from apps.ai.providers.fake import FakeGenerationProvider
@@ -168,21 +169,161 @@ class AnalyzeDocumentTests(TestCase):
 
         self.assertEqual(result.document_date, datetime.date(2026, 8, 1))
 
-    def test_does_not_overwrite_existing_document_date(self):
-        """#1085: a manually corrected (or previously KI-set) `document_date`
+    def test_does_not_overwrite_a_manually_set_document_date(self):
+        """#1085/#1141: eine Handkorrektur (`document_date_source = "manuell"`,
 
-        must survive a re-run -- otherwise "Analyse erneut ausfuehren"
-        would silently discard a user's correction.
+        gesetzt von `document_meta`) ueberlebt jede erneute Analyse --
+        sonst kassierte "Analyse erneut ausfuehren" die Nutzerarbeit ein.
         """
         document = Document.objects.create(
             title="rechnung.pdf",
             text_content="Rechnung Inhalt",
+            document_date=datetime.date(2025, 12, 24),
+            metadata={"document_date_source": "manuell"},
+        )
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.document_date, datetime.date(2025, 12, 24))
+
+    def test_does_not_overwrite_a_document_date_without_provenance(self):
+        """#1141: ein Datum ohne Herkunftsvermerk stammt nicht aus der
+
+        Analyse (EML-`Date`-Header, Bestand vor der Migration) -- im Zweifel
+        bleibt es stehen.
+        """
+        document = Document.objects.create(
+            title="mail.eml",
+            text_content="Mailtext",
             document_date=datetime.date(2025, 12, 24),
         )
 
         result = analyze_document(document.id, generation_provider=self._provider())
 
         self.assertEqual(result.document_date, datetime.date(2025, 12, 24))
+
+    def test_overwrites_a_document_date_the_analysis_set_itself(self):
+        """#1141: der Wartungslauf muss die falsch datierten Altbestaende
+
+        korrigieren koennen -- ein von einem frueheren Lauf gesetztes Datum
+        ist deshalb kein Tabu.
+        """
+        document = Document.objects.create(
+            title="rechnung.pdf",
+            text_content="Rechnung Inhalt",
+            document_date=datetime.date(2025, 12, 24),
+            metadata={"document_date_source": "erstellt"},
+        )
+
+        result = analyze_document(document.id, generation_provider=self._provider())
+
+        self.assertEqual(result.document_date, datetime.date(2026, 8, 1))
+        self.assertEqual(result.metadata["document_date_source"], "modell")
+
+    def test_period_end_beats_the_created_date(self):
+        """#1141, der Ausloeser: ein Kontoauszug mit Abrechnungszeitraum und
+
+        einem "Erstellt am" vom Tag des Hochladens datiert auf das Ende des
+        Zeitraums -- und traegt den Zeitraum als Key-Facts.
+        """
+        today = timezone.localdate()
+        reply = json.dumps(
+            {
+                "title": "Kontoauszug November 2023",
+                "summary": "Kontoauszug 11/2023.",
+                "key_facts": {"document_type": "Kontoauszug", "document_date": today.isoformat()},
+                "dates": [
+                    {"kind": "zeitraum_beginn", "value": "2023-11-01"},
+                    {"kind": "zeitraum_ende", "value": "2023-11-30"},
+                    {"kind": "erstellt", "value": today.isoformat()},
+                ],
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="auszug.pdf", text_content="Kontoauszug")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.document_date, datetime.date(2023, 11, 30))
+        self.assertEqual(result.key_facts["period_start"], "2023-11-01")
+        self.assertEqual(result.key_facts["period_end"], "2023-11-30")
+        self.assertEqual(result.key_facts["document_date"], "2023-11-30")
+        self.assertEqual(result.metadata["document_date_source"], "zeitraum_ende")
+        self.assertNotIn("document_date_upload_conflict", result.metadata)
+        self.assertEqual(result.billing_period_label, "01.11.2023 – 30.11.2023")
+
+    def test_plausibility_check_records_the_upload_conflict(self):
+        """#1141: haelt das Modell das Abrufdatum fuer das Belegdatum, greift
+
+        die Pruefung gegen den Upload-Tag -- und haelt das im Dokument fest.
+        """
+        today = timezone.localdate()
+        reply = json.dumps(
+            {
+                "title": "Kontoauszug",
+                "summary": "",
+                "key_facts": {},
+                "dates": [
+                    {"kind": "belegdatum", "value": today.isoformat()},
+                    {"kind": "zeitraum_ende", "value": "2023-11-30"},
+                ],
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="auszug.pdf", text_content="Kontoauszug")
+
+        with self.assertLogs("apps.documents.analysis", level="INFO") as logs:
+            result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.document_date, datetime.date(2023, 11, 30))
+        self.assertTrue(result.metadata["document_date_upload_conflict"])
+        self.assertTrue(
+            any("Plausibilitaetspruefung" in message for message in logs.output)
+        )
+
+    def test_invoice_date_wins_over_a_print_date(self):
+        reply = json.dumps(
+            {
+                "title": "Rechnung",
+                "summary": "",
+                "key_facts": {},
+                "dates": [
+                    {"kind": "belegdatum", "value": "2026-03-04"},
+                    {"kind": "erstellt", "value": "2026-03-06"},
+                ],
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="rechnung.pdf", text_content="Rechnung")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.document_date, datetime.date(2026, 3, 4))
+        self.assertEqual(result.metadata["document_date_source"], "belegdatum")
+
+    def test_created_date_stays_the_last_resort_and_is_marked_as_such(self):
+        reply = json.dumps(
+            {
+                "title": "Merkblatt",
+                "summary": "",
+                "key_facts": {},
+                "dates": [{"kind": "erstellt", "value": "2026-01-12"}],
+                "tag_suggestions": [],
+                "vorgang_suggestions": [],
+            }
+        )
+        document = Document.objects.create(title="merkblatt.pdf", text_content="Stand: 12.01.2026")
+
+        result = analyze_document(document.id, generation_provider=self._provider(reply))
+
+        self.assertEqual(result.document_date, datetime.date(2026, 1, 12))
+        self.assertEqual(result.metadata["document_date_source"], "erstellt")
+        self.assertEqual(
+            result.document_date_source_label, "Erstell-/Druckdatum (unsichere Quelle)"
+        )
 
     def test_malformed_document_date_is_ignored(self):
         reply = json.dumps(

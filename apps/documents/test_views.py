@@ -2742,6 +2742,58 @@ class DocumentMetaEditTests(TestCase):
         self.doc.refresh_from_db()
         self.assertIsNone(self.doc.document_date)
 
+    def test_post_marks_the_document_date_as_manually_set(self):
+        """#1141: der Vermerk ist der Schutz vor dem naechsten Wartungslauf --
+
+        ohne ihn wuerde die erneute KI-Analyse die Korrektur ueberschreiben.
+        """
+        self.doc.metadata = {
+            "document_date_source": "erstellt",
+            "document_date_upload_conflict": True,
+        }
+        self.doc.save(update_fields=["metadata"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "document_date", "document_date": "2026-01-15"},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.metadata["document_date_source"], "manuell")
+        self.assertNotIn("document_date_upload_conflict", self.doc.metadata)
+
+    def test_clearing_the_document_date_releases_it_for_the_next_analysis(self):
+        """Ein geleertes Feld ist keine zu schuetzende Korrektur, sondern die
+
+        Freigabe, das Datum neu bestimmen zu lassen (#1141).
+        """
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.metadata = {"document_date_source": "manuell"}
+        self.doc.save(update_fields=["document_date", "metadata"])
+
+        self.client.force_login(self.user_a)
+        self.client.post(
+            reverse("documents:meta", args=[self.doc.id]),
+            {"field": "document_date", "document_date": ""},
+        )
+
+        self.doc.refresh_from_db()
+        self.assertIsNone(self.doc.document_date)
+        self.assertNotIn("document_date_source", self.doc.metadata)
+
+    def test_block_shows_the_document_date_source(self):
+        self.doc.document_date = date(2026, 1, 15)
+        self.doc.metadata = {"document_date_source": "zeitraum_ende"}
+        self.doc.key_facts = {"period_start": "2025-12-01", "period_end": "2026-01-15"}
+        self.doc.save(update_fields=["document_date", "metadata", "key_facts"])
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
+
+        self.assertContains(response, "Ende des Abrechnungszeitraums")
+        self.assertContains(response, "01.12.2025 – 15.01.2026")
+
     def test_post_with_invalid_document_date_keeps_previous_value(self):
         self.doc.document_date = date(2026, 1, 15)
         self.doc.save(update_fields=["document_date"])

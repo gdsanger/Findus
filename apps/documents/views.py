@@ -17,6 +17,7 @@ from apps.ingest.service import ingest_eml_file, ingest_file, sniff_mime_type
 
 from .analysis import analyze_and_finalize
 from .comment_views import document_comments_context
+from .document_dates import MANUAL_SOURCE as MANUAL_DATE_SOURCE
 from .long_summary import (
     document_long_summary_is_stale,
     expire_document_long_summary_if_stalled,
@@ -1443,6 +1444,16 @@ def _drop_metadata_source(document, key):
     return ["metadata"]
 
 
+def _set_metadata_source(document, key, value):
+    """Gegenstueck zu `_drop_metadata_source`: einen Herkunftsvermerk in
+    `metadata` setzen und melden, welches Model-Feld das dirty macht.
+    """
+    if document.metadata.get(key) == value:
+        return []
+    document.metadata = {**document.metadata, key: value}
+    return ["metadata"]
+
+
 def _submitted_ids(post, name):
     """IDs of a submitted multi-select -- an empty selection means "keine",
     not "unverändert" (the `field` marker already told us the field is meant).
@@ -1497,11 +1508,20 @@ def document_meta(request, pk):
                 changed.extend(
                     _drop_metadata_source(document, "tax_relevance_source")
                 )
+        # Dokumentdatum (#1141): ein von Hand gesetztes Datum wird als
+        # `"manuell"` vermerkt und ist damit vor jeder erneuten KI-Analyse
+        # geschuetzt -- das ist der Vermerk, an dem `_apply_analysis` die
+        # Nutzerentscheidung erkennt. Ein geleertes Feld nimmt den Vermerk
+        # wieder mit: "kein Datum" ist keine zu schuetzende Korrektur,
+        # sondern die Freigabe, es neu bestimmen zu lassen. Der Hinweis auf
+        # eine frueher eingegriffene Plausibilitaetspruefung faellt in beiden
+        # Faellen weg, der Nutzer hat gerade selbst entschieden.
         if "document_date" in fields:
             document_date = request.POST.get("document_date", "").strip()
             if not document_date:
                 document.document_date = None
                 changed.append("document_date")
+                changed.extend(_drop_metadata_source(document, "document_date_source"))
             else:
                 try:
                     document.document_date = datetime.date.fromisoformat(document_date)
@@ -1509,6 +1529,14 @@ def document_meta(request, pk):
                     pass
                 else:
                     changed.append("document_date")
+                    changed.extend(
+                        _set_metadata_source(
+                            document, "document_date_source", MANUAL_DATE_SOURCE
+                        )
+                    )
+            changed.extend(
+                _drop_metadata_source(document, "document_date_upload_conflict")
+            )
         if changed:
             document.save(update_fields=[*dict.fromkeys(changed), "updated_at"])
         if "vorgaenge" in fields:

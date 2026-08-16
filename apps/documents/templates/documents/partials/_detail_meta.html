@@ -144,9 +144,27 @@ Klick-Trigger.
                 >
                 {% if document.display_date_is_upload_fallback %}
                 <div class="form-text small">Ohne eigenes Datum: angezeigt wird das Upload-Datum {{ document.display_date|date:"d.m.Y" }}.</div>
+                {% elif document.document_date_source_label %}
+                {% comment %}
+                Herkunft des Datums (#1141): die Quellen sind unterschiedlich
+                belastbar -- ein ausgewiesenes Belegdatum ist gesichert, ein
+                Rückgriff auf das Erstell-/Druckdatum ist eine Notlösung. Wer
+                das sieht, kann gezielt nachbessern, statt einem stillen
+                Datum zu vertrauen.
+                {% endcomment %}
+                <div class="form-text small">Quelle: {{ document.document_date_source_label }}</div>
+                {% if document.document_date_was_corrected %}
+                <div class="form-text small">Ein Datum am Upload-Tag wurde zugunsten dieser Quelle verworfen.</div>
+                {% endif %}
                 {% endif %}
             </dd>
         </div>
+        {% if document.billing_period_label %}
+        <div class="findus-detail-meta-row">
+            <dt>Zeitraum <span class="badge text-bg-info">KI-extrahiert</span></dt>
+            <dd>{{ document.billing_period_label }}</dd>
+        </div>
+        {% endif %}
         <div class="findus-detail-meta-row">
             <dt>Vorgänge</dt>
             <dd>

@@ -12,6 +12,7 @@ from pgvector.django import HnswIndex, VectorField
 
 from apps.accounts.models import Department
 
+from . import document_dates
 from .letter_bindings import source_label, validate_source
 
 _HEX_COLOR_VALIDATOR = RegexValidator(
@@ -548,8 +549,14 @@ class Document(TimeStampedModel, LongSummaryMixin):
     # nur `key_facts["document_date"]`, weil es editierbar sein muss (siehe
     # `document_meta`) und eine Nutzerkorrektur sonst beim naechsten
     # `document_analysis_rerun` wieder von der KI ueberschrieben wuerde.
-    # `_apply_analysis` setzt es daher nur, solange es noch leer ist -- exakt
-    # dasselbe "einmal befuellen, nie ueberschreiben"-Muster wie `direction`.
+    # Welche der im Dokument gefundenen Datumsangaben das wird, entscheidet
+    # seit #1141 der Code (`apps.documents.document_dates`) nach fester
+    # Rangfolge, nicht das Modell. Die Herkunft steht in
+    # `metadata["document_date_source"]` und regelt zugleich das
+    # Ueberschreiben: `_apply_analysis` fasst nur an, was leer ist oder was
+    # ein frueherer Analyse-Lauf selbst gesetzt hat -- eine Handkorrektur
+    # (`"manuell"`) und ein Datum ohne Vermerk (EML-`Date`-Header, Bestand)
+    # ueberleben jeden Wartungslauf.
     document_date = models.DateField(null=True, blank=True, db_index=True)
 
     original_file = models.FileField(upload_to="documents/%Y/%m/", blank=True)
@@ -650,6 +657,50 @@ class Document(TimeStampedModel, LongSummaryMixin):
         distinguishable from an actually recognised Dokumentdatum.
         """
         return self.document_date is None
+
+    @property
+    def billing_period_label(self):
+        """"01.11.2023 – 30.11.2023" für ein Dokument mit Abrechnungs- oder
+
+        Leistungszeitraum (#1141), sonst "". Bei einem Kontoauszug ist der
+        Zeitraum die aussagekräftigere Angabe als das Einzeldatum, deshalb
+        steht er im Detail neben dem Datum. Die Grenzen liegen als ISO-Strings
+        in `key_facts` (KI-extrahiert, wie Betrag/Frist); die Formatierung
+        gehört hierher und nicht ins Template, damit sie an einer Stelle
+        steht -- eine halbe Angabe (nur Beginn oder nur Ende) wird als
+        offener Zeitraum gezeigt statt verschwiegen.
+        """
+        key_facts = self.key_facts if isinstance(self.key_facts, dict) else {}
+        start = document_dates.parse_date(key_facts.get("period_start"))
+        end = document_dates.parse_date(key_facts.get("period_end"))
+        if start is None and end is None:
+            return ""
+        return " – ".join(
+            date_format(value, "d.m.Y") if value else "…" for value in (start, end)
+        )
+
+    @property
+    def document_date_source_label(self):
+        """Woher `document_date` stammt, in Worten (#1141) -- "Ende des
+
+        Abrechnungszeitraums", "Erstell-/Druckdatum (unsichere Quelle)", "Von
+        Hand gesetzt", ... Leer für Bestand ohne Herkunftsvermerk. Sichtbar
+        im Detail, weil die Quellen unterschiedlich belastbar sind: ein
+        Dokument, das nur auf sein Druckdatum zurückfällt, soll das zeigen
+        statt so zu tun, als sei das Datum gesichert.
+        """
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        return document_dates.SOURCE_LABELS.get(metadata.get("document_date_source"), "")
+
+    @property
+    def document_date_was_corrected(self):
+        """True, wenn die Plausibilitätsprüfung (#1141) beim letzten
+
+        Analyse-Lauf ein Datum am Upload-Tag zugunsten einer anderen Quelle
+        verworfen hat -- Grundlage für den erklärenden Hinweis im Detail.
+        """
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        return bool(metadata.get("document_date_upload_conflict"))
 
     @property
     def display_date_month_label(self):

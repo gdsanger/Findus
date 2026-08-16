@@ -50,6 +50,16 @@ Antwort. Ein erneuter Lauf ersetzt nur die KI-extrahierten Zeilen; von
 Hand nachgetragene/korrigierte bleiben stehen (siehe
 `apps.documents.references`).
 
+Dokumentdatum (#1141): derselbe Call liefert zusaetzlich eine *Liste*
+typisierter Datumsangaben (`dates`); welche davon das `document_date` wird,
+entscheidet nicht das Modell, sondern `apps.documents.document_dates` nach
+einer festen Rangfolge -- Belegdatum vor Zeitraum-Ende vor Briefkopf vor
+Erstell-/Druckdatum -- plus einer Plausibilitaetspruefung gegen den
+Upload-Tag. Die Herkunft steht danach in
+`metadata["document_date_source"]`, damit erkennbar bleibt, wie belastbar
+das Datum ist; ein von Hand gesetztes Datum (`"manuell"`) ueberlebt jede
+erneute Analyse.
+
 Tag-Dimension/-Wert (#1034): `Tag`/`TagSuggestion` keep `name` and
 `dimension` as separate fields on purpose (unique on the pair, see
 `Tag.Meta.constraints`), but a KI reply sometimes ignores the prompt and
@@ -67,9 +77,16 @@ import logging
 from typing import Optional
 
 from django.conf import settings
+from django.utils import timezone
 
 from apps.ai.providers import GenerationProvider, Message, generate_json, get_generation_provider
 
+from .document_dates import (
+    AI_SOURCES,
+    candidates_from_reply,
+    period_bounds,
+    resolve_document_date,
+)
 from .models import (
     Correspondent,
     Document,
@@ -107,6 +124,12 @@ _KEY_FACT_FIELDS = (
     "due_date",
 )
 
+# Die Zeitraum-Key-Facts (#1141) `period_start`/`period_end` stehen bewusst
+# NICHT in dieser Liste: sie werden nicht als eigene Antwortfelder abgefragt,
+# sondern aus der typisierten `dates`-Liste abgeleitet, aus der auch das
+# Dokumentdatum stammt (siehe `_apply_analysis`). Zwei Wege zum selben Wert
+# waeren zwei Wege, die auseinanderlaufen koennen.
+
 # Die Kennungsarten für den Prompt kommen aus den Model-Choices, nicht aus
 # einer zweiten, handgepflegten Liste (#1099): eine neue Kennungsart soll
 # an genau einer Stelle ergänzt werden. `SONSTIGE` steht im Prompt separat
@@ -131,6 +154,25 @@ _SYSTEM_PROMPT = (
     '(YYYY-MM-DD), "document_type" (z. B. Rechnung, Vertrag, Mahnung), '
     '"amount", "currency", "due_date" (YYYY-MM-DD) -- jeweils der erkannte '
     "Wert als String, sonst null.\n"
+    '- "dates": Liste ALLER im Dokument vorkommenden Datumsangaben, je '
+    'Eintrag "kind" und "value" (YYYY-MM-DD). "kind" ist einer von:\n'
+    '  * "belegdatum" -- das ausgewiesene Datum des Dokuments selbst '
+    "(Rechnungs-, Beleg-, Bescheid-, Vertragsdatum).\n"
+    '  * "zeitraum_beginn" / "zeitraum_ende" -- Beginn und Ende eines '
+    "Abrechnungs- oder Leistungszeitraums, z. B. \"Kontoauszug vom "
+    '01.11.2023 bis 30.11.2023", Verbrauchs- oder Lohnabrechnung, '
+    "Rechnungsabschluss. Beide Grenzen angeben, wenn beide dastehen.\n"
+    '  * "briefkopf" -- das Datum im Briefkopf eines Anschreibens '
+    '("Landshut, den 4. Maerz 2026").\n'
+    '  * "erstellt" -- Erstell-, Druck- oder Abrufdatum ("Erstellt am", '
+    '"Gedruckt am", "Ausgedruckt am", "Stand:").\n'
+    "  Gib jede gefundene Angabe mit ihrer Art zurueck, auch wenn mehrere "
+    "gleichzeitig vorkommen, und entscheide NICHT selbst, welche davon das "
+    "maßgebliche Dokumentdatum ist -- diese Auswahl trifft das System. "
+    "Zahlungsziele/Faelligkeiten gehoeren nicht in diese Liste (dafuer gibt "
+    'es "due_date"), ebensowenig Datumsangaben, die zu einem anderen '
+    'Schriftstueck gehoeren ("Ihr Schreiben vom ..."). Findest du keine '
+    "Datumsangabe, gib eine leere Liste zurueck.\n"
     '- "direction": IMMER angeben, einer von "eingang", "ausgang", '
     '"intern", "unbekannt". Vergleiche Aussteller (sender_name/-ids) und '
     'Empfaenger (recipient_name/-ids) mit den unten gelisteten '
@@ -257,21 +299,32 @@ def _clamp_confidence(value: object) -> float:
     return max(0.0, min(1.0, number))
 
 
-def _parse_document_date(value: object) -> Optional[datetime.date]:
-    """Parse the KI's `key_facts.document_date` (prompted as "YYYY-MM-DD",
-
-    #1085) into a real `date` -- an LLM reply is free text, not a validated
-    field, so a missing/malformed value (empty string, prose, wrong format)
-    must fall back to `None` instead of raising and losing the rest of the
-    analysis.
+def _uploaded_on(document: Document) -> Optional[datetime.date]:
+    """Der Tag des Hochladens als lokales Datum -- Bezugspunkt der
+    Plausibilitaetspruefung (#1141). Immer `localtime`, nie UTC: sonst faellt
+    ein spaeter Abend-Upload je nach Serverzeitzone auf den Folgetag und die
+    Pruefung greift nicht mehr.
     """
-    text = str(value or "").strip()
-    if not text:
+    if document.created_at is None:
         return None
-    try:
-        return datetime.date.fromisoformat(text)
-    except ValueError:
-        return None
+    return timezone.localtime(document.created_at).date()
+
+
+def _may_set_document_date(document: Document, metadata: dict) -> bool:
+    """Darf die Analyse `document_date` (neu) setzen? (#1141)
+
+    Ja, solange kein Datum gespeichert ist oder das gespeicherte aus einem
+    frueheren Analyse-Lauf stammt (`document_date_source` ist eine
+    KI-Herkunft). Nein bei `"manuell"` -- die Handkorrektur ist die
+    Nutzerentscheidung, die kein Wartungslauf einkassieren darf -- und nein
+    bei einem Datum ohne Herkunftsvermerk: das ist entweder Bestand von vor
+    #1141 (die Migration stempelt dort, was nachweislich die KI gesetzt hat)
+    oder stammt aus dem Ingest (E-Mail-`Date`-Header), und beides ist
+    verlaesslicher als ein neuer Modell-Raterunde.
+    """
+    if document.document_date is None:
+        return True
+    return metadata.get("document_date_source") in AI_SOURCES
 
 
 def _normalize_tag_fields(name: str, dimension: str) -> tuple[str, str]:
@@ -528,9 +581,6 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
         for field in _KEY_FACT_FIELDS
         if str(key_facts_in.get(field) or "").strip()
     }
-    if key_facts:
-        key_facts["ai_model"] = model
-        key_facts["ai_model_version"] = version
 
     metadata = dict(document.metadata)
     metadata.pop("analysis_error", None)
@@ -538,20 +588,71 @@ def _apply_analysis(document: Document, parsed: dict, *, model: str, version: st
 
     update_fields = ["metadata", "summary", "key_facts", "updated_at"]
     document.summary = summary
-    document.key_facts = key_facts
     if title:
         document.title = title
         update_fields.append("title")
 
-    # Dokumentdatum (#1085): wie `direction` nur befuellen, solange es noch
-    # leer ist -- eine per Hand korrigierte oder bereits von einem
-    # frueheren Analyse-Lauf gesetzte `document_date` darf ein erneuter
-    # `document_analysis_rerun` nicht stillschweigend ueberschreiben.
-    if document.document_date is None:
-        parsed_document_date = _parse_document_date(key_facts_in.get("document_date"))
-        if parsed_document_date is not None:
-            document.document_date = parsed_document_date
-            update_fields.append("document_date")
+    # Dokumentdatum (#1141): erst die typisierten Datumsangaben einsammeln,
+    # dann daraus sowohl den Zeitraum als auch das maßgebliche Datum
+    # ableiten -- eine Quelle, zwei Ergebnisse.
+    date_candidates = candidates_from_reply(
+        parsed.get("dates"), model_date=key_facts_in.get("document_date")
+    )
+    period_start, period_end = period_bounds(date_candidates)
+    if period_start is not None:
+        key_facts["period_start"] = period_start.isoformat()
+    if period_end is not None:
+        key_facts["period_end"] = period_end.isoformat()
+    resolved_date = resolve_document_date(
+        date_candidates, uploaded_on=_uploaded_on(document)
+    )
+
+    # Dokumentdatum (#1085, geschaerft in #1141): frueher galt "nur
+    # befuellen, solange leer" -- das schuetzte die Handkorrektur, machte
+    # aber auch jedes von einem frueheren Lauf falsch gesetzte Datum
+    # unkorrigierbar, obwohl genau das der Anlass von #1141 war (40
+    # Kontoauszuege, alle auf den Upload-Tag datiert). Massgeblich ist
+    # deshalb nicht mehr "ist das Feld leer?", sondern die Herkunft in
+    # `metadata["document_date_source"]`: die Analyse ueberschreibt nur, was
+    # sie selbst gesetzt hat. Ein von Hand gesetztes ("manuell") sowie ein
+    # aus anderer Quelle stammendes Datum (E-Mail-Header beim EML-Ingest,
+    # Bestand ohne Herkunftsvermerk) bleibt unangetastet.
+    if _may_set_document_date(document, metadata) and resolved_date.date is not None:
+        document.document_date = resolved_date.date
+        metadata["document_date_source"] = resolved_date.kind
+        update_fields.append("document_date")
+        # Der Eingriff der Plausibilitaetspruefung wird protokolliert
+        # (#1141) -- damit sich beurteilen laesst, wie oft die Regel
+        # greift -- und bleibt am Dokument sichtbar, damit ein umgebogenes
+        # Datum im Detail nachvollziehbar ist.
+        if resolved_date.upload_conflict:
+            rejected = resolved_date.rejected
+            logger.info(
+                "Dokumentdatum-Plausibilitaetspruefung griff fuer Document %s: "
+                "%s (%s) lag am Upload-Tag, stattdessen %s (%s)",
+                document.pk,
+                rejected.date if rejected else "?",
+                rejected.kind if rejected else "?",
+                resolved_date.date,
+                resolved_date.kind,
+            )
+            metadata["document_date_upload_conflict"] = True
+        else:
+            metadata.pop("document_date_upload_conflict", None)
+
+    # `key_facts["document_date"]` traegt das *geltende* Datum des Dokuments,
+    # nicht die Rohantwort des Modells: alles, was Key-Facts weiterverwendet
+    # (Schreiben-Platzhalter, Empfehlungs- und Zusammenfassungs-Prompts),
+    # soll dasselbe Datum sehen wie Timeline und Detail -- auch dann, wenn
+    # das eine geschuetzte Handkorrektur ist und nicht die Wahl der Analyse.
+    key_facts.pop("document_date", None)
+    if document.document_date is not None:
+        key_facts["document_date"] = document.document_date.isoformat()
+
+    if key_facts:
+        key_facts["ai_model"] = model
+        key_facts["ai_model_version"] = version
+    document.key_facts = key_facts
 
     sender_kwargs = {
         "name": key_facts_in.get("sender_name") or "",

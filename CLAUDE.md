@@ -85,6 +85,33 @@ Wer nur die halbe Regel kennt, „korrigiert" sie irgendwann in die falsche
 Richtung — entweder landen Kommentare doch in den Chunks, oder sie gelten als
 generell tabu und der Kontext geht verloren.
 
+### Dokumentdatum: die Rangfolge steht im Code, nicht im Prompt
+
+Anlass waren 40 Kontoauszüge, die alle das „Erstellt am" aus dem Fuß (= den
+Upload-Tag) als Dokumentdatum trugen und damit die Timeline entwerteten.
+
+- Die Analyse fragt eine **Liste typisierter Datumsangaben** ab (`dates`:
+  `belegdatum`/`zeitraum_beginn`/`zeitraum_ende`/`briefkopf`/`erstellt`);
+  welche davon `Document.document_date` wird, entscheidet
+  `apps.documents.document_dates` nach fester Rangfolge — Belegdatum vor
+  Zeitraum-Ende vor Briefkopf vor Erstell-/Druckdatum. Wer die Auswahl zurück
+  in den Prompt verlagert, macht sie von der Tagesform des Modells abhängig.
+- `zeitraum_beginn` steht **nicht** in der Rangfolge: ein Zeitraum datiert auf
+  sein Ende. Beide Grenzen landen trotzdem als Key-Facts
+  (`period_start`/`period_end`) — abgeleitet aus derselben Liste, nicht als
+  zweites Antwortfeld, sonst gäbe es zwei Wege zum selben Wert.
+- Die **Plausibilitätsprüfung** gegen den Upload-Tag gehört ebenfalls in den
+  Code: sie braucht das Upload-Datum, das dem Modell gar nicht vorliegt. Sie
+  biegt bewusst auch den seltenen echten Fall um („heute datiert *und* mit
+  Zeitraum") — bei einem Archiv ist das die Ausnahme.
+- `metadata["document_date_source"]` ist Herkunftsvermerk **und**
+  Schreibschutz: die Analyse überschreibt nur, was sie selbst gesetzt hat.
+  `"manuell"` und ein Datum ganz ohne Vermerk (EML-`Date`-Header, Bestand)
+  bleiben unangetastet — ein Wartungslauf darf keine Handkorrektur
+  einkassieren. Deshalb stempelt die Migration `0035` nur dort, wo
+  `document_date` dem von der KI abgelegten `key_facts["document_date"]`
+  exakt entspricht.
+
 ### Ausführliche Zusammenfassung
 
 - Reiner **Fließtext** in Absätzen. Ratschläge stehen als Sätze darin, nie als
