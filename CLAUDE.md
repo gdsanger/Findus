@@ -258,6 +258,10 @@ Damit es niemand „nachrüstet":
 - Neue Tests gehören zu jeder Änderung dazu. Vertragstests zu
   Architekturregeln, Sichtbarkeitsprüfungen und Regressionstests zu behobenen
   Fehlern werden **nie** entfernt — auch nicht, um Laufzeit zu sparen.
+- **Während ein Testlauf läuft, keine Arbeiten an der Datenbank** (Migrationen
+  ausprobieren, Shell-Kommandos gegen die Test-DB). Der Lauf hält sie; man
+  wartet sonst doppelt. Entweder erst fertig arbeiten und dann testen, oder
+  den Lauf abwarten.
 
 ## Pflegeregel
 
