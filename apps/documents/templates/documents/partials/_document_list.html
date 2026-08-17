@@ -47,6 +47,11 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                         </span>
                         {% include "documents/partials/_processing_status_toggle.html" with document=document only %}
                         {% include "documents/partials/_action_status_toggle.html" with document=document only %}
+                        {% if document.open_suggestion_count %}
+                        <span class="badge text-bg-light" title="Noch nicht angenommene/verworfene KI-Vorschläge">
+                            {{ document.open_suggestion_count }} offene Vorschläge
+                        </span>
+                        {% endif %}
                         {% include "documents/partials/_document_delete_button.html" %}
                     </div>
                 </div>
@@ -82,6 +87,11 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                 </td>
                 <td>
                     {% include "documents/partials/_processing_status_toggle.html" with document=document only %}
+                    {% if document.open_suggestion_count %}
+                    <span class="badge text-bg-light" title="Noch nicht angenommene/verworfene KI-Vorschläge">
+                        {{ document.open_suggestion_count }} offene Vorschläge
+                    </span>
+                    {% endif %}
                 </td>
                 <td>
                     {% include "documents/partials/_action_status_toggle.html" with document=document only %}

@@ -9,12 +9,14 @@ Zuordnungsformular).
 import datetime
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from apps.accounts.models import Department
 
-from .models import Correspondent, Document, Tag, Vorgang
+from .models import Correspondent, Document, Tag, TagSuggestion, Vorgang, VorgangSuggestion
 
 User = get_user_model()
 
@@ -355,3 +357,70 @@ class NeedsReviewNavBadgeTests(TestCase):
 
         response = self.client.get(reverse("documents:home"))
         self.assertEqual(response.context["needs_review_count"], 0)
+
+
+class OpenSuggestionCountTests(TestCase):
+    """Offene KI-Vorschläge je Eintrag in der Sicht "Zu prüfen" (#1153) --
+
+    die eigentlichen Prüfkandidaten sind Dokumente mit noch nicht
+    angenommenen/verworfenen Tag-/Vorgangsvorschlägen. Nur angezeigt, wenn
+    nach `status=ready` gefiltert wird -- die Zahl sagt sonst nichts über
+    den aktuellen Filterkontext.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+        self.client.force_login(self.user)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        self.doc.departments.add(self.dept)
+
+    def test_counts_pending_tag_and_vorgang_suggestions_together(self):
+        TagSuggestion.objects.create(document=self.doc, name="Wichtig")
+        TagSuggestion.objects.create(document=self.doc, name="Dringend")
+        VorgangSuggestion.objects.create(document=self.doc, name="Vorgang A")
+        # Ein bereits angenommener/verworfener Vorschlag zaehlt nicht mit.
+        TagSuggestion.objects.create(
+            document=self.doc, name="Erledigt", status="accepted"
+        )
+
+        response = self.client.get(reverse("documents:home"), {"status": "ready", "view": ""})
+
+        document = response.context["page_obj"][0]
+        self.assertEqual(document.open_suggestion_count, 3)
+        self.assertContains(response, "3 offene Vorschläge")
+
+    def test_count_is_not_annotated_outside_the_ready_filter(self):
+        TagSuggestion.objects.create(document=self.doc, name="Wichtig")
+
+        response = self.client.get(reverse("documents:home"), {"view": ""})
+
+        self.assertNotContains(response, "offene Vorschläge")
+
+    def test_no_n_plus_one_query_for_growing_suggestion_count(self):
+        def _make_document_with_suggestion(n):
+            document = Document.objects.create(
+                title=f"Dokument {n}",
+                visibility=Document.Visibility.DEPARTMENT,
+                processing_status=Document.ProcessingStatus.READY,
+            )
+            document.departments.add(self.dept)
+            TagSuggestion.objects.create(document=document, name=f"Tag {n}")
+            VorgangSuggestion.objects.create(document=document, name=f"Vorgang {n}")
+
+        _make_document_with_suggestion(1)
+        with CaptureQueriesContext(connection) as few:
+            self.client.get(reverse("documents:home"), {"status": "ready", "view": ""})
+
+        for n in range(2, 5):
+            _make_document_with_suggestion(n)
+        with CaptureQueriesContext(connection) as many:
+            self.client.get(reverse("documents:home"), {"status": "ready", "view": ""})
+
+        self.assertEqual(len(many.captured_queries), len(few.captured_queries))

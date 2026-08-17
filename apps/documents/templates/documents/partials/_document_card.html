@@ -82,6 +82,11 @@ nutzt diese Kachel nicht -- siehe `_search_results.html`.
             </span>
             {% include "documents/partials/_processing_status_toggle.html" with document=document only %}
             {% include "documents/partials/_action_status_toggle.html" with document=document only %}
+            {% if document.open_suggestion_count %}
+            <span class="badge text-bg-light" title="Noch nicht angenommene/verworfene KI-Vorschläge">
+                {{ document.open_suggestion_count }} offene Vorschläge
+            </span>
+            {% endif %}
             {% if document.has_due_comment %}
             <span class="badge text-bg-warning" title="Mindestens eine Wiedervorlage ist fällig">
                 Wiedervorlage fällig

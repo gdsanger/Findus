@@ -5,7 +5,7 @@ import mimetypes
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import DateField, Exists, OuterRef, Prefetch, Q
+from django.db.models import Count, DateField, Exists, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.http import FileResponse, Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
@@ -183,7 +183,28 @@ def filtered_documents(request):
         # `DocumentQuerySet.needs_review()`, hier aber nicht darueber
         # aufgerufen, weil die kombinierbaren Filter oben schon angewendet
         # sind und `needs_review()` selbst noch den Status filtern wuerde.
-        documents = documents.order_by("created_at")
+        #
+        # `open_suggestion_count` (nur hier annotiert, nicht in jeder
+        # Ansicht): die eigentlichen Pruefkandidaten sind Dokumente mit noch
+        # nicht angenommenen/verworfenen Tag-/Vorgangsvorschlaegen. Beide
+        # Counts brauchen `distinct=True` -- zwei separate `Count()` ueber
+        # zwei verschiedene Reverse-FKs in derselben `annotate()` joinen
+        # sonst kreuzweise (Tag-Vorschlaege x Vorgangs-Vorschlaege) und
+        # blaehen beide Zahlen auf.
+        documents = documents.annotate(
+            open_suggestion_count=(
+                Count(
+                    "tag_suggestions",
+                    filter=Q(tag_suggestions__status=SuggestionStatus.PENDING),
+                    distinct=True,
+                )
+                + Count(
+                    "vorgang_suggestions",
+                    filter=Q(vorgang_suggestions__status=SuggestionStatus.PENDING),
+                    distinct=True,
+                )
+            )
+        ).order_by("created_at")
     else:
         # Default-Sortierung nach Dokumentdatum, nicht Upload-Datum (#1085):
         # `document_date` (KI-erkannt/user-korrigiert) absteigend, mit
