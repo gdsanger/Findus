@@ -29,7 +29,7 @@
         </div>
         <a href="{% url 'documents:home' %}?status=ready" class="findus-kpi-card">
             <span class="findus-kpi-value">{{ doc_stats.ready }}</span>
-            <span class="findus-kpi-label">Bereit</span>
+            <span class="findus-kpi-label">Zu prüfen</span>
         </a>
         <a
             href="{% url 'documents:home' %}?status=failed"
@@ -67,6 +67,37 @@
         <div class="progress-bar bg-success" style="width: {% widthratio doc_stats.action_done doc_stats.total 100 %}%"></div>
         <div class="progress-bar bg-secondary" style="width: {% widthratio doc_stats.action_none doc_stats.total 100 %}%"></div>
     </div>
+    {% endif %}
+</section>
+
+<section class="findus-section">
+    <div class="findus-hub-header">
+        <h2 class="findus-section-title mb-0">Zu prüfen</h2>
+        <a href="{% url 'documents:home' %}?status=ready" class="btn btn-sm btn-outline-secondary">Alle anzeigen</a>
+    </div>
+    {% if needs_review_documents %}
+    <ul class="findus-followup-items">
+        {% for document in needs_review_documents %}
+        <li class="findus-followup-item">
+            <div class="findus-followup-item-body">
+                <div class="findus-followup-item-meta">
+                    <a class="findus-followup-item-title" href="{% url 'documents:detail' document.pk %}">
+                        {{ document.title }}
+                    </a>
+                    {% if document.correspondent %}
+                    <a
+                        class="findus-followup-item-correspondent"
+                        href="{% url 'documents:correspondent_detail' document.correspondent.pk %}"
+                    >{{ document.correspondent.name }}</a>
+                    {% endif %}
+                </div>
+                <span class="findus-followup-item-date">Eingegangen {{ document.created_at|date:"d.m.Y" }}</span>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">Keine Dokumente zu prüfen.</p>
     {% endif %}
 </section>
 

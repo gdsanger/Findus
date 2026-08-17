@@ -2,9 +2,12 @@ import datetime
 import importlib
 
 from django.apps import apps
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from .models import Document, Tag, TagSuggestion
+
+User = get_user_model()
 
 _migration = importlib.import_module(
     "apps.documents.migrations.0012_repair_dimension_prefixed_tag_names"
@@ -14,6 +17,9 @@ _stuck_analyzing_migration = importlib.import_module(
 )
 _document_date_source_migration = importlib.import_module(
     "apps.documents.migrations.0035_document_date_source_backfill"
+)
+_reviewed_backfill_migration = importlib.import_module(
+    "apps.documents.migrations.0040_document_reviewed_backfill"
 )
 
 
@@ -208,3 +214,72 @@ class StampAiDocumentDatesTests(TestCase):
         self._run()
 
         self.assertEqual(Document.objects.get(pk=document.pk).updated_at, before)
+
+
+class MarkReadyAsReviewedTests(TestCase):
+    """Covers the one-off data migration for #1153 -- ohne diesen Backfill
+
+    stuenden alle rund 400 im Bestand bereits fertig verarbeiteten
+    Dokumente am ersten Tag in der neuen Liste "Zu pruefen".
+    """
+
+    def _run(self):
+        _reviewed_backfill_migration.mark_ready_as_reviewed(apps, None)
+
+    def _reverse(self):
+        _reviewed_backfill_migration.mark_reviewed_as_ready(apps, None)
+
+    def test_lifts_ready_documents_to_reviewed(self):
+        document = Document.objects.create(
+            title="Bestand", processing_status=Document.ProcessingStatus.READY
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.REVIEWED)
+
+    def test_leaves_other_statuses_untouched(self):
+        failed = Document.objects.create(
+            title="Fehlgeschlagen", processing_status=Document.ProcessingStatus.FAILED
+        )
+        pending = Document.objects.create(
+            title="Ausstehend", processing_status=Document.ProcessingStatus.PENDING
+        )
+
+        self._run()
+
+        failed.refresh_from_db()
+        pending.refresh_from_db()
+        self.assertEqual(failed.processing_status, Document.ProcessingStatus.FAILED)
+        self.assertEqual(pending.processing_status, Document.ProcessingStatus.PENDING)
+
+    def test_does_not_invent_review_provenance(self):
+        """Es hat niemand tatsaechlich geprueft -- ein erfundener Zeitstempel
+
+        waere irrefuehrend.
+        """
+        document = Document.objects.create(
+            title="Bestand", processing_status=Document.ProcessingStatus.READY
+        )
+
+        self._run()
+
+        document.refresh_from_db()
+        self.assertIsNone(document.processing_reviewed_at)
+        self.assertIsNone(document.processing_reviewed_by)
+
+    def test_reverse_sets_ready_and_clears_provenance(self):
+        user = User.objects.create_user(username="alice", password="x")
+        document = Document.objects.create(
+            title="Bestand",
+            processing_status=Document.ProcessingStatus.REVIEWED,
+            processing_reviewed_by=user,
+        )
+
+        self._reverse()
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
+        self.assertIsNone(document.processing_reviewed_at)
+        self.assertIsNone(document.processing_reviewed_by)

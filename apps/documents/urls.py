@@ -187,6 +187,16 @@ urlpatterns = [
         name="action_status_toggle",
     ),
     path(
+        "documents/<int:pk>/processing-status/toggle/",
+        views.document_processing_status_toggle,
+        name="processing_status_toggle",
+    ),
+    path(
+        "documents/<int:pk>/review/",
+        views.document_review_toggle,
+        name="review_toggle",
+    ),
+    path(
         "documents/<int:pk>/document-date/",
         views.document_date_inline,
         name="document_date_inline",
@@ -222,6 +232,7 @@ urlpatterns = [
         name="long_summary_generate",
     ),
     path("documents/<int:pk>/meta/", views.document_meta, name="meta"),
+    path("documents/<int:pk>/meta/review/", views.document_meta_review, name="meta_review"),
     path(
         "documents/<int:pk>/meta/quick-create/<str:kind>/",
         views.document_meta_quick_create,

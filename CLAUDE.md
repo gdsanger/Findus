@@ -31,6 +31,25 @@ Funktion.
 - `Document.action_status` ist die **einzige** Zustandsquelle für „hier ist
   noch etwas zu tun". Kein zweiter Erledigt-Status, insbesondere nicht je
   Kommentar — ein `DocumentComment` hat bewusst kein eigenes Erledigt-Feld.
+- `Document.processing_status` durchläuft die technische Kette
+  (`pending → extracting → analyzing → embedding → ready`) und endet mit
+  einer **manuellen** Stufe, `reviewed` — kein Job setzt sie, nur ein Klick
+  in der UI, und nur von `ready` aus. `ready` heißt „Zu prüfen": Datum,
+  Kontakt, Sphäre sowie vorgeschlagene Tags/Vorgänge sind Vorschläge, keine
+  Bestätigung. `processing_status` und `action_status` beantworten
+  **verschiedene** Fragen und werden an keiner Stelle miteinander
+  verrechnet — „wie weit im Eingangsprozess" vs. „muss ich fachlich noch
+  etwas tun"; ein geprüftes Dokument kann offen sein, ein ungeprüftes längst
+  erledigt. „Fertig verarbeitet" (`ready` **oder** `reviewed`) hat eine
+  zentrale Definition (`Document.PROCESSING_COMPLETE_STATUSES`,
+  `DocumentQuerySet.processing_complete()`, `Document.
+  is_processing_complete`) — ein verstreuter Vergleich auf `ready` allein
+  lässt ein geprüftes Dokument sonst still aus Listen/Auswertungen
+  herausfallen. Eine inhaltliche Neuextraktion (Reprocess, KI-Vision) läuft
+  immer erst durch die Extraktion und endet deshalb wieder bei `ready`; eine
+  bloße erneute KI-Analyse oder ein Wartungslauf über den Bestand
+  (`analyze_documents`, `reindex_documents`) lässt ein bereits `reviewed`
+  Dokument `reviewed`.
 - Eine Wiedervorlage ist ein **One-Shot-Ping**: `reminded_at` wird erst nach
   erfolgreichem Versand gesetzt, danach nie wieder erinnert.
 - Datums- und Fälligkeitslogik lebt an **einer** Stelle — den Queryset-Methoden

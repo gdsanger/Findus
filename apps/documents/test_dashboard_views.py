@@ -186,3 +186,76 @@ class DashboardViewTests(TestCase):
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("documents:home"))
         self.assertContains(response, reverse("documents:dashboard"))
+
+
+class DashboardNeedsReviewWidgetTests(TestCase):
+    """Covers the "Zu prüfen"-Block (#1153) -- dieselbe Auswahl-/
+
+    Sortierlogik wie die gefilterte Liste (`DocumentQuerySet.
+    needs_review()`), aeltestes zuerst, `visible_to`-gescoped.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A")
+        self.dept_b = Department.objects.create(name="Dept B")
+
+        self.user_a = User.objects.create_user(username="alice", password="x")
+        self.user_a.departments.add(self.dept_a)
+
+        self.older = Document.objects.create(
+            title="Älteres Dokument",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        self.older.departments.add(self.dept_a)
+        Document.objects.filter(pk=self.older.pk).update(
+            created_at=self.older.created_at - datetime.timedelta(days=3)
+        )
+
+        self.newer = Document.objects.create(
+            title="Neueres Dokument",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        self.newer.departments.add(self.dept_a)
+
+        self.reviewed = Document.objects.create(
+            title="Bereits geprüft",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.REVIEWED,
+        )
+        self.reviewed.departments.add(self.dept_a)
+
+        foreign_doc = Document.objects.create(
+            title="Fremde Abteilung",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        foreign_doc.departments.add(self.dept_b)
+
+    def test_widget_lists_oldest_ready_documents_first_scoped_by_visibility(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:dashboard"))
+
+        needs_review = response.context["needs_review_documents"]
+        self.assertEqual([d.title for d in needs_review], ["Älteres Dokument", "Neueres Dokument"])
+
+    def test_widget_excludes_already_reviewed_documents(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:dashboard"))
+
+        self.assertNotContains(response, "Bereits geprüft")
+
+    def test_widget_links_to_the_full_filtered_list(self):
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:dashboard"))
+
+        self.assertContains(response, reverse("documents:home") + "?status=ready")
+
+    def test_widget_empty_state(self):
+        Document.objects.filter(processing_status=Document.ProcessingStatus.READY).delete()
+
+        self.client.force_login(self.user_a)
+        response = self.client.get(reverse("documents:dashboard"))
+
+        self.assertContains(response, "Keine Dokumente zu prüfen.")

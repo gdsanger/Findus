@@ -5,10 +5,11 @@ import mimetypes
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import DateField, Exists, OuterRef, Prefetch, Q
+from django.db.models import Count, DateField, Exists, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.http import FileResponse, Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
@@ -172,18 +173,51 @@ def filtered_documents(request):
         )
     )
 
-    # Default-Sortierung nach Dokumentdatum, nicht Upload-Datum (#1085):
-    # `document_date` (KI-erkannt/user-korrigiert) absteigend, mit
-    # Upload-Datum (`created_at`) als Fallback fuer Dokumente ohne
-    # erkanntes Datum -- als DB-seitiges `Coalesce` annotiert, damit
-    # Fallback-Dokumente an ihrer chronologisch richtigen Stelle
-    # einsortiert werden statt pauschal an den Rand zu rutschen.
-    # `-created_at` bricht Gleichstaende (gleicher Tag) deterministisch.
-    documents = documents.annotate(
-        effective_date=Coalesce(
-            "document_date", TruncDate("created_at"), output_field=DateField()
-        )
-    ).order_by("-effective_date", "-created_at")
+    if request.GET.get("status", "").strip() == Document.ProcessingStatus.READY:
+        # Sicht "Zu pruefen" (#1153): aeltestes zuerst, weil das am
+        # laengsten liegende Dokument am ehesten vergessen wird -- eine
+        # bewusste Ausnahme von der sonst hier geltenden
+        # Dokumentdatum-absteigend-Sortierung, an genau dieser einen Stelle
+        # (CLAUDE.md, "Zustand & Fachlogik": Datumslogik lebt an einer
+        # Stelle, nicht parallel in Template/Job). Dieselbe Sortierung wie
+        # `DocumentQuerySet.needs_review()`, hier aber nicht darueber
+        # aufgerufen, weil die kombinierbaren Filter oben schon angewendet
+        # sind und `needs_review()` selbst noch den Status filtern wuerde.
+        #
+        # `open_suggestion_count` (nur hier annotiert, nicht in jeder
+        # Ansicht): die eigentlichen Pruefkandidaten sind Dokumente mit noch
+        # nicht angenommenen/verworfenen Tag-/Vorgangsvorschlaegen. Beide
+        # Counts brauchen `distinct=True` -- zwei separate `Count()` ueber
+        # zwei verschiedene Reverse-FKs in derselben `annotate()` joinen
+        # sonst kreuzweise (Tag-Vorschlaege x Vorgangs-Vorschlaege) und
+        # blaehen beide Zahlen auf.
+        documents = documents.annotate(
+            open_suggestion_count=(
+                Count(
+                    "tag_suggestions",
+                    filter=Q(tag_suggestions__status=SuggestionStatus.PENDING),
+                    distinct=True,
+                )
+                + Count(
+                    "vorgang_suggestions",
+                    filter=Q(vorgang_suggestions__status=SuggestionStatus.PENDING),
+                    distinct=True,
+                )
+            )
+        ).order_by("created_at")
+    else:
+        # Default-Sortierung nach Dokumentdatum, nicht Upload-Datum (#1085):
+        # `document_date` (KI-erkannt/user-korrigiert) absteigend, mit
+        # Upload-Datum (`created_at`) als Fallback fuer Dokumente ohne
+        # erkanntes Datum -- als DB-seitiges `Coalesce` annotiert, damit
+        # Fallback-Dokumente an ihrer chronologisch richtigen Stelle
+        # einsortiert werden statt pauschal an den Rand zu rutschen.
+        # `-created_at` bricht Gleichstaende (gleicher Tag) deterministisch.
+        documents = documents.annotate(
+            effective_date=Coalesce(
+                "document_date", TruncDate("created_at"), output_field=DateField()
+            )
+        ).order_by("-effective_date", "-created_at")
 
     return documents
 
@@ -1323,6 +1357,126 @@ def document_action_status_toggle(request, pk):
     )
 
 
+@login_required
+@require_POST
+def document_processing_status_toggle(request, pk):
+    """One-click "Zu prüfen" ↔ "Geprüft"-Umschalter für die Übersichten
+    (#1153) -- analog `document_action_status_toggle` (#1137): der neue
+    Zustand wird aus dem *gespeicherten* Wert abgeleitet, nie aus einem
+    mitgeschickten Wunschzustand, sonst kippt er bei zwei schnellen Klicks
+    unkontrolliert.
+
+    Nur `ready`/`reviewed` sind hier ein gültiger Ausgangspunkt (siehe
+    `_processing_status_toggle.html`, das für jeden anderen Status gar
+    keinen Button rendert) -- ein Dokument in einem anderen Status bleibt
+    unangetastet, der Endpunkt rendert dann nur die reine Statusanzeige.
+    `reviewed_at`/`_by` werden beim Zurücknehmen geleert (CLAUDE.md,
+    "Zustand & Fachlogik": die Zustandsfrage beantwortet ausschließlich
+    `processing_status`, nicht "ist ein Zeitstempel gesetzt?" -- ein
+    stehen gelassener alter Zeitstempel wäre trotzdem irreführend).
+    """
+    document = _visible_document(request.user, pk)
+    if document.processing_status == Document.ProcessingStatus.REVIEWED:
+        document.processing_status = Document.ProcessingStatus.READY
+        document.processing_reviewed_at = None
+        document.processing_reviewed_by = None
+        document.save(
+            update_fields=[
+                "processing_status",
+                "processing_reviewed_at",
+                "processing_reviewed_by",
+                "updated_at",
+            ]
+        )
+    elif document.processing_status == Document.ProcessingStatus.READY:
+        document.processing_status = Document.ProcessingStatus.REVIEWED
+        document.processing_reviewed_at = timezone.now()
+        document.processing_reviewed_by = request.user
+        document.save(
+            update_fields=[
+                "processing_status",
+                "processing_reviewed_at",
+                "processing_reviewed_by",
+                "updated_at",
+            ]
+        )
+    swap_key = request.GET.get("swap_key", "").strip()
+    context = {"document": document}
+    if swap_key.isdigit():
+        context["swap_key"] = swap_key
+    return render(
+        request,
+        "documents/partials/_processing_status_toggle.html",
+        context,
+    )
+
+
+def _next_document_to_review(user):
+    """Nächstes Dokument der Sicht "Zu prüfen" (#1153) -- dieselbe Auswahl-
+    und Sortierlogik wie die Liste selbst (`DocumentQuerySet.
+    needs_review()`), damit "das nächste" nach einem Klick auf "Geprüft"
+    auch wirklich das nächste in der angezeigten Reihenfolge ist.
+    """
+    return Document.objects.visible_to(user).roots().needs_review().first()
+
+
+def _redirect_to_next_review_or_queue(request):
+    next_document = _next_document_to_review(request.user)
+    if next_document is not None:
+        return redirect("documents:detail", pk=next_document.pk)
+    # Keine offenen Dokumente mehr (#1153): zurück auf die gefilterte
+    # Liste -- die zeigt bereits "Keine Dokumente für die gewählten
+    # Filter" (siehe `_document_list.html`), eine eigene Meldung dafür
+    # wäre ein zweiter Weg zum selben Text.
+    return redirect(f"{reverse('documents:home')}?status=ready")
+
+
+@login_required
+@require_POST
+def document_review_toggle(request, pk):
+    """"Geprüft"-Knopf auf der Detailseite (#1153): setzt den Status und
+    springt direkt zum nächsten zu prüfenden Dokument -- ohne diesen
+    Sprung landet man nach jedem Dokument wieder in der Liste und sucht die
+    Stelle erneut. Dieselbe Ableitung aus dem gespeicherten Wert wie
+    `document_processing_status_toggle`, hier aber mit Redirect statt
+    Partial-Rerender, weil sich nach dem Klick ein ganz anderes Dokument
+    zeigt -- kein htmx-Swap, echte Navigation (siehe `child_detach` für
+    dasselbe Muster).
+
+    Ein Dokument, das nicht `ready`/`reviewed` ist, bleibt unangetastet und
+    landet einfach wieder auf sich selbst -- "Geprüft" ist nur ab `ready`
+    erreichbar (CLAUDE.md).
+    """
+    document = _visible_document(request.user, pk)
+    if document.processing_status == Document.ProcessingStatus.REVIEWED:
+        document.processing_status = Document.ProcessingStatus.READY
+        document.processing_reviewed_at = None
+        document.processing_reviewed_by = None
+        document.save(
+            update_fields=[
+                "processing_status",
+                "processing_reviewed_at",
+                "processing_reviewed_by",
+                "updated_at",
+            ]
+        )
+        return redirect("documents:detail", pk=document.pk)
+    if document.processing_status == Document.ProcessingStatus.READY:
+        document.processing_status = Document.ProcessingStatus.REVIEWED
+        document.processing_reviewed_at = timezone.now()
+        document.processing_reviewed_by = request.user
+        document.save(
+            update_fields=[
+                "processing_status",
+                "processing_reviewed_at",
+                "processing_reviewed_by",
+                "updated_at",
+            ]
+        )
+        return _redirect_to_next_review_or_queue(request)
+    return redirect("documents:detail", pk=document.pk)
+
+
 def _vision_reextraction_up_to_date(document):
     """True, wenn ein erneuter Klick auf "Mit KI-Vision neu extrahieren"
     (ohne `force`) keinen Modellaufruf ausloesen wuerde (#1149) -- dieselbe
@@ -1627,6 +1781,97 @@ def _submitted_ids(post, name):
     return [value for value in post.getlist(name) if value.isdigit()]
 
 
+def _apply_meta_fields(document, post, fields):
+    """Apply exactly `fields` from `post` onto `document` -- the shared save
+    logic behind both the per-field auto-save (`document_meta`, one field
+    per request via the `field` marker) and the full-form "Speichern und
+    als geprüft markieren" (`document_meta_review`, #1153, every field at
+    once). Extracted so the two endpoints can't drift apart.
+    """
+    changed = []
+    if "correspondent" in fields:
+        correspondent_id = post.get("correspondent", "").strip()
+        document.correspondent = (
+            get_object_or_404(Correspondent, pk=correspondent_id)
+            if correspondent_id.isdigit()
+            else None
+        )
+        changed.append("correspondent")
+    if "direction" in fields:
+        direction = post.get("direction", "").strip()
+        if direction in Document.Direction.values:
+            document.direction = direction
+            changed.append("direction")
+    # Sphäre (#1112) / private ESt-Absetzbarkeit (#1113): ein manuelles
+    # Speichern ist die Nutzerentscheidung, die jede Re-Analyse ab jetzt
+    # respektiert -- deshalb jeweils auch das "noch nicht
+    # bestaetigt"-Kennzeichen (`*_source`) aus `metadata` entfernen,
+    # damit das KI-Badge am bestätigten Feld verschwindet.
+    if "sphere" in fields:
+        sphere = post.get("sphere", "").strip()
+        if sphere in Document.Sphere.values:
+            document.sphere = sphere
+            changed.append("sphere")
+            changed.extend(_drop_metadata_source(document, "sphere_source"))
+    # Aendert sich die Steuerrelevanz gegenueber dem gespeicherten Wert,
+    # wird die KI-Begruendung verworfen -- sie begruendete die alte,
+    # jetzt ueberstimmte Einschaetzung.
+    if "tax_relevance" in fields:
+        tax_relevance = post.get("tax_relevance", "").strip()
+        if tax_relevance in Document.TaxRelevance.values:
+            if tax_relevance != document.tax_relevance:
+                document.tax_relevance_reason = ""
+                changed.append("tax_relevance_reason")
+            document.tax_relevance = tax_relevance
+            changed.append("tax_relevance")
+            changed.extend(
+                _drop_metadata_source(document, "tax_relevance_source")
+            )
+    # Dokumentdatum (#1141): ein von Hand gesetztes Datum wird als
+    # `"manuell"` vermerkt und ist damit vor jeder erneuten KI-Analyse
+    # geschuetzt -- das ist der Vermerk, an dem `_apply_analysis` die
+    # Nutzerentscheidung erkennt. Ein geleertes Feld nimmt den Vermerk
+    # wieder mit: "kein Datum" ist keine zu schuetzende Korrektur,
+    # sondern die Freigabe, es neu bestimmen zu lassen. Der Hinweis auf
+    # eine frueher eingegriffene Plausibilitaetspruefung faellt in beiden
+    # Faellen weg, der Nutzer hat gerade selbst entschieden.
+    if "document_date" in fields:
+        document_date = post.get("document_date", "").strip()
+        if not document_date:
+            document.document_date = None
+            changed.append("document_date")
+            changed.extend(_drop_metadata_source(document, "document_date_source"))
+        else:
+            try:
+                document.document_date = datetime.date.fromisoformat(document_date)
+            except ValueError:
+                pass
+            else:
+                changed.append("document_date")
+                changed.extend(
+                    _set_metadata_source(
+                        document, "document_date_source", MANUAL_DATE_SOURCE
+                    )
+                )
+        changed.extend(
+            _drop_metadata_source(document, "document_date_upload_conflict")
+        )
+    if changed:
+        document.save(update_fields=[*dict.fromkeys(changed), "updated_at"])
+    if "vorgaenge" in fields:
+        document.vorgaenge.set(_submitted_ids(post, "vorgaenge"))
+    if "tags" in fields:
+        document.tags.set(_submitted_ids(post, "tags"))
+    # Zuordnen heißt: "diese Nummern gehören hierher" (#1100). Eine
+    # entfernte Zuordnung nimmt die gelernte Kennung *nicht* wieder
+    # mit -- der Vorgang hat sein Aktenzeichen dann trotzdem, und was
+    # er nicht behalten soll, wird an seinem Hub entfernt. Nur die
+    # Zuordnungsfelder lösen das aus; ein geändertes Datum lernt nichts.
+    if fields & {"correspondent", "vorgaenge"}:
+        learn_references_from_document(document)
+    return changed
+
+
 @login_required
 def document_meta(request, pk):
     """Display partial for `#document-meta` -- also the save target: a POST
@@ -1634,89 +1879,41 @@ def document_meta(request, pk):
     """
     document = _visible_document(request.user, pk)
     if request.method == "POST":
-        fields = _requested_meta_fields(request.POST)
-        changed = []
-        if "correspondent" in fields:
-            correspondent_id = request.POST.get("correspondent", "").strip()
-            document.correspondent = (
-                get_object_or_404(Correspondent, pk=correspondent_id)
-                if correspondent_id.isdigit()
-                else None
-            )
-            changed.append("correspondent")
-        if "direction" in fields:
-            direction = request.POST.get("direction", "").strip()
-            if direction in Document.Direction.values:
-                document.direction = direction
-                changed.append("direction")
-        # Sphäre (#1112) / private ESt-Absetzbarkeit (#1113): ein manuelles
-        # Speichern ist die Nutzerentscheidung, die jede Re-Analyse ab jetzt
-        # respektiert -- deshalb jeweils auch das "noch nicht
-        # bestaetigt"-Kennzeichen (`*_source`) aus `metadata` entfernen,
-        # damit das KI-Badge am bestätigten Feld verschwindet.
-        if "sphere" in fields:
-            sphere = request.POST.get("sphere", "").strip()
-            if sphere in Document.Sphere.values:
-                document.sphere = sphere
-                changed.append("sphere")
-                changed.extend(_drop_metadata_source(document, "sphere_source"))
-        # Aendert sich die Steuerrelevanz gegenueber dem gespeicherten Wert,
-        # wird die KI-Begruendung verworfen -- sie begruendete die alte,
-        # jetzt ueberstimmte Einschaetzung.
-        if "tax_relevance" in fields:
-            tax_relevance = request.POST.get("tax_relevance", "").strip()
-            if tax_relevance in Document.TaxRelevance.values:
-                if tax_relevance != document.tax_relevance:
-                    document.tax_relevance_reason = ""
-                    changed.append("tax_relevance_reason")
-                document.tax_relevance = tax_relevance
-                changed.append("tax_relevance")
-                changed.extend(
-                    _drop_metadata_source(document, "tax_relevance_source")
-                )
-        # Dokumentdatum (#1141): ein von Hand gesetztes Datum wird als
-        # `"manuell"` vermerkt und ist damit vor jeder erneuten KI-Analyse
-        # geschuetzt -- das ist der Vermerk, an dem `_apply_analysis` die
-        # Nutzerentscheidung erkennt. Ein geleertes Feld nimmt den Vermerk
-        # wieder mit: "kein Datum" ist keine zu schuetzende Korrektur,
-        # sondern die Freigabe, es neu bestimmen zu lassen. Der Hinweis auf
-        # eine frueher eingegriffene Plausibilitaetspruefung faellt in beiden
-        # Faellen weg, der Nutzer hat gerade selbst entschieden.
-        if "document_date" in fields:
-            document_date = request.POST.get("document_date", "").strip()
-            if not document_date:
-                document.document_date = None
-                changed.append("document_date")
-                changed.extend(_drop_metadata_source(document, "document_date_source"))
-            else:
-                try:
-                    document.document_date = datetime.date.fromisoformat(document_date)
-                except ValueError:
-                    pass
-                else:
-                    changed.append("document_date")
-                    changed.extend(
-                        _set_metadata_source(
-                            document, "document_date_source", MANUAL_DATE_SOURCE
-                        )
-                    )
-            changed.extend(
-                _drop_metadata_source(document, "document_date_upload_conflict")
-            )
-        if changed:
-            document.save(update_fields=[*dict.fromkeys(changed), "updated_at"])
-        if "vorgaenge" in fields:
-            document.vorgaenge.set(_submitted_ids(request.POST, "vorgaenge"))
-        if "tags" in fields:
-            document.tags.set(_submitted_ids(request.POST, "tags"))
-        # Zuordnen heißt: "diese Nummern gehören hierher" (#1100). Eine
-        # entfernte Zuordnung nimmt die gelernte Kennung *nicht* wieder
-        # mit -- der Vorgang hat sein Aktenzeichen dann trotzdem, und was
-        # er nicht behalten soll, wird an seinem Hub entfernt. Nur die
-        # Zuordnungsfelder lösen das aus; ein geändertes Datum lernt nichts.
-        if fields & {"correspondent", "vorgaenge"}:
-            learn_references_from_document(document)
+        _apply_meta_fields(document, request.POST, _requested_meta_fields(request.POST))
     return _render_meta(request, document)
+
+
+@login_required
+@require_POST
+def document_meta_review(request, pk):
+    """"Speichern und als geprüft markieren" im Zuordnungsformular (#1153):
+    anders als `document_meta` (ein Feld pro Request, über den `field`-
+    Marker) ist dies ein echtes Full-Form-Submit -- der übliche Fall ist
+    "Vorgang und Tags vergeben, dann bestätigen" in einem Schritt. Alle
+    `_META_FIELDS` gelten deshalb unbedingt als angefasst, nicht nur die
+    markierten; eine geleerte Vorgänge-/Tags-Auswahl wird dabei korrekt als
+    "keine" übernommen (`_submitted_ids` liefert `[]`, wenn kein Chip mehr
+    im Formular steht).
+
+    Setzt danach `reviewed` nur von `ready` aus (CLAUDE.md, "Geprüft ist
+    nur ab ready erreichbar") und springt wie `document_review_toggle` zum
+    nächsten zu prüfenden Dokument.
+    """
+    document = _visible_document(request.user, pk)
+    _apply_meta_fields(document, request.POST, set(_META_FIELDS))
+    if document.processing_status == Document.ProcessingStatus.READY:
+        document.processing_status = Document.ProcessingStatus.REVIEWED
+        document.processing_reviewed_at = timezone.now()
+        document.processing_reviewed_by = request.user
+        document.save(
+            update_fields=[
+                "processing_status",
+                "processing_reviewed_at",
+                "processing_reviewed_by",
+                "updated_at",
+            ]
+        )
+    return _redirect_to_next_review_or_queue(request)
 
 
 @login_required

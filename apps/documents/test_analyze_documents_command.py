@@ -142,6 +142,44 @@ class AnalyzeDocumentsCommandTests(TestCase):
         document.refresh_from_db()
         self.assertEqual(document.processing_status, Document.ProcessingStatus.READY)
 
+    def test_maintenance_run_leaves_a_reviewed_document_reviewed(self):
+        """CLAUDE.md, "Wann der Status zurückfällt" (#1153): ein Wartungslauf
+
+        über den Bestand darf jede vorherige Prüfung nicht stillschweigend
+        entwerten.
+        """
+        document = Document.objects.create(
+            title="A",
+            text_content="hello world",
+            processing_status=Document.ProcessingStatus.REVIEWED,
+        )
+
+        call_command("analyze_documents", document_ids=[document.id])
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.REVIEWED)
+
+    def test_maintenance_run_moves_a_failed_reviewed_document_to_failed(self):
+        """`failed` bleibt der einzige Ausweg aus einer erneut fehlschlagenden
+
+        Analyse, unabhängig davon, ob das Dokument vorher geprüft war.
+        """
+        document = Document.objects.create(
+            title="bad",
+            text_content="boom",
+            processing_status=Document.ProcessingStatus.REVIEWED,
+        )
+
+        def raising_generate(messages, *, stream=False):
+            raise RuntimeError("boom")
+
+        self.provider.generate = raising_generate
+
+        call_command("analyze_documents", document_ids=[document.id])
+
+        document.refresh_from_db()
+        self.assertEqual(document.processing_status, Document.ProcessingStatus.FAILED)
+
     def test_no_matching_documents_reports_and_does_not_error(self):
         out = StringIO()
         call_command("analyze_documents", select_all=True, stdout=out)
