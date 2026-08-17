@@ -1,0 +1,23 @@
+{% comment %}
+"Geprüft"-Knopf der Detailseite (#1153): kein htmx-Swap, echte Navigation --
+ein Klick setzt den Status und springt zum nächsten zu prüfenden Dokument
+(`document_review_toggle`), es zeigt sich also ohnehin ein ganz anderes
+Dokument. Nur sichtbar, solange die Pipeline fertig ist (`ready`/`reviewed`);
+für ein noch verarbeitendes oder `failed` Dokument gibt es nichts zu
+bestätigen.
+{% endcomment %}
+{% if document.is_processing_complete %}
+<form
+    method="post"
+    action="{% url 'documents:review_toggle' document.pk %}"
+    class="d-inline"
+>
+    {% csrf_token %}
+    <button
+        type="submit"
+        class="btn btn-sm {% if document.processing_status == 'reviewed' %}btn-outline-secondary{% else %}btn-success{% endif %}"
+    >
+        {% if document.processing_status == 'reviewed' %}Prüfung zurücknehmen{% else %}Geprüft{% endif %}
+    </button>
+</form>
+{% endif %}

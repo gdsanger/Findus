@@ -81,6 +81,7 @@ abgesetzt am rechten Rand und bleibt bestätigungspflichtig.
         Im Graph anzeigen
     </a>
     {% include "documents/partials/_detail_analysis_status.html" %}
+    {% include "documents/partials/_detail_review_action.html" %}
     <form
         method="post"
         action="{% url 'documents:delete' document.pk %}"

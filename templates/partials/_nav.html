@@ -45,6 +45,17 @@
     </li>
     <li>
         <a
+            href="{% url 'documents:home' %}?status=ready"
+            class="findus-nav-link{% if request.resolver_match.url_name == 'home' and request.GET.status == 'ready' %} active{% endif %}"
+        >
+            Zu prüfen
+            {% if needs_review_count %}
+            <span class="badge text-bg-warning findus-nav-badge" title="Fertig verarbeitete, noch nicht bestätigte Dokumente">{{ needs_review_count }}</span>
+            {% endif %}
+        </a>
+    </li>
+    <li>
+        <a
             href="{% url 'documents:correspondent_list' %}"
             class="findus-nav-link{% if 'correspondent' in request.resolver_match.url_name %} active{% endif %}"
         >

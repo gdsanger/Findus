@@ -17,6 +17,25 @@ def open_action_status_count(request):
     }
 
 
+def needs_review_count(request):
+    """Badge count for the nav's "Zu prüfen"-Link (#1153) -- Dokumente, die
+
+    die Pipeline durchlaufen haben (`ready`), aber noch nicht bestätigt
+    sind. Wie `open_action_status_count` bewusst *nicht* auf Leitdokumente
+    (`.roots()`) eingeschränkt: die entsprechende Liste filtert zwar nur
+    Leitdokumente, aber kein bestehender Nav-Badge tut das (derselbe
+    Kompromiss gilt schon für "Zu erledigen").
+    """
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return {}
+    return {
+        "needs_review_count": Document.objects.visible_to(user)
+        .filter(processing_status=Document.ProcessingStatus.READY)
+        .count()
+    }
+
+
 def due_follow_up_count(request):
     """Badge count for the nav's "Dokumente"-Link (#1129) -- überfällige +
 

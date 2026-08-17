@@ -55,6 +55,20 @@ _ACTION_STATUS_BADGE_CLASSES = {
     "erledigt": "bg-success-subtle text-success-emphasis border border-success-subtle",
 }
 
+_PROCESSING_STATUS_BADGE_CLASSES = {
+    # `ready` ("Zu prüfen", #1153) bekommt bewusst dieselbe laute Amber-Farbe
+    # wie ein offenes `action_status` -- es ist etwas zu tun. `reviewed`
+    # ("Geprüft") die gleiche gedämpfte Erledigt-Farbe wie `action_status`
+    # `erledigt`, damit "fertig geprüft" auch außerhalb der gefilterten
+    # Liste auf den ersten Blick erkennbar ist (CLAUDE.md, "Sicht
+    # 'Zu prüfen'"). `pending`/`failed` unveraendert; die Zwischenschritte
+    # (`extracting`/`analyzing`/`embedding`) fallen auf den Info-Default.
+    "ready": "text-bg-warning",
+    "reviewed": "bg-success-subtle text-success-emphasis border border-success-subtle",
+    "pending": "text-bg-secondary",
+    "failed": "text-bg-danger",
+}
+
 _VORGANG_STATUS_BADGE_CLASSES = {
     "open": "text-bg-secondary",
     "in_progress": "text-bg-warning",
@@ -127,6 +141,17 @@ def action_status_badge_class(action_status):
     entirely for it instead of rendering a neutral one.
     """
     return _ACTION_STATUS_BADGE_CLASSES.get(action_status, "")
+
+
+@register.filter(name="processing_status_badge_class")
+def processing_status_badge_class(processing_status):
+    """Bootstrap badge class for `Document.processing_status` (#1153) --
+
+    zentral statt der frueher in drei Templates (Kachel/Liste/Timeline)
+    wiederholten `{% if %}`-Kette, die `reviewed` sonst nicht gekannt
+    haette.
+    """
+    return _PROCESSING_STATUS_BADGE_CLASSES.get(processing_status, "text-bg-info")
 
 
 @register.filter(name="vorgang_status_badge_class")

@@ -709,6 +709,117 @@ class ActionStatusToggleTargetsExistTests(TestCase):
         )
 
 
+class ProcessingCompleteIncludesReviewedTests(TestCase):
+    """"Verarbeitung abgeschlossen" (#1153, CLAUDE.md "Zustand & Fachlogik")
+
+    ist `{ready, reviewed}`, nicht nur `ready` -- ein Vergleich, der nach
+    Einführung von `reviewed` weiterhin nur `ready` prüft, um "fertig" zu
+    meinen, lässt geprüfte Dokumente still aus Listen/Auswertungen
+    herausfallen, ohne dass etwas kaputt geht, was auffiele. Geprüft wird
+    sowohl die zentrale Definition (`Document.PROCESSING_COMPLETE_STATUSES`)
+    als auch ihre beiden Konsumenten (`DocumentQuerySet.
+    processing_complete()`, `Document.is_processing_complete`).
+    """
+
+    def test_ready_and_reviewed_are_both_in_the_central_definition(self):
+        self.assertEqual(
+            Document.PROCESSING_COMPLETE_STATUSES,
+            {Document.ProcessingStatus.READY, Document.ProcessingStatus.REVIEWED},
+        )
+
+    def test_pending_and_failed_are_not_in_the_central_definition(self):
+        self.assertNotIn(
+            Document.ProcessingStatus.PENDING, Document.PROCESSING_COMPLETE_STATUSES
+        )
+        self.assertNotIn(
+            Document.ProcessingStatus.FAILED, Document.PROCESSING_COMPLETE_STATUSES
+        )
+
+    def test_processing_complete_queryset_includes_both_statuses(self):
+        ready = Document.objects.create(
+            title="A", processing_status=Document.ProcessingStatus.READY
+        )
+        reviewed = Document.objects.create(
+            title="B", processing_status=Document.ProcessingStatus.REVIEWED
+        )
+        pending = Document.objects.create(
+            title="C", processing_status=Document.ProcessingStatus.PENDING
+        )
+
+        complete_ids = set(
+            Document.objects.processing_complete().values_list("id", flat=True)
+        )
+
+        self.assertEqual(complete_ids, {ready.id, reviewed.id})
+        self.assertNotIn(pending.id, complete_ids)
+
+    def test_is_processing_complete_property_matches_the_queryset(self):
+        ready = Document(processing_status=Document.ProcessingStatus.READY)
+        reviewed = Document(processing_status=Document.ProcessingStatus.REVIEWED)
+        analyzing = Document(processing_status=Document.ProcessingStatus.ANALYZING)
+
+        self.assertTrue(ready.is_processing_complete)
+        self.assertTrue(reviewed.is_processing_complete)
+        self.assertFalse(analyzing.is_processing_complete)
+
+
+class ProcessingStatusToggleTargetsExistTests(TestCase):
+    """Derselbe Vertrag wie `ActionStatusToggleTargetsExistTests`, für den
+
+    "Zu prüfen"/"Geprüft"-Umschalter (#1153): jeder `hx-target="#…"` muss im
+    selben Markup ein Element mit genau dieser `id` treffen, sonst bricht
+    HTMX schon vor dem Request ab (#1139).
+    """
+
+    _TARGET_RE = re.compile(r'hx-target="#(document-processing-status-[^"]*)"')
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Dept")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+
+        self.doc = Document.objects.create(
+            title="Rechnung Acme",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        self.doc.departments.add(self.dept)
+
+        self.client.force_login(self.user)
+
+    def _assert_targets_resolve(self, html):
+        targets = self._TARGET_RE.findall(html)
+        self.assertTrue(targets, "Kein hx-target auf dem Geprüft-Umschalter gefunden.")
+        for target_id in targets:
+            with self.subTest(target=target_id):
+                self.assertTrue(
+                    target_id and not target_id.endswith("-"),
+                    f'hx-target="#{target_id}" ist leer oder endet ohne Kennung.',
+                )
+                self.assertIn(f'id="{target_id}"', html)
+
+    def test_grid_view_targets_exist(self):
+        response = self.client.get(reverse("documents:home"), {"view": "grid"})
+        self._assert_targets_resolve(response.content.decode())
+
+    def test_table_view_targets_exist(self):
+        response = self.client.get(reverse("documents:home"), {"view": ""})
+        self._assert_targets_resolve(response.content.decode())
+
+    def test_timeline_view_targets_exist(self):
+        response = self.client.get(reverse("documents:home"), {"view": "timeline"})
+        self._assert_targets_resolve(response.content.decode())
+
+    def test_a_document_still_in_progress_has_no_toggle_target(self):
+        self.doc.processing_status = Document.ProcessingStatus.ANALYZING
+        self.doc.save(update_fields=["processing_status"])
+
+        response = self.client.get(reverse("documents:home"), {"view": "grid"})
+        html = response.content.decode()
+        self.assertNotIn("processing_status_toggle", html)
+        self.assertEqual(self._TARGET_RE.findall(html), [])
+
+
 class DocumentDateIsChosenByCodeNotByTheModelTests(TestCase):
     """Welche der gefundenen Datumsangaben das Dokumentdatum wird, entscheidet
 

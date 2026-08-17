@@ -45,9 +45,7 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                         <span class="badge {{ document.direction|direction_badge_class }}">
                             {{ document.get_direction_display }}
                         </span>
-                        <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
-                            {{ document.get_processing_status_display }}
-                        </span>
+                        {% include "documents/partials/_processing_status_toggle.html" with document=document only %}
                         {% include "documents/partials/_action_status_toggle.html" with document=document only %}
                         {% include "documents/partials/_document_delete_button.html" %}
                     </div>
@@ -83,9 +81,7 @@ Rahmen gar nicht erst auf, sein Schluss-Markup aber trotzdem mit.
                     </span>
                 </td>
                 <td>
-                    <span class="badge {% if document.processing_status == 'ready' %}text-bg-success{% elif document.processing_status == 'failed' %}text-bg-danger{% elif document.processing_status == 'pending' %}text-bg-secondary{% else %}text-bg-info{% endif %}">
-                        {{ document.get_processing_status_display }}
-                    </span>
+                    {% include "documents/partials/_processing_status_toggle.html" with document=document only %}
                 </td>
                 <td>
                     {% include "documents/partials/_action_status_toggle.html" with document=document only %}

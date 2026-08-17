@@ -221,6 +221,32 @@ class DocumentQuerySet(models.QuerySet):
         """
         return self.filter(parent__isnull=True)
 
+    def processing_complete(self):
+        """"Verarbeitung abgeschlossen" (#1153, `Document.
+        PROCESSING_COMPLETE_STATUSES`) -- `ready` (Kette fertig, noch zu
+        pruefen) und `reviewed` (bestaetigt) zaehlen beide. Zentrale
+        Definition, damit ein Vergleich auf `ready` nicht verstreut in
+        Views/Templates/Jobs landet und ein `reviewed`-Dokument dort still
+        herausfaellt.
+        """
+        return self.filter(processing_status__in=Document.PROCESSING_COMPLETE_STATUSES)
+
+    def needs_review(self):
+        """Sicht "Zu prüfen" (#1153): `ready`, aber noch nicht bestätigt --
+        älteste zuerst, weil das am längsten liegende Dokument am ehesten
+        vergessen wird. Gemeinsame Basis für Nav-Badge, Dashboard-Block und
+        den Sprung zum nächsten Dokument nach "Geprüft"
+        (`views._next_document_to_review`), damit "das nächste" auch
+        wirklich das nächste in der angezeigten Reihenfolge ist.
+        `filtered_documents()` übernimmt dieselbe Sortierung, sobald der
+        Statusfilter genau auf `ready` steht, ruft diese Methode aber nicht
+        auf -- sie muss noch weitere kombinierbare Filter andocken, bevor
+        sortiert wird.
+        """
+        return self.filter(processing_status=Document.ProcessingStatus.READY).order_by(
+            "created_at"
+        )
+
     def open_visible_to(self, user):
         """Sichtbare, noch offene Dokumente (#1129/#1130) -- gemeinsame Basis
 
@@ -274,20 +300,44 @@ class Document(TimeStampedModel, LongSummaryMixin):
     class ProcessingStatus(models.TextChoices):
         """pending -> extracting (#1009, Text-Layer/OCR/Vision-Kaskade) ->
         analyzing (#1020, KI-Analyse auf dem extrahierten Text) ->
-        embedding (#1010, Chunking + Embeddings) -> ready, or failed at
-        extraction/embedding with `processing_error` set. A fehlschlagende
-        KI-Analyse legt die Pipeline NICHT lahm (siehe
+        embedding (#1010, Chunking + Embeddings) -> ready -> reviewed, oder
+        failed bei Extraktion/Embedding mit gesetztem `processing_error`.
+        A fehlschlagende KI-Analyse legt die Pipeline NICHT lahm (siehe
         apps.documents.analysis) -- `analyzing` geht immer nach
         `embedding` weiter, ggf. nur ohne Zusammenfassung/Key-Facts/
         Vorschläge.
+
+        `ready -> reviewed` (#1153) ist der einzige Übergang dieser Kette,
+        den kein Job je auslöst -- ein maschinell fertig verarbeitetes
+        Dokument ist noch kein bestätigt eingeordnetes: Datum, Kontakt,
+        Sphäre sowie vorgeschlagene Tags/Vorgänge sind Vorschläge, keine
+        Bestätigung. Nur ein Klick in der UI (Umschalter in der Liste,
+        „Geprüft"-Knopf im Detail, „Speichern und als geprüft markieren"
+        im Zuordnungsformular) setzt `reviewed`, und nur von `ready` aus --
+        ein `failed` Dokument wird repariert, nicht bestätigt. Siehe
+        CLAUDE.md, "Zustand & Fachlogik" für die Abgrenzung zu
+        `action_status`: `processing_status` beantwortet "wie weit im
+        Eingangsprozess", `action_status` "muss ich noch etwas tun" -- ein
+        geprüftes Dokument kann offen sein, ein ungeprüftes längst erledigt.
         """
 
         PENDING = "pending", "Ausstehend"
         EXTRACTING = "extracting", "Extraktion läuft"
         ANALYZING = "analyzing", "Analyse läuft"
         EMBEDDING = "embedding", "Indizierung läuft"
-        READY = "ready", "Bereit"
+        READY = "ready", "Zu prüfen"
+        REVIEWED = "reviewed", "Geprüft"
         FAILED = "failed", "Fehlgeschlagen"
+
+    # Zentrale Definition von "Verarbeitung abgeschlossen" (#1153): `ready`
+    # UND `reviewed` zaehlen beide dazu -- `reviewed` ist eine reine
+    # Bestaetigungsstufe *nach* `ready`, keine weitere Pipelinephase. Jede
+    # Stelle, die frueher nur gegen `ProcessingStatus.READY` prueft, um
+    # "das Dokument ist fertig/benutzbar" zu meinen, muss stattdessen gegen
+    # dieses Set (oder `DocumentQuerySet.processing_complete()`/
+    # `Document.is_processing_complete`) pruefen, sonst faellt ein
+    # geprueftes Dokument dort still heraus.
+    PROCESSING_COMPLETE_STATUSES = {ProcessingStatus.READY, ProcessingStatus.REVIEWED}
 
     class ExtractionMethod(models.TextChoices):
         """Which cascade stage (apps.documents.extraction, #1009) actually
@@ -569,6 +619,22 @@ class Document(TimeStampedModel, LongSummaryMixin):
     )
     metadata = models.JSONField(default=dict, blank=True)
     processing_error = models.TextField(blank=True)
+    # Wer/wann "Geprüft" gesetzt hat (#1153) -- reine Protokollangaben. Die
+    # Frage "ist das Dokument geprüft?" beantwortet ausschließlich
+    # `processing_status`, nie "ist einer dieser beiden Werte gesetzt?" --
+    # sonst entstehen zwei Wahrheiten, die auseinanderlaufen können. Beide
+    # bleiben leer bei den per Migration von `ready` auf `reviewed`
+    # gehobenen Bestandsdokumenten und werden beim Zurücknehmen
+    # (`reviewed -> ready`) wieder geleert, damit sie nie einen Prüfstand
+    # behaupten, der gerade zurückgenommen wurde.
+    processing_reviewed_at = models.DateTimeField(null=True, blank=True)
+    processing_reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
 
     # Manuelle KI-Vision-Neuextraktion (#1143): eigene Provenienz- und
     # Job-Felder statt `metadata` -- anders als `extracted_at`/`page_count`
@@ -879,6 +945,17 @@ class Document(TimeStampedModel, LongSummaryMixin):
     @property
     def vision_reextraction_is_running(self):
         return self.vision_reextraction_status == self.VisionReextractionStatus.RUNNING
+
+    @property
+    def is_processing_complete(self):
+        """"Verarbeitung abgeschlossen" (#1153) -- `ready` oder `reviewed`.
+
+        Der Ein-Punkt-Check fuer Templates/Views, ob der Geprueft-Umschalter
+        ueberhaupt sinnvoll ist (ein Dokument, das noch in Verarbeitung ist
+        oder `failed`, zeigt nur die reine Statusanzeige): siehe
+        `Document.PROCESSING_COMPLETE_STATUSES`.
+        """
+        return self.processing_status in self.PROCESSING_COMPLETE_STATUSES
 
     @property
     def has_tax_assessment(self):

@@ -813,10 +813,26 @@ def analyze_and_finalize(document_id: int) -> Document:
     last pipeline stage for a standalone re-analysis (management command
     or UI "Analyse erneut ausfuehren" button), so nothing else will ever
     get the document out of `analyzing` otherwise (#1029, #1035, #1063).
+
+    A bloße re-analysis is NOT a content change (#1153) -- unlike a full
+    reprocess/vision-reextraction, which always starts at extraction and
+    therefore always ends back at `ready`, this leaves an already
+    `reviewed` document `reviewed` on success (CLAUDE.md, "Wann der Status
+    zurückfällt": a maintenance run over the Bestand must not devalue
+    every existing review). The prior status is captured *before*
+    `analyze_document()` overwrites it with `analyzing`.
     """
+    was_reviewed = (
+        Document.objects.filter(pk=document_id)
+        .values_list("processing_status", flat=True)
+        .first()
+        == Document.ProcessingStatus.REVIEWED
+    )
     document = analyze_document(document_id)
     if "analysis_error" in document.metadata:
         document.processing_status = Document.ProcessingStatus.FAILED
+    elif was_reviewed:
+        document.processing_status = Document.ProcessingStatus.REVIEWED
     else:
         document.processing_status = Document.ProcessingStatus.READY
     document.save(update_fields=["processing_status", "updated_at"])

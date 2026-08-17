@@ -112,6 +112,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.documents.context_processors.open_action_status_count",
                 "apps.documents.context_processors.due_follow_up_count",
+                "apps.documents.context_processors.needs_review_count",
             ],
         },
     },

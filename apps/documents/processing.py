@@ -60,6 +60,17 @@ def process_document(
     document searchable rather than clobbering it.
     """
     document = Document.objects.get(pk=document_id)
+    # Erfasst *vor* dem Ueberschreiben mit `embedding` (#1153): ein
+    # Reindex-Wartungslauf (`management/commands/reindex_documents.py`,
+    # Embedding-Modellwechsel) ruft diese Funktion direkt und ohne
+    # vorherige Extraktion/Analyse auf -- ein dabei bereits `reviewed`
+    # Dokument darf danach nicht wieder auf `ready` zurueckfallen (CLAUDE.md,
+    # "Wann der Status zurueckfaellt"). Eine echte inhaltliche
+    # Neuextraktion/Reprocess laeuft dagegen immer erst durch
+    # `extraction.extract_document()`, das `processing_status` vorher
+    # bereits auf `extracting` gesetzt hat -- `was_reviewed` ist dann schon
+    # False, und das Dokument landet korrekt wieder bei `ready`.
+    was_reviewed = document.processing_status == Document.ProcessingStatus.REVIEWED
     document.processing_status = Document.ProcessingStatus.EMBEDDING
     document.processing_error = ""
     document.save(update_fields=["processing_status", "processing_error", "updated_at"])
@@ -98,7 +109,11 @@ def process_document(
                 )
                 for position, (content, vector) in enumerate(zip(chunk_contents, vectors))
             )
-            document.processing_status = Document.ProcessingStatus.READY
+            document.processing_status = (
+                Document.ProcessingStatus.REVIEWED
+                if was_reviewed
+                else Document.ProcessingStatus.READY
+            )
             document.save(update_fields=["processing_status", "updated_at"])
     except Exception as exc:
         logger.exception("Chunking/Embedding fehlgeschlagen fuer Document %s", document_id)

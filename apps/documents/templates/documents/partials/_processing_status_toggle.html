@@ -1,0 +1,47 @@
+{% load documents_extras %}
+{% comment %}
+Ein-Klick-Umschalter "Zu prüfen" ↔ "Geprüft" für `Document.processing_status`
+(#1153) -- Kachel, Liste und Timeline binden dasselbe Partial ein, analog
+`_action_status_toggle.html` (#1137). Der neue Zustand wird serverseitig aus
+dem gespeicherten Wert abgeleitet (`document_processing_status_toggle`), nie
+aus einem mitgeschickten Wunschzustand.
+
+Nur `ready`/`reviewed` bekommen den interaktiven Button -- ein Dokument, das
+noch in Verarbeitung ist oder `failed`, zeigt nur die reine Statusanzeige
+(ein Klick hätte dort ohnehin keine Wirkung, "Geprüft" ist nur ab `ready`
+erreichbar).
+
+Erwartet `document` explizit im Kontext (immer per `with ... only`
+eingebunden). `swap_key` ist optional und unterscheidet mehrere Vorkommen
+desselben Dokuments, wie beim Erledigungs-Umschalter; ohne `swap_key` fällt
+die Kennung auf `document.pk` zurück. `hx-sync="this:abort"` bezieht sich
+bewusst auf den Button selbst, nicht auf einen Vorfahren (#1139).
+{% endcomment %}
+{% with key=swap_key|default:document.pk %}
+<span id="document-processing-status-{{ key }}" class="findus-processing-status-toggle-wrap">
+    {% if document.is_processing_complete %}
+    <button
+        type="button"
+        class="badge findus-processing-status-toggle {{ document.processing_status|processing_status_badge_class }}"
+        hx-post="{% url 'documents:processing_status_toggle' document.pk %}?swap_key={{ key }}"
+        hx-target="#document-processing-status-{{ key }}"
+        hx-swap="outerHTML"
+        hx-sync="this:abort"
+        hx-disabled-elt="this"
+        aria-pressed="{% if document.processing_status == 'reviewed' %}true{% else %}false{% endif %}"
+        title="{% if document.processing_status == 'reviewed' %}Prüfung zurücknehmen{% else %}Als geprüft markieren{% endif %}"
+        aria-label="{% if document.processing_status == 'reviewed' %}Prüfung zurücknehmen{% else %}Als geprüft markieren{% endif %}"
+        hx-on::before-request="this.nextElementSibling.classList.add('d-none')"
+        hx-on::response-error="this.nextElementSibling.classList.remove('d-none')"
+        hx-on::send-error="this.nextElementSibling.classList.remove('d-none')"
+    >{{ document.get_processing_status_display }}</button>
+    <span class="findus-processing-status-toggle-error text-danger small d-none" role="alert">
+        Konnte nicht gespeichert werden.
+    </span>
+    {% else %}
+    <span class="badge {{ document.processing_status|processing_status_badge_class }}">
+        {{ document.get_processing_status_display }}
+    </span>
+    {% endif %}
+</span>
+{% endwith %}

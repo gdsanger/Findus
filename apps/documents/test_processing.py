@@ -210,6 +210,24 @@ class ProcessDocumentTests(TestCase):
         self.assertIn("boom", document.processing_error)
         self.assertEqual(Chunk.objects.filter(document=document).count(), 0)
 
+    def test_standalone_reembed_leaves_a_reviewed_document_reviewed(self):
+        """`process_document()` called directly (management/commands/
+
+        reindex_documents.py, an embedding-model migration) is a
+        maintenance run, not a content change (#1153) -- it must not
+        devalue an existing "Geprüft" the way a full extraction ->
+        analysis -> embedding pipeline run does.
+        """
+        document = Document.objects.create(
+            title="Doc",
+            text_content="some text",
+            processing_status=Document.ProcessingStatus.REVIEWED,
+        )
+
+        result = process_document(document.id, embedding_provider=self.provider)
+
+        self.assertEqual(result.processing_status, Document.ProcessingStatus.REVIEWED)
+
     def test_reprocessing_replaces_previous_chunks(self):
         document = Document.objects.create(title="Doc", text_content="first version")
         process_document(document.id, embedding_provider=self.provider)

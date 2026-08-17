@@ -26,6 +26,19 @@ Klick-Trigger.
             <button type="button" class="findus-token-chip-remove" data-token-remove aria-label="Entfernen">×</button>
         </span>
     </template>
+    {% comment %}
+    Umschließt die Felder in einem echten `<form>` (#1153), damit der
+    Submit-Button unten ("Speichern und als geprüft markieren") per
+    nativer Formular-Übermittlung alle aktuellen Feldwerte auf einmal an
+    `document_meta_review` schickt -- ein Full-Form-Submit, kein Redirect
+    über htmx. Die einzelnen Felder darunter behalten ihr eigenes
+    Auto-Save per `hx-post`/`hx-vals` auf `change`; dass sie jetzt
+    zusätzlich innerhalb eines `<form>` liegen, ändert an ihrem Verhalten
+    nichts -- `_requested_meta_fields` liest bei einem `field`-Marker
+    ohnehin nur genau dieses eine Feld, unabhängig davon, welche weiteren
+    Werte durch die Formular-Umschließung mitgeschickt werden.
+    {% endcomment %}
+    <form method="post" action="{% url 'documents:meta_review' document.pk %}">
     <dl
         class="findus-detail-meta-list"
         hx-target="#document-meta"
@@ -229,6 +242,17 @@ Klick-Trigger.
             <dd>{{ document.metadata.language|language_label }}</dd>
         </div>
     </dl>
+    {% if document.is_processing_complete %}
+    {% comment %}
+    Der übliche Fall ist "Vorgang und Tags vergeben, dann bestätigen"
+    (#1153) -- ein Klick speichert alle Felder oben und markiert zugleich
+    als geprüft, statt beides als zwei getrennte Schritte zu verlangen.
+    {% endcomment %}
+    <button type="submit" class="btn btn-sm btn-success mt-2">
+        Speichern und als geprüft markieren
+    </button>
+    {% endif %}
+    </form>
 
     {% with pending_tags=document.tag_suggestions.pending pending_vorgaenge=document.vorgang_suggestions.pending %}
     {% if pending_tags or pending_vorgaenge %}

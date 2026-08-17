@@ -55,11 +55,27 @@ def _next_follow_ups(user, limit=FOLLOW_UP_LIMIT):
     )
 
 
+def _next_needs_review(user, limit=FOLLOW_UP_LIMIT):
+    """Die aeltesten Dokumente der Sicht "Zu pruefen" (#1153) -- dieselbe
+
+    Auswahl-/Sortierlogik wie die gefilterte Liste selbst
+    (`DocumentQuerySet.needs_review()`), damit der Dashboard-Block nicht
+    seine eigene Vorstellung von "als naechstes" entwickelt.
+    """
+    return list(
+        Document.objects.visible_to(user)
+        .roots()
+        .select_related("correspondent")
+        .needs_review()[:limit]
+    )
+
+
 @login_required
 def dashboard(request):
     context = {
         "doc_stats": _document_stats(request.user),
         "follow_ups": _next_follow_ups(request.user),
+        "needs_review_documents": _next_needs_review(request.user),
         "upload_allowed_extensions": settings.FINDUS_INGEST_ALLOWED_EXTENSIONS,
         "upload_max_size_mb": settings.FINDUS_UPLOAD_MAX_SIZE_MB,
     }
