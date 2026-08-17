@@ -7,10 +7,11 @@ Zuordnungsformular).
 """
 
 import datetime
+import re
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
@@ -249,6 +250,60 @@ class DocumentMetaReviewViewTests(TestCase):
     def test_get_is_not_allowed(self):
         response = self.client.get(reverse("documents:meta_review", args=[self.doc.id]))
         self.assertEqual(response.status_code, 405)
+
+
+class DocumentMetaReviewCsrfTests(TestCase):
+    """"Speichern und als geprüft markieren" ist ein nativer Formular-POST,
+
+    kein HTMX-Request -- und braucht deshalb ein eigenes `csrf_token` im
+    Formular. Der Token in `base.html` steht außerhalb dieses `<form>` und
+    speist nur den `X-CSRFToken`-Header der HTMX-Requests; ohne den Token im
+    Formular selbst lief der Klick in ein 403 "CSRF token missing". Der
+    Standard-Testclient prüft CSRF nicht, deshalb hier ausdrücklich
+    `enforce_csrf_checks=True` -- sonst bliebe genau diese Lücke unbemerkt.
+    """
+
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+        self.dept = Department.objects.create(name="Dept")
+        self.user = User.objects.create_user(username="alice", password="x")
+        self.user.departments.add(self.dept)
+        self.client.force_login(self.user)
+
+        self.doc = Document.objects.create(
+            title="Rechnung",
+            visibility=Document.Visibility.DEPARTMENT,
+            processing_status=Document.ProcessingStatus.READY,
+        )
+        self.doc.departments.add(self.dept)
+
+    def _token_from_meta_form(self):
+        """Den Token so lesen, wie der Browser ihn mitschickt: aus dem
+
+        Formular, das auf `meta_review` zeigt -- nicht irgendeinen Token der
+        Seite. Genau diese Unterscheidung war der Fehler.
+        """
+        response = self.client.get(reverse("documents:meta", args=[self.doc.id]))
+        html = response.content.decode()
+        action = reverse("documents:meta_review", args=[self.doc.id])
+        self.assertIn(action, html)
+        form = html.split(action, 1)[1].split("</form>", 1)[0]
+        match = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form)
+        self.assertIsNotNone(match, "Kein CSRF-Token im Zuordnungsformular")
+        return match.group(1)
+
+    def test_native_submit_carries_a_csrf_token(self):
+        response = self.client.post(
+            reverse("documents:meta_review", args=[self.doc.id]),
+            {
+                "direction": Document.Direction.EINGANG,
+                "csrfmiddlewaretoken": self._token_from_meta_form(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.processing_status, Document.ProcessingStatus.REVIEWED)
 
 
 class NeedsReviewQuerySetTests(TestCase):

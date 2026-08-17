@@ -37,8 +37,15 @@ Klick-Trigger.
     nichts -- `_requested_meta_fields` liest bei einem `field`-Marker
     ohnehin nur genau dieses eine Feld, unabhängig davon, welche weiteren
     Werte durch die Formular-Umschließung mitgeschickt werden.
+
+    Das `{% templatetag openblock %} csrf_token {% templatetag closeblock %}`
+    gehört dabei *in* dieses Formular: Der Token in `base.html` speist nur
+    den `X-CSRFToken`-Header der HTMX-Requests (Skript am Seitenende) und
+    steht außerhalb dieses `<form>` -- ein nativer Submit schickt ihn
+    deshalb nicht mit und lief in "CSRF token missing" (403).
     {% endcomment %}
     <form method="post" action="{% url 'documents:meta_review' document.pk %}">
+    {% csrf_token %}
     <dl
         class="findus-detail-meta-list"
         hx-target="#document-meta"
