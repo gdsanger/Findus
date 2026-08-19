@@ -752,6 +752,14 @@ class Document(TimeStampedModel, LongSummaryMixin):
     # dieselbe Antwort haben.
     VISION_REEXTRACTABLE_MIME_TYPES = {"application/pdf"}
 
+    # Seitenbearbeitbar heißt: Seiten lassen sich einzeln drehen, entfernen
+    # und in mehrere Dokumente aufteilen (#1155) -- ausschließlich PDF, und
+    # bewusst ohne Bilder: ein Bild hat keine Seiten, "Seite 2 entfernen"
+    # ergibt dort keinen Sinn. Deshalb ein eigenes Set statt einer
+    # Wiederverwendung von `VISION_REEXTRACTABLE_MIME_TYPES` (das Bilder
+    # einschließt) -- dieselbe Trennung wie zwischen den drei Sets darüber.
+    PAGE_EDITABLE_MIME_TYPES = {"application/pdf"}
+
     class Meta:
         ordering = ["-created_at"]
 
@@ -941,6 +949,16 @@ class Document(TimeStampedModel, LongSummaryMixin):
         """
         mime = self.mime_type
         return mime in self.VISION_REEXTRACTABLE_MIME_TYPES or mime.startswith("image/")
+
+    @property
+    def supports_page_editing(self):
+        """Whitelist-Check (#1155) für den Einstieg in die Seitenansicht
+        ("Seiten bearbeiten"): nur PDF mit vorhandener Originaldatei. Bei
+        jedem anderen Dateityp erscheint der Einstieg gar nicht erst, und
+        die Endpunkte lehnen ihn ab -- Scan-Korrektur arbeitet auf Seiten,
+        die es nur im PDF gibt.
+        """
+        return bool(self.original_file) and self.mime_type in self.PAGE_EDITABLE_MIME_TYPES
 
     @property
     def vision_reextraction_is_running(self):
@@ -1170,6 +1188,119 @@ class VorgangSuggestion(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} -> Document {self.document_id}"
+
+
+class DocumentPagePreview(TimeStampedModel):
+    """Ein gerastertes Vorschaubild *einer* PDF-Seite für die Seitenansicht
+    der Scan-Korrektur (#1155).
+
+    Bewusst eigene Zeilen statt eines zweiten `FileField` am `Document`:
+    die Seitenansicht braucht n Bilder, nicht eins, und jedes einzelne
+    entsteht (bei vielen Seiten) nach und nach im Hintergrund -- eine
+    fertige Seite soll sofort sichtbar sein, ohne auf die letzte zu warten.
+
+    Reiner Cache: die Bilder lassen sich jederzeit aus dem Original neu
+    rastern. Deshalb hängen an ihnen keine fachlichen Daten, und
+    `apps.documents.page_previews.discard_page_previews` wirft sie
+    ersatzlos weg, sobald sich die Originaldatei geändert hat -- ein
+    Vorschaubild einer Seite, die es so nicht mehr gibt, wäre schlimmer
+    als gar keins. Wie beim `thumbnail` (#1123) räumt Django die Dateien
+    im Object Storage nicht selbst weg; jeder Löschweg muss sie explizit
+    entfernen.
+    """
+
+    document = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="page_previews"
+    )
+    page_number = models.PositiveIntegerField()
+    image = models.FileField(upload_to="page-previews/%Y/%m/")
+
+    class Meta:
+        ordering = ["document_id", "page_number"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "page_number"], name="unique_document_page_preview"
+            ),
+        ]
+
+    def __str__(self):
+        return f"Seite {self.page_number} von Document {self.document_id}"
+
+
+class DocumentPdfEditRun(TimeStampedModel):
+    """Ein Lauf der PDF-Grundbearbeitung (#1155): drehen, löschen, aufteilen.
+
+    Eigenes Lauf-Modell statt Statusfeldern am `Document` -- aus einem
+    Grund, den kein Feld am Dokument lösen kann: beim Aufteilen wird das
+    Original am Ende **gelöscht**. Ein Status daran wäre genau in dem
+    Moment weg, in dem die Oberfläche ihn braucht (der Poller fragt nach
+    dem Ergebnis, das Dokument gibt es nicht mehr). Dieselbe Bauart wie
+    `VorgangRecommendationRun`: `status`/`error` sind der terminale
+    Zustand des Hintergrundjobs, `claimed_at` schützt gegen
+    Doppelausführung (siehe `apps.documents.pdf_edit.apply_pdf_edit_run`).
+
+    `plan` hält die bestätigte Eingabe (Drehungen, gelöschte Seiten,
+    Schnittmarken) fest -- der Job liest sie von dort, nicht aus dem
+    Request, damit ein erneut eingereihter Task exakt dasselbe täte.
+
+    `result` trägt das Ergebnis fürs Anzeigen: je Teil die neue
+    Dokument-ID, die übernommenen Originalseiten und ob der Ingest-Dienst
+    darin eine Dublette erkannt hat. Bewusst IDs statt einer m:n-Relation:
+    die Anzeige löst sie ohnehin über `Document.objects.visible_to(user)`
+    auf (Sichtbarkeit gilt auch hier), und ein inzwischen gelöschtes Teil
+    fällt dabei still heraus statt als toter Link stehen zu bleiben.
+    """
+
+    class Status(models.TextChoices):
+        RUNNING = "running", "Wird ausgeführt"
+        READY = "ready", "Fertig"
+        FAILED = "failed", "Fehlgeschlagen"
+
+    class Mode(models.TextChoices):
+        EDIT = "edit", "Seiten bearbeitet"
+        SPLIT = "split", "Aufgeteilt"
+
+    # SET_NULL, nicht CASCADE: beim Aufteilen verschwindet das Original
+    # planmäßig -- der Lauf muss seine Erfolgsmeldung überleben.
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pdf_edit_runs",
+    )
+    document_title = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pdf_edit_runs",
+    )
+    mode = models.CharField(max_length=20, choices=Mode.choices, default=Mode.EDIT)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.RUNNING
+    )
+    plan = models.JSONField(default=dict, blank=True)
+    result = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    # Gesetzt vom Job, sobald er den Lauf für sich beansprucht hat -- ein
+    # zweiter Anlauf desselben Laufs (Django-Q-Requeue, doppelter Klick)
+    # findet ihn belegt und tut nichts.
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "PDF-Seitenbearbeitung"
+        verbose_name_plural = "PDF-Seitenbearbeitungen"
+
+    def __str__(self):
+        return f"PDF-Bearbeitung {self.pk} ({self.get_status_display()})"
+
+    @property
+    def is_running(self):
+        return self.status == self.Status.RUNNING
 
 
 class Chunk(TimeStampedModel):

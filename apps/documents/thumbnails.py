@@ -48,7 +48,7 @@ def _render_pdf_first_page(data: bytes):
     Renders straight at the target scale (target edge / longest page edge in
     points) instead of at a fixed high DPI and downscaling -- a thumbnail
     never needs more pixels than its longest edge, so this keeps the render
-    cheap. `_encode` still caps the result, which also covers the clamp of
+    cheap. `encode_image` still caps the result, which also covers the clamp of
     the scale for unusually small/large pages.
     """
     import pypdfium2 as pdfium
@@ -75,17 +75,22 @@ def _open_image(data: bytes):
     return Image.open(io.BytesIO(data))
 
 
-def _encode(image) -> tuple[bytes, str]:
-    """Scale `image` down to the max edge and encode it, preferring WebP and
+def encode_image(image, *, max_edge: int) -> tuple[bytes, str]:
+    """Scale `image` down to `max_edge` and encode it, preferring WebP and
     falling back to PNG if this Pillow build lacks WebP. Returns the bytes
     and the matching file extension.
+
+    `max_edge` statt der Thumbnail-Einstellung fest verdrahtet, seit die
+    Seitenvorschau (#1155, `apps.documents.page_previews`) dieselbe
+    Kodierung mit einer größeren Kante braucht: einer 120px-Kachel sieht
+    man nicht an, ob die Seite leer oder nur blass ist. Eine zweite Kopie
+    der WebP/PNG-Fallback-Logik wäre der falsche Weg dorthin.
     """
     if image.mode not in ("RGB", "RGBA"):
         # WebP/PNG can't encode palette ("P") or CMYK directly; RGB(A) also
         # gives a sane thumbnail for greyscale/1-bit scans.
         image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-    edge = _max_edge()
-    image.thumbnail((edge, edge))  # in-place, preserves aspect ratio
+    image.thumbnail((max_edge, max_edge))  # in-place, preserves aspect ratio
 
     for fmt, ext in (("WEBP", "webp"), ("PNG", "png")):
         try:
@@ -112,7 +117,7 @@ def render_thumbnail(data: bytes, mime_type: str) -> Optional[tuple[bytes, str]]
         return None
     if image is None:
         return None
-    return _encode(image)
+    return encode_image(image, max_edge=_max_edge())
 
 
 def generate_thumbnail(document: Document, *, force: bool = False) -> bool:
