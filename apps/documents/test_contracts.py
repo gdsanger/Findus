@@ -617,6 +617,53 @@ class QClusterRetryOutlivesTimeoutTests(SimpleTestCase):
             settings.FINDUS_VISION_REEXTRACT_TASK_TIMEOUT_SECONDS,
         )
 
+    def test_retry_exceeds_the_pdf_edit_task_timeouts(self):
+        """Dieselbe Invariante, fuer die PDF-Grundbearbeitung (#1155). Hier
+        haengt mehr daran als Kosten: ein zweites Mal gestartetes Aufteilen
+        wuerde doppelte Teile anlegen.
+        """
+        self.assertGreater(
+            settings.Q_CLUSTER["retry"], settings.FINDUS_PDF_EDIT_TASK_TIMEOUT_SECONDS
+        )
+        self.assertGreater(
+            settings.Q_CLUSTER["retry"], settings.FINDUS_PAGE_PREVIEW_TASK_TIMEOUT_SECONDS
+        )
+
+    def test_poll_timeout_exceeds_the_pdf_edit_task_timeout(self):
+        self.assertGreater(
+            settings.FINDUS_PDF_EDIT_POLL_TIMEOUT_SECONDS,
+            settings.FINDUS_PDF_EDIT_TASK_TIMEOUT_SECONDS,
+        )
+
+
+class PdfSplitGoesThroughIngestServiceTests(SimpleTestCase):
+    """Aufteilen legt seine Teile ausschliesslich ueber
+    `apps.ingest.service.ingest_file` an (#1155, CLAUDE.md "Pipelines &
+    Services"): Dedup, Ablage, Sichtbarkeit und Enqueue sind *ein* Vertrag,
+    den kein Connector -- und auch nicht die Scan-Korrektur -- einzeln
+    nachbaut.
+
+    Geprueft am Quelltext, nicht am Verhalten: ein Verhaltenstest wuerde
+    einen zweiten, danebengebauten Ablagepfad nicht bemerken, solange am
+    Ende irgendein Dokument entsteht.
+    """
+
+    def test_pdf_edit_module_calls_ingest_file(self):
+        source = (Path(__file__).resolve().parent / "pdf_edit.py").read_text(encoding="utf-8")
+
+        self.assertIn("from apps.ingest.service import ingest_file", source)
+        self.assertIn("ingest_file(", source)
+
+    def test_pdf_edit_module_writes_no_document_itself(self):
+        """Kein `Document(...)`-Konstruktor und kein `Document.objects.
+        create(` im Modul -- beides waere der Anfang eines zweiten
+        Ablagepfads neben dem Ingest-Vertrag.
+        """
+        source = (Path(__file__).resolve().parent / "pdf_edit.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("Document.objects.create(", source)
+        self.assertNotIn("Document(\n", source)
+
 
 class ActionStatusToggleTargetsExistTests(TestCase):
     """Der Erledigt-Schalter (#1137) crashte in den Übersichten, weil sein

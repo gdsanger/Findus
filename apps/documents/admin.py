@@ -8,6 +8,7 @@ from .models import (
     Document,
     DocumentComment,
     DocumentLink,
+    DocumentPdfEditRun,
     DocumentReference,
     LetterDraft,
     LetterTemplate,
@@ -230,6 +231,19 @@ class VorgangRecommendationRunAdmin(admin.ModelAdmin):
     search_fields = ("vorgang__name", "situation")
     readonly_fields = ("based_on", "error", "ai_model", "ai_model_version")
     inlines = [VorgangRecommendationInline]
+
+
+@admin.register(DocumentPdfEditRun)
+class DocumentPdfEditRunAdmin(admin.ModelAdmin):
+    """Nur zum Nachsehen, wenn ein Lauf der Scan-Korrektur (#1155)
+    fehlgeschlagen ist -- der Plan und das Ergebnis stehen als JSON daran.
+    Nichts davon ist von Hand zu pflegen, deshalb alles schreibgeschuetzt.
+    """
+
+    list_display = ("pk", "document_title", "mode", "status", "created_at")
+    list_filter = ("status", "mode")
+    search_fields = ("document_title",)
+    readonly_fields = ("plan", "result", "error", "claimed_at", "completed_at")
 
 
 @admin.register(Tag)
