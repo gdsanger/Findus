@@ -7,6 +7,7 @@ from . import (
     graph_views,
     letter_template_views,
     letter_views,
+    pdf_edit_views,
     reference_views,
     tag_views,
     task_template_views,
@@ -220,6 +221,36 @@ urlpatterns = [
         "documents/<int:pk>/vision-reextract/",
         views.document_vision_reextract,
         name="vision_reextract",
+    ),
+    path(
+        "documents/<int:pk>/seiten/",
+        pdf_edit_views.document_pages,
+        name="pages",
+    ),
+    path(
+        "documents/<int:pk>/seiten/vorschau/",
+        pdf_edit_views.document_page_previews,
+        name="page_previews",
+    ),
+    path(
+        "documents/<int:pk>/seiten/<int:page>/bild/",
+        pdf_edit_views.document_page_image,
+        name="page_image",
+    ),
+    path(
+        "documents/<int:pk>/seiten/bestaetigen/",
+        pdf_edit_views.document_pdf_edit_confirm,
+        name="pdf_edit_confirm",
+    ),
+    path(
+        "documents/<int:pk>/seiten/anwenden/",
+        pdf_edit_views.document_pdf_edit_apply,
+        name="pdf_edit_apply",
+    ),
+    path(
+        "seitenbearbeitung/<int:run_id>/",
+        pdf_edit_views.document_pdf_edit_status,
+        name="pdf_edit_status",
     ),
     path(
         "documents/<int:pk>/lang-zusammenfassung/",
