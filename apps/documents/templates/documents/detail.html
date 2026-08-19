@@ -73,6 +73,20 @@ abgesetzt am rechten Rand und bleibt bestätigungspflichtig.
     >
         Antwortschreiben erstellen
     </a>
+    {% comment %}
+    Einstieg in die Scan-Korrektur (#1155): Seiten entfernen, drehen, einen
+    zusammengescannten Stapel aufteilen. Nur bei PDF -- bei jedem anderen
+    Dateityp erscheint der Einstieg nicht, weil es dort keine Seiten gibt,
+    auf denen die Operationen arbeiten könnten.
+    {% endcomment %}
+    {% if document.supports_page_editing %}
+    <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{% url 'documents:pages' document.pk %}"
+    >
+        Seiten bearbeiten
+    </a>
+    {% endif %}
     {# Einstieg in den Fokus-Graphen (#1091) mit diesem Dokument als Startknoten. #}
     <a
         class="btn btn-sm btn-outline-secondary"

@@ -1,0 +1,75 @@
+{% comment %}
+Bestätigungsschritt der Scan-Korrektur (#1155): fasst in Worten zusammen,
+was passieren wird, bevor irgendetwas passiert. Es gibt kein Rückgängig --
+dieser Schritt *ist* der Schutz.
+
+Kein eigener Rahmen: die einbindende Seite stellt die Region
+(`#pdf-edit-result`), hier steht nur ihr Inhalt.
+{% endcomment %}
+{% if file_error %}
+<div class="alert alert-warning py-2 px-3 small" role="alert">{{ file_error }}</div>
+{% elif form_errors %}
+<div class="alert alert-warning py-2 px-3 small" role="alert">
+    {% for field, errors in form_errors.items %}
+    {% for error in errors %}
+    <div>{{ error }}</div>
+    {% endfor %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="findus-card findus-pdf-edit-confirm">
+    <h3 class="h6">Bitte bestätigen</h3>
+    <p class="mb-2">
+        {% for line in plan_summary %}{{ line }}{% if not forloop.last %}, {% else %}.{% endif %}{% endfor %}
+    </p>
+
+    {% if splits_document %}
+    <p class="text-muted small mb-2">
+        Die Teile erben Sichtbarkeit, Eigentümer, Abteilungen, Sphäre, Richtung, Quelle und das
+        Eingangsdatum. Kontakt, Titel, Datum, Typ, Tags und Vorgänge ermittelt die KI-Analyse je
+        Teil neu.
+    </p>
+    {% if comment_count or link_count %}
+    <div class="alert alert-warning py-2 px-3 small mb-2" role="alert">
+        Das Original hat
+        {% if comment_count %}{{ comment_count }} Kommentar{{ comment_count|pluralize:"e" }}{% endif %}
+        {% if comment_count and link_count %} und {% endif %}
+        {% if link_count %}{{ link_count }} Verknüpfung{{ link_count|pluralize:"en" }}{% endif %}
+        – {% if comment_count and link_count %}beides geht{% else %}das geht{% endif %} verloren.
+    </div>
+    {% endif %}
+    {% if child_count %}
+    <div class="alert alert-warning py-2 px-3 small mb-2" role="alert">
+        Am Original hängt {{ child_count }} Unterdokument{{ child_count|pluralize:"e" }} –
+        {{ child_count|pluralize:"es wird,sie werden" }} mit gelöscht.
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {% if has_signature %}
+    <p class="text-muted small mb-2">
+        Das PDF ist digital signiert – die Bearbeitung macht die Signatur ungültig.
+    </p>
+    {% endif %}
+
+    <form
+        method="post"
+        action="{% url 'documents:pdf_edit_apply' document.pk %}"
+        hx-post="{% url 'documents:pdf_edit_apply' document.pk %}"
+        hx-target="#pdf-edit-result"
+        hx-swap="innerHTML"
+        hx-sync="this:abort"
+    >
+        {% csrf_token %}
+        {% comment %}
+        Dieselben Feldnamen noch einmal: der Ausführen-Endpunkt validiert
+        das gleiche Formular ein zweites Mal, statt einem hier gebauten
+        Sonderformat zu vertrauen.
+        {% endcomment %}
+        {% for name, value in plan_fields %}
+        <input type="hidden" name="{{ name }}" value="{{ value }}">
+        {% endfor %}
+        <button type="submit" class="btn btn-sm btn-danger">Jetzt ausführen</button>
+    </form>
+</div>
+{% endif %}

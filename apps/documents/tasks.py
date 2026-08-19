@@ -4,6 +4,8 @@ from .analysis import analyze_document
 from .extraction import extract_document, reextract_document_with_vision
 from .letter_generation import generate_letter_draft
 from .long_summary import generate_document_long_summary, generate_vorgang_long_summary
+from .page_previews import generate_page_previews
+from .pdf_edit import apply_pdf_edit_run
 from .processing import process_document
 from .recommendations import generate_vorgang_recommendations
 from .thumbnails import generate_thumbnail_for_document
@@ -278,4 +280,67 @@ def reextract_document_with_vision_hook(task):
     ).update(
         vision_reextraction_status=Document.VisionReextractionStatus.FAILED,
         vision_reextraction_error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
+    )
+
+
+def generate_page_previews_task(document_id):
+    """Django-Q2 worker entry point fuer die Seitenvorschauen der
+    Scan-Korrektur (#1155) -- eingereiht von der Seitenansicht, wenn ein
+    Dokument mehr Seiten hat, als sich im Request rastern lassen
+    (`FINDUS_PAGE_PREVIEW_SYNC_MAX_PAGES`), nie von der Ingest-Pipeline.
+
+    Fehlertolerant wie das Thumbnail (#1123): `generate_page_previews`
+    ueberspringt eine Seite, die sich nicht rastern laesst, und wirft
+    nicht -- ein fehlendes Vorschaubild ist ein Platzhalter in der
+    Ansicht, kein kaputtes Dokument. Ein zweiter, parallel gestarteter
+    Lauf ist harmlos: vorhandene Seiten werden uebersprungen.
+    """
+    generate_page_previews(document_id)
+
+
+def apply_pdf_edit_task(run_id):
+    """Django-Q2 worker entry point fuer die PDF-Grundbearbeitung (#1155):
+    Seiten drehen/loeschen bzw. den Scan aufteilen -- nur auf ausdrueckliche
+    Bestaetigung hin, nie von der Ingest-Pipeline.
+
+    Eingereiht mit eigenem, grosszuegigem `timeout`
+    (`FINDUS_PDF_EDIT_TASK_TIMEOUT_SECONDS`, siehe
+    `pdf_edit_views.document_pdf_edit_apply`): das Schreiben eines grossen
+    Scans und das Anlegen der Teile ueber den Ingest-Dienst sprengen den
+    knappen Cluster-Default.
+
+    `apply_pdf_edit_run()` zeichnet einen gewoehnlichen Fehler selbst am
+    Lauf auf (`status="failed"` + `error`) und wirft dafuer nicht --
+    reicht aber eine Django-Q-`TimeoutException` weiter, damit Django-Q
+    den Worker-Prozess neu startet. Dieselbe Aufgabenteilung wie
+    `reextract_document_with_vision_task`. Doppelausfuehrung faengt der
+    Lauf selbst ab (`DocumentPdfEditRun.claimed_at`), damit ein erneut
+    eingereihter Task keine doppelten Teile erzeugt.
+    """
+    apply_pdf_edit_run(run_id)
+
+
+def apply_pdf_edit_hook(task):
+    """Sicherheitsnetz fuer `apply_pdf_edit_task`, analog
+    `reextract_document_with_vision_hook`: faengt einen Worker ab, der
+    abstuerzt, bevor der eigene except-Block den Fehler noch aufzeichnen
+    konnte. `status=RUNNING` im Filter, damit ein bereits eingetroffenes
+    Ergebnis nicht ueberschrieben wird.
+    """
+    if task.success:
+        return
+
+    from .models import DocumentPdfEditRun
+
+    run_id = task.args[0] if task.args else None
+    if run_id is None:
+        return
+
+    DocumentPdfEditRun.objects.filter(
+        pk=run_id, status=DocumentPdfEditRun.Status.RUNNING
+    ).update(
+        status=DocumentPdfEditRun.Status.FAILED,
+        error="Der Hintergrundjob wurde abgebrochen, ohne ein Ergebnis zurückzugeben.",
+        completed_at=timezone.now(),
+        updated_at=timezone.now(),
     )

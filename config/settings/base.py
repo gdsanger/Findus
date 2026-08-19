@@ -620,6 +620,31 @@ FINDUS_VISION_REEXTRACT_POLL_TIMEOUT_SECONDS = int(
 FINDUS_THUMBNAIL_MAX_EDGE = int(env("FINDUS_THUMBNAIL_MAX_EDGE", "400"))
 FINDUS_THUMBNAIL_CACHE_MAX_AGE = int(env("FINDUS_THUMBNAIL_CACHE_MAX_AGE", str(60 * 60 * 24 * 30)))
 
+# --------------------------------------------------------------------------
+# PDF-Grundbearbeitung / Scan-Korrektur (apps.documents.pdf_edit*, #1155):
+# Seiten drehen, Seiten loeschen, einen versehentlich zusammengescannten
+# Stapel in mehrere Dokumente aufteilen.
+#
+# MAX_EDGE ist bewusst groesser als die Thumbnail-Kante: einer 400px-Kachel
+# sieht man nicht an, ob die Seite leer oder nur blass ist -- und genau das
+# ist hier die Entscheidung, die getroffen werden soll.
+# SYNC_MAX_PAGES ist die Grenze, bis zu der die Seitenbilder noch im Request
+# gerastert werden; darueber uebernimmt der Hintergrundjob und die Ansicht
+# laedt nach.
+# TASK_TIMEOUT_SECONDS < Q_CLUSTER["retry"] und POLL_TIMEOUT_SECONDS >
+# TASK_TIMEOUT_SECONDS -- abgesichert durch
+# apps.documents.test_contracts.QClusterRetryOutlivesTimeoutTests. Ohne die
+# Schachtelung reiht Django-Q denselben Auftrag ein zweites Mal ein, waehrend
+# der erste noch laeuft: beim Aufteilen waeren das doppelte Teile.
+# --------------------------------------------------------------------------
+FINDUS_PAGE_PREVIEW_MAX_EDGE = int(env("FINDUS_PAGE_PREVIEW_MAX_EDGE", "700"))
+FINDUS_PAGE_PREVIEW_SYNC_MAX_PAGES = int(env("FINDUS_PAGE_PREVIEW_SYNC_MAX_PAGES", "5"))
+FINDUS_PAGE_PREVIEW_TASK_TIMEOUT_SECONDS = int(
+    env("FINDUS_PAGE_PREVIEW_TASK_TIMEOUT_SECONDS", "900")
+)
+FINDUS_PDF_EDIT_TASK_TIMEOUT_SECONDS = int(env("FINDUS_PDF_EDIT_TASK_TIMEOUT_SECONDS", "1800"))
+FINDUS_PDF_EDIT_POLL_TIMEOUT_SECONDS = int(env("FINDUS_PDF_EDIT_POLL_TIMEOUT_SECONDS", "2400"))
+
 # Per-provider settings, keyed by the same name used in
 # FINDUS_AI_{EMBEDDING,GENERATION,VISION}_PROVIDER. `*_model_version` is not
 # read back from any provider API (none of them report it consistently) --

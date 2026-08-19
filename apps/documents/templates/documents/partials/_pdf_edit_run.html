@@ -1,0 +1,77 @@
+{% comment %}
+Anzeige eines Bearbeitungslaufs (#1155) -- Ladezustand, Ergebnis oder
+Fehler. Swap-Region des Pollers: tauscht sich per `outerHTML` gegen sich
+selbst aus, trägt deshalb ihre eigene `id`, aber keinen eigenen Rahmen.
+
+Läuft nichts (Formularfehler, blockierte Bearbeitung), zeigt sie nur die
+Meldung -- ohne Poller, der nichts zu holen hätte.
+{% endcomment %}
+{% if blocked_reason == "processing" %}
+<div class="alert alert-warning py-2 px-3 small" role="alert">
+    Dieses Dokument wird gerade noch verarbeitet. Die Seitenbearbeitung ist erst möglich,
+    wenn die Verarbeitung abgeschlossen ist.
+</div>
+{% elif file_error %}
+<div class="alert alert-warning py-2 px-3 small" role="alert">{{ file_error }}</div>
+{% elif form_errors %}
+<div class="alert alert-warning py-2 px-3 small" role="alert">
+    {% for field, errors in form_errors.items %}
+    {% for error in errors %}
+    <div>{{ error }}</div>
+    {% endfor %}
+    {% endfor %}
+</div>
+{% else %}
+<div
+    id="pdf-edit-run"
+    class="findus-card findus-pdf-edit-run"
+    {% if run.is_running %}
+    hx-get="{% url 'documents:pdf_edit_status' run.pk %}"
+    hx-trigger="every 3s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    hx-sync="this:abort"
+    {% endif %}
+>
+    {% if run.is_running %}
+    <p class="text-muted small mb-0">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        Die Bearbeitung läuft …
+    </p>
+    {% elif run.status == "failed" %}
+    <div class="alert alert-danger py-2 px-3 small mb-0" role="alert">
+        Die Bearbeitung ist fehlgeschlagen{% if run.error %}: {{ run.error }}{% endif %}
+    </div>
+    {% elif run.mode == "split" %}
+    <h3 class="h6">Aufgeteilt in {{ parts|length }} Dokument{{ parts|length|pluralize:"e" }}</h3>
+    <ul class="list-unstyled mb-2">
+        {% for part in parts %}
+        <li class="small">
+            Teil {{ part.index }} (Seite{{ part.pages|length|pluralize:"n" }}
+            {{ part.pages|join:", " }}):
+            {% if part.document %}
+            <a href="{% url 'documents:detail' part.document.pk %}">{{ part.document.title }}</a>
+            {% else %}
+            <span class="text-muted">{{ part.title }}</span>
+            {% endif %}
+            {% if part.duplicate %}
+            <span class="badge text-bg-warning">entspricht einem bereits vorhandenen Dokument</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    <p class="text-muted small mb-0">
+        Das Original wurde gelöscht. <a href="{% url 'documents:home' %}">Zur Dokumentliste</a>
+    </p>
+    {% else %}
+    <h3 class="h6">Seiten bearbeitet</h3>
+    <p class="text-muted small mb-0">
+        Die Datei wurde ersetzt; das Dokument wird jetzt neu verarbeitet (Extraktion,
+        KI-Analyse, Indizierung).
+        {% if run.document %}
+        <a href="{% url 'documents:detail' run.document.pk %}">Zum Dokument</a>
+        {% endif %}
+    </p>
+    {% endif %}
+</div>
+{% endif %}

@@ -1,0 +1,107 @@
+{% comment %}
+Die Seitenliste der Scan-Korrektur (#1155) -- Swap-Region des Pollers für
+die Seitenvorschauen: tauscht sich per `outerHTML` gegen sich selbst aus,
+solange noch Bilder fehlen, und trägt deshalb ihre eigene `id`, aber
+bewusst *keinen* eigenen Rahmen (der steht in `pdf_edit.html` um diese
+Region herum, siehe CLAUDE.md).
+
+Solange nicht alle Vorschauen da sind, sind die Bedienelemente
+deaktiviert: sonst würde der nächste Swap eine bereits getroffene Auswahl
+wieder zurücksetzen -- ein Klick, der scheinbar nichts tut, ist genau der
+Fehler, den man hinterher nicht mehr findet.
+{% endcomment %}
+<div
+    id="pdf-edit-pages"
+    class="findus-pdf-pages"
+    {% if not previews_complete %}
+    hx-get="{% url 'documents:page_previews' document.pk %}"
+    hx-trigger="every 3s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    hx-sync="this:abort"
+    {% endif %}
+>
+    {% if not previews_complete %}
+    <p class="text-muted small findus-pdf-pages-loading">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        Seitenvorschauen werden erzeugt … ({{ previews_ready_count }} von {{ page_count }})
+    </p>
+    {% endif %}
+
+    {% for preview in previews %}
+    {% if not forloop.first %}
+    <div class="findus-pdf-split">
+        <div class="form-check form-check-inline">
+            <input
+                class="form-check-input"
+                type="checkbox"
+                name="split_before_{{ preview.page_number }}"
+                id="split-before-{{ preview.page_number }}"
+                value="1"
+                {% if not previews_complete %}disabled{% endif %}
+            >
+            <label class="form-check-label small" for="split-before-{{ preview.page_number }}">
+                Hier beginnt ein neues Dokument
+            </label>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="findus-pdf-page findus-card">
+        <div class="findus-pdf-page-header">
+            <strong class="small">Seite {{ preview.page_number }}</strong>
+            {% if preview.looks_empty %}
+            <span
+                class="badge text-bg-secondary"
+                title="Auf dieser Seite wurde kein verwertbarer Text gefunden. Handschrift oder ein Stempel können trotzdem darauf stehen – die Entscheidung bleibt bei Ihnen."
+            >Kein Text erkannt</span>
+            {% endif %}
+        </div>
+
+        <div class="findus-pdf-page-preview">
+            {% if preview.has_image %}
+            <img
+                class="findus-pdf-page-image"
+                src="{% url 'documents:page_image' document.pk preview.page_number %}"
+                alt="Vorschau von Seite {{ preview.page_number }}"
+                loading="lazy"
+            >
+            {% else %}
+            <span class="findus-pdf-page-placeholder text-muted small">Vorschau folgt …</span>
+            {% endif %}
+        </div>
+
+        <div class="form-check">
+            <input
+                class="form-check-input"
+                type="checkbox"
+                name="delete_pages"
+                id="delete-page-{{ preview.page_number }}"
+                value="{{ preview.page_number }}"
+                {% if not previews_complete %}disabled{% endif %}
+            >
+            <label class="form-check-label small" for="delete-page-{{ preview.page_number }}">
+                Seite entfernen
+            </label>
+        </div>
+
+        <div class="btn-group btn-group-sm" role="group" aria-label="Drehung Seite {{ preview.page_number }}">
+            {% for value, label in rotation_choices %}
+            <input
+                type="radio"
+                class="btn-check"
+                name="rotate_{{ preview.page_number }}"
+                id="rotate-{{ preview.page_number }}-{{ value }}"
+                value="{{ value }}"
+                autocomplete="off"
+                {% if value == "0" %}checked{% endif %}
+                {% if not previews_complete %}disabled{% endif %}
+            >
+            <label class="btn btn-outline-secondary" for="rotate-{{ preview.page_number }}-{{ value }}">
+                {{ label }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>

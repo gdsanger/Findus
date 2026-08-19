@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Seiten bearbeiten: {{ document.title }} – Findus{% endblock %}
+{% block content %}
+{% include "partials/_content_header.html" with page_title="Seiten bearbeiten" %}
+
+{% comment %}
+Seitenansicht der Scan-Korrektur (#1155). Alle drei Operationen -- Seite
+entfernen, Seite drehen, Schnittmarke setzen -- finden hier statt; nichts
+davon verändert etwas, bevor der Bestätigungsschritt durchlaufen ist.
+{% endcomment %}
+<section class="findus-section">
+    <p class="text-muted small mb-2">
+        Dokument: <a href="{% url 'documents:detail' document.pk %}">{{ document.title }}</a>
+    </p>
+
+    {% if blocked_reason == "processing" %}
+    <div class="alert alert-warning py-2 px-3 small" role="alert">
+        Dieses Dokument wird gerade noch verarbeitet. Die Seitenbearbeitung ist erst
+        möglich, wenn die Verarbeitung abgeschlossen ist.
+    </div>
+    {% elif file_error %}
+    <div class="alert alert-warning py-2 px-3 small" role="alert">{{ file_error }}</div>
+    {% else %}
+
+    <p class="text-muted small">
+        Leere Rückseiten entfernen, verdrehte Seiten geraderichten, einen
+        versehentlich zusammengescannten Stapel aufteilen. Die Auswahl hier ändert
+        noch nichts – ausgeführt wird erst nach der Bestätigung, und ohne
+        Rückgängig.
+    </p>
+
+    {% if has_signature %}
+    <div class="alert alert-info py-2 px-3 small" role="alert">
+        Dieses PDF ist digital signiert. Jede Seitenbearbeitung macht die Signatur ungültig.
+    </div>
+    {% endif %}
+
+    {% comment %}
+    Der Rahmen (Card) gehört hierher, um die Swap-Region herum -- das
+    Poller-Partial darunter tauscht sich per `outerHTML` gegen sich selbst
+    aus und läge nach jedem Lauf eine Ebene tiefer, wenn es sich selbst
+    einrahmte (CLAUDE.md, HTMX).
+    {% endcomment %}
+    <form
+        method="post"
+        action="{% url 'documents:pdf_edit_confirm' document.pk %}"
+        hx-post="{% url 'documents:pdf_edit_confirm' document.pk %}"
+        hx-target="#pdf-edit-result"
+        hx-swap="innerHTML"
+        hx-sync="this:abort"
+    >
+        {% csrf_token %}
+        <div class="findus-card">
+            {% include "documents/partials/_pdf_edit_pages.html" with document=document page_count=page_count previews=previews previews_ready_count=previews_ready_count previews_complete=previews_complete rotation_choices=rotation_choices only %}
+        </div>
+
+        <div class="findus-detail-meta-edit-actions">
+            <button type="submit" class="btn btn-sm btn-primary">Änderungen prüfen</button>
+            <a href="{% url 'documents:detail' document.pk %}" class="btn btn-sm btn-outline-secondary">
+                Abbrechen
+            </a>
+        </div>
+    </form>
+
+    {% comment %}
+    Ziel für Bestätigungsschritt und Lauf-Anzeige. Bleibt leer, solange
+    nichts geprüft wurde; ein laufender Auftrag (Seite neu geladen, während
+    der Job noch arbeitet) wird direkt hier gerendert.
+    {% endcomment %}
+    <div id="pdf-edit-result" class="findus-pdf-edit-result">
+        {% if running_run %}
+        {% include "documents/partials/_pdf_edit_run.html" with run=running_run parts=None document=document only %}
+        {% endif %}
+    </div>
+    {% endif %}
+</section>
+
+{% comment %}
+Kein JS-Paket, kein Build-Schritt: die Drehvorschau hängt delegiert an
+`document`, damit sie jeden HTMX-Swap der Seitenliste übersteht. Ohne JS
+funktioniert die Seite unverändert -- die Radios sind echte Formularfelder,
+nur die Live-Vorschau des Drehwinkels fehlt dann.
+{% endcomment %}
+<script>
+    document.addEventListener("change", function (event) {
+        const input = event.target;
+        if (!input.name || !input.name.startsWith("rotate_")) {
+            return;
+        }
+        const page = input.closest(".findus-pdf-page");
+        if (!page) {
+            return;
+        }
+        const image = page.querySelector(".findus-pdf-page-image");
+        if (image) {
+            image.style.transform = "rotate(" + input.value + "deg)";
+        }
+    });
+</script>
+{% endblock %}

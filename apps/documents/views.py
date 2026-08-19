@@ -44,6 +44,7 @@ from .models import (
     normalize_reference_value,
     tax_relevance_filter_q,
 )
+from .page_previews import discard_page_previews
 from .reference_matching import (
     REFERENCE_OWNERS,
     assign_suggested,
@@ -1075,6 +1076,7 @@ def document_delete(request, pk):
             doc.original_file.delete(save=False)
         if doc.thumbnail:
             doc.thumbnail.delete(save=False)
+        discard_page_previews(doc)
     document.delete()
     return redirect("documents:home")
 
@@ -1107,6 +1109,7 @@ def document_child_delete(request, pk, child_id):
             doc.original_file.delete(save=False)
         if doc.thumbnail:
             doc.thumbnail.delete(save=False)
+        discard_page_previews(doc)
     child.delete()
     return render(
         request,

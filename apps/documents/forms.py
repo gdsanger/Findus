@@ -12,6 +12,7 @@ from .models import (
     TaskTemplate,
     Vorgang,
 )
+from .pdf_editing import PdfEditPlan
 
 _TEXT_WIDGET = forms.TextInput(attrs={"class": "form-control form-control-sm"})
 _SELECT_WIDGET = forms.Select(attrs={"class": "form-select form-select-sm"})
@@ -564,3 +565,89 @@ class LetterTemplatePlaceholderForm(forms.ModelForm):
         if duplicates.exists():
             raise forms.ValidationError(f"Der Schlüssel „{key}“ ist schon vergeben.")
         return key
+
+
+class PdfPageEditForm(forms.Form):
+    """Die Eingabe der Seitenansicht (#1155): welche Seite gedreht, welche
+    entfernt wird und wo ein neues Dokument beginnt.
+
+    Die Felder entstehen erst mit der Seitenzahl der konkreten Datei
+    (`page_count`), weil sie genau daran hängen: `rotate_<n>` je Seite,
+    `split_before_<n>` je Zwischenraum ab Seite 2 und die Mehrfachauswahl
+    `delete_pages`. Damit prüft Django selbst, dass keine Seite 0 oder 99
+    ankommt -- ein unsinniger Wert landet als Inline-Fehler, nicht als 500
+    (CLAUDE.md, "Hub-Seiten und Formulare": nie roh aus `request.POST`).
+
+    Die Reihenfolge der Anwendung (drehen -> löschen -> aufteilen) ist
+    nicht Sache des Formulars, sondern von `apps.documents.pdf_editing` --
+    hier gilt sie nur insofern, als alle Seitenangaben sich durchgängig auf
+    die **Originalnummerierung** beziehen.
+    """
+
+    ROTATION_CHOICES = (
+        ("0", "0°"),
+        ("90", "90°"),
+        ("180", "180°"),
+        ("270", "270°"),
+    )
+
+    def __init__(self, *args, page_count, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.page_count = page_count
+        pages = range(1, page_count + 1)
+        self.fields["delete_pages"] = forms.MultipleChoiceField(
+            required=False,
+            choices=[(str(page), str(page)) for page in pages],
+            widget=forms.CheckboxSelectMultiple,
+            label="Zu entfernende Seiten",
+        )
+        for page in pages:
+            self.fields[f"rotate_{page}"] = forms.ChoiceField(
+                required=False,
+                choices=self.ROTATION_CHOICES,
+                initial="0",
+                label=f"Drehung Seite {page}",
+            )
+        # Eine Schnittmarke sitzt *zwischen* zwei Seiten; "vor Seite 1"
+        # wäre keine Teilung, deshalb beginnt die Reihe bei 2. Bei einem
+        # einseitigen Dokument entsteht so gar kein Feld -- Aufteilen ist
+        # dort nicht anwendbar.
+        for page in range(2, page_count + 1):
+            self.fields[f"split_before_{page}"] = forms.BooleanField(
+                required=False, label=f"Neues Dokument ab Seite {page}"
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        deletions = tuple(sorted(int(page) for page in cleaned.get("delete_pages") or ()))
+        rotations = {
+            page: int(cleaned.get(f"rotate_{page}") or 0)
+            for page in range(1, self.page_count + 1)
+            if int(cleaned.get(f"rotate_{page}") or 0)
+        }
+        splits = tuple(
+            page
+            for page in range(2, self.page_count + 1)
+            if cleaned.get(f"split_before_{page}")
+        )
+
+        if len(deletions) == self.page_count:
+            raise forms.ValidationError(
+                "Es sind alle Seiten zum Entfernen markiert. Ein Dokument ohne "
+                "Seiten ist kein Dokument – wer alles loswerden will, löscht "
+                "das Dokument."
+            )
+        if not (deletions or rotations or splits):
+            raise forms.ValidationError(
+                "Es ist nichts ausgewählt, was geändert werden soll."
+            )
+
+        cleaned["plan"] = PdfEditPlan(
+            rotations=rotations, deletions=deletions, splits=splits
+        )
+        return cleaned
+
+    @property
+    def plan(self):
+        """Der validierte Plan -- erst nach `is_valid()` gefüllt."""
+        return self.cleaned_data["plan"]

@@ -283,6 +283,68 @@ Vorgang und eigene Identität sich auflösen.
   der Aussage steckt in den beiden Dokumenten; `DocumentLink` ist und bleibt
   ungerichtet.
 
+## PDF-Grundbearbeitung: Scan-Korrektur, kein Editor
+
+Seiten drehen, Seiten entfernen, einen versehentlich zusammengescannten
+Stapel in mehrere Dokumente aufteilen (#1155) — `apps.documents.pdf_editing`
+(Seitenlogik), `pdf_edit` (Ausführung), `pdf_edit_views` (Seitenansicht).
+Der Anlass: Der bisherige Ausweg — löschen, außerhalb reparieren, neu
+hochladen — kostet Kommentare, Wiedervorlagen, Verknüpfungen und die
+gepflegte Zuordnung, und passiert deshalb schlicht nicht.
+
+Das setzt **vor** dem Archiv an und steht damit nicht im Widerspruch zu
+„kein DMS": es korrigiert einen misslungenen Einzug, es pflegt keine
+Fassungen eines Schriftstücks. Daraus folgt, was hier ausdrücklich
+**nicht** gebaut wird — **keine Versionierung, kein Rückgängig, keine
+Inhaltsbearbeitung (Schwärzen, Anmerkungen, Text, Formulare), kein
+Zusammenführen mehrerer Dokumente, kein Neusortieren von Seiten, kein
+automatisches Aufteilen anhand erkannter Trennseiten.** Der Schutz vor
+einem Fehlgriff ist die Vorschau plus Bestätigung **vor** der Ausführung,
+nicht ein Wiederherstellungsweg danach; die Automatik wäre eine Rateregel
+mit teuren Folgen. Wer hier nachrüstet, baut aus der Scan-Hygiene über die
+Zeit doch einen Editor.
+
+- **Feste Reihenfolge: erst drehen, dann löschen, dann aufteilen.** Ohne
+  sie bedeuten dieselben Eingaben je nach Umsetzung etwas anderes. Alle
+  Seitenangaben beziehen sich deshalb durchgängig auf die
+  **Originalnummerierung**; umgerechnet wird genau einmal
+  (`pdf_editing.split_page_groups`). Eine Schnittmarke vor einer gelöschten
+  Seite schneidet vor der nächsten übrig gebliebenen — sie verfällt nicht.
+- **Drehen/Löschen behält die Identität des Dokuments**: dieselbe
+  Datensatz-Kennung, dieselben Kommentare, Wiedervorlagen, Verknüpfungen,
+  Vorgänge, Tags, Kontakt und Erledigungsstatus — genau deswegen wird das
+  gebaut. Die Datei wird ersetzt, `sha256` neu berechnet (sonst stimmt die
+  Dublettenerkennung nicht mehr), die **Chunks des alten Standes sofort
+  gelöscht** (sonst bleibt der Text entfernter Seiten durchsuchbar — ein
+  Fehler, der niemandem auffällt, weil nichts kaputtgeht), und die Pipeline
+  läuft komplett neu. Ergibt die neue Prüfsumme eine Dublette zu einem
+  *anderen* Dokument, wird abgelehnt und nichts verändert; still
+  zusammenführen hieße, eine Entscheidung zu treffen, die niemand getroffen
+  hat.
+- **Aufteilen legt jedes Teil über `apps.ingest.service.ingest_file` an**
+  (siehe „Pipelines & Services") und löscht das Original **danach** —
+  erst alle Teile vollständig, dann das Original; scheitert ein Teil,
+  bleibt alles unverändert. Übernommen wird nur, was am Papier hängt
+  (Sichtbarkeit, Eigentümer, Abteilungen, Sphäre, Richtung, Quelle,
+  Eingangsdatum) — **nicht** Kontakt, Titel, Datum, Typ, Tags, Vorgänge:
+  der Grund des Aufteilens ist ja gerade, dass die Teile zu verschiedenen
+  Vorgängen und Absendern gehören. Die Teile sind untereinander **nicht**
+  verknüpft; sie lagen nur zufällig im selben Einzug.
+- Der Lauf lebt in einem eigenen Modell (`DocumentPdfEditRun`), nicht in
+  Statusfeldern am Dokument: beim Aufteilen ist das Original am Ende
+  gelöscht, ein Status daran wäre genau dann weg, wenn die Oberfläche das
+  Ergebnis anzeigen soll. `claimed_at` ist der Schutz gegen
+  Doppelausführung — ohne ihn entstünden beim zweiten Anlauf doppelte
+  Teile.
+- Die Leerseiten-Kennzeichnung ist ein **Hinweis, keine Vorauswahl**: eine
+  Seite mit nur einem handschriftlichen Vermerk oder einem Stempel sieht
+  für die Texterkennung leer aus und ist es nicht.
+- Seitenoperationen laufen über `pypdf` (dieselbe Bibliothek, mit der die
+  Extraktion schon liest), Vorschaubilder über `pypdfium2` (dieselbe wie
+  beim Thumbnail). **Keine dritte PDF-Bibliothek** — zwei Bibliotheken
+  bedeuten zwei Fehlerbilder bei kaputten Dateien, und kaputte Dateien sind
+  hier der Normalfall.
+
 ## Hintergrundjobs mit LLM-Aufruf
 
 - Solche Jobs brauchen einen **eigenen, großzügigeren Timeout** per
@@ -390,7 +452,10 @@ Damit es niemand „nachrüstet":
 
 - Findus ist Informationsspeicher, Verknüpfer und Finder — **kein DMS**. Kein
   Aktenplan, keine Versionierung, keine Freigabe-Workflows, keine
-  Aufbewahrungsfristen, kein Peer-to-Peer-Teilen.
+  Aufbewahrungsfristen, kein Peer-to-Peer-Teilen. Die PDF-Grundbearbeitung
+  ist die Ausnahme, die keine ist: sie korrigiert einen misslungenen Scan
+  *vor* dem Archiv und führt ausdrücklich keine Fassungen (siehe
+  „PDF-Grundbearbeitung").
 - Aufgaben (`Task`) sind auf dem Rückzug; neue Funktionalität hängt an
   Dokument-Kommentaren, nicht an Aufgaben. **Kein „Verknüpfte Aufgaben"-Block**
   mehr am Vorgang-Hub oder in der Dokument-Detailseite, und keine
